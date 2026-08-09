@@ -1,8 +1,13 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
+import { BudgetMethod, TransactionStatus, User } from "@prisma/client";
 
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -16,6 +21,10 @@ function startOfIsoWeek(d: Date): Date {
   return date;
 }
 
+function daysInMonth(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+}
+
 @Injectable()
 export class AllowanceService {
   constructor(
@@ -24,12 +33,34 @@ export class AllowanceService {
     private readonly feeCalculator: FeeCalculatorService,
   ) {}
 
+  /**
+   * The plan-derived daily figure, per PRD §7a income-tier branching: FLAT uses
+   * the explicit naira figure set at PLAN_PROPOSED onboarding (never
+   * monthlyIncome/30 — nothing defines FLAT that way); PERCENTAGE spreads
+   * monthlyIncome * budgetPercentage evenly across the actual days in the
+   * current month. Returns 0 if the user hasn't been onboarded onto a plan yet
+   * (no flatDailyAmount/monthlyIncome set) — evaluateSpend still works, it just
+   * won't allow any NORMAL spend until a plan exists.
+   */
+  private computeDailyAmount(
+    user: Pick<
+      User,
+      "budgetMethod" | "monthlyIncome" | "budgetPercentage" | "flatDailyAmount"
+    >,
+  ): number {
+    if (user.budgetMethod === BudgetMethod.PERCENTAGE) {
+      if (!user.monthlyIncome || !user.budgetPercentage) return 0;
+      return (
+        (Number(user.monthlyIncome) * Number(user.budgetPercentage)) /
+        daysInMonth(new Date())
+      );
+    }
+    return Number(user.flatDailyAmount ?? 0);
+  }
+
   /** Fetch or lazily create today's allowance row for a user. */
   async getOrCreateTodayAllowance(userId: string) {
-    // TODO (Phase 5): use `user` to compute the real plan-derived daily figure
-    // (FLAT -> user.flatDailyAmount, PERCENTAGE -> monthlyIncome * budgetPercentage)
-    // instead of the dailyAmount=0 placeholder below.
-    const _user = await this.prisma.user.findUniqueOrThrow({
+    const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
     });
     const today = startOfDay(new Date());
@@ -39,9 +70,7 @@ export class AllowanceService {
     });
     if (existing) return existing;
 
-    // TODO: replace with the real plan-derived daily figure —
-    // flat (monthlyIncome-based) or percentage, per section 7a.
-    const dailyAmount = 0;
+    const dailyAmount = this.computeDailyAmount(user);
 
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
@@ -83,16 +112,31 @@ export class AllowanceService {
     });
     const allowance = await this.getOrCreateTodayAllowance(userId);
 
+    const remainingToday =
+      Number(allowance.amountAllocated) +
+      Number(allowance.surplusCarriedIn) -
+      Number(allowance.amountSpent);
+
+    // Deliberate exit (PRD §4.1): once the Manager has approved an
+    // EXIT_RESTRICTIONS request, disciplineExitedAt is set (see
+    // ManagerConversationService) and the account "returns to normal" —
+    // no window check, no override fees, ever, regardless of amount/time.
+    if (user.disciplineExitedAt) {
+      return {
+        type: TransactionType.NORMAL,
+        remainingToday,
+        withinWindow: true,
+        feeAmount: 0,
+        waived: false,
+        totalCost: amount,
+      };
+    }
+
     const withinWindow = this.windowService.isWithinWindow(
       user.windowStartHour,
       user.windowEndHour,
       now,
     );
-
-    const remainingToday =
-      Number(allowance.amountAllocated) +
-      Number(allowance.surplusCarriedIn) -
-      Number(allowance.amountSpent);
 
     let type: TransactionType;
     if (!withinWindow) {
@@ -119,17 +163,65 @@ export class AllowanceService {
     };
   }
 
-  /** Records a confirmed spend against today's allowance once executed. */
-  async recordSpend(userId: string, amount: number) {
-    const today = startOfDay(new Date());
-    const allowance = await this.prisma.dailyAllowance.findUnique({
-      where: { userId_date: { userId, date: today } },
+  /**
+   * Applies an EXECUTED transaction's amount against the allowance for the day
+   * it happened. Idempotent and Transaction-scoped: a transaction whose
+   * appliedToAllowanceAt is already set is a no-op rather than double-counting
+   * the spend — safe to call twice (e.g. from a retried Rubies webhook and the
+   * TSQ reconciliation job landing on the same transaction).
+   */
+  async recordSpend(transactionId: string) {
+    const transaction = await this.prisma.transaction.findUniqueOrThrow({
+      where: { id: transactionId },
     });
-    if (!allowance) throw new NotFoundException("No allowance row for today");
 
-    return this.prisma.dailyAllowance.update({
-      where: { id: allowance.id },
-      data: { amountSpent: Number(allowance.amountSpent) + amount },
+    if (transaction.appliedToAllowanceAt) {
+      if (!transaction.dailyAllowanceId) {
+        throw new Error(
+          `Transaction ${transactionId} has appliedToAllowanceAt set but no dailyAllowanceId — data is inconsistent`,
+        );
+      }
+      return this.prisma.dailyAllowance.findUniqueOrThrow({
+        where: { id: transaction.dailyAllowanceId },
+      });
+    }
+
+    if (transaction.status !== TransactionStatus.EXECUTED) {
+      throw new BadRequestException(
+        `Cannot record spend for transaction ${transactionId}: status is ${transaction.status}, not EXECUTED`,
+      );
+    }
+
+    // Attribute the spend to the day the transaction was created, not "now" —
+    // the caller (a Rubies webhook or the TSQ reconciliation job) may run well
+    // after midnight relative to when the user actually confirmed the spend.
+    const spendDay = startOfDay(transaction.createdAt);
+    const allowance = await this.prisma.dailyAllowance.findUnique({
+      where: { userId_date: { userId: transaction.userId, date: spendDay } },
     });
+    if (!allowance) {
+      throw new NotFoundException(
+        `No allowance row for ${spendDay.toDateString()} (transaction ${transactionId})`,
+      );
+    }
+
+    const [, updatedAllowance] = await this.prisma.$transaction([
+      this.prisma.transaction.update({
+        where: { id: transactionId },
+        data: {
+          appliedToAllowanceAt: new Date(),
+          dailyAllowanceId: allowance.id,
+        },
+      }),
+      this.prisma.dailyAllowance.update({
+        where: { id: allowance.id },
+        data: {
+          amountSpent:
+            Number(allowance.amountSpent) + Number(transaction.amount),
+        },
+      }),
+    ]);
+
+    return updatedAllowance;
   }
 }

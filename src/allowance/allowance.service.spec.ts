@@ -1,7 +1,9 @@
+import { BadRequestException } from "@nestjs/common";
 import { AllowanceService } from "./allowance.service";
 import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
+import { BudgetMethod, TransactionStatus } from "@prisma/client";
 
 /**
  * Uses real WindowService/FeeCalculatorService (both pure/deterministic) and a
@@ -14,9 +16,15 @@ describe("AllowanceService", () => {
     user: { findUniqueOrThrow: jest.Mock };
     dailyAllowance: {
       findUnique: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
     };
+    transaction: {
+      findUniqueOrThrow: jest.Mock;
+      update: jest.Mock;
+    };
+    $transaction: jest.Mock;
   };
 
   const userId = "user-1";
@@ -25,12 +33,25 @@ describe("AllowanceService", () => {
   const outsideWindowNow = new Date(2026, 0, 8, 21, 0); // 9 PM, outside 11-20
 
   function makeUser(
-    overrides: Partial<{ windowStartHour: number; windowEndHour: number }> = {},
+    overrides: Partial<{
+      windowStartHour: number;
+      windowEndHour: number;
+      disciplineExitedAt: Date | null;
+      budgetMethod: BudgetMethod;
+      monthlyIncome: number | null;
+      budgetPercentage: number | null;
+      flatDailyAmount: number | null;
+    }> = {},
   ) {
     return {
       id: userId,
       windowStartHour: 11,
       windowEndHour: 20,
+      disciplineExitedAt: null,
+      budgetMethod: BudgetMethod.FLAT,
+      monthlyIncome: null,
+      budgetPercentage: null,
+      flatDailyAmount: null,
       ...overrides,
     };
   }
@@ -48,14 +69,33 @@ describe("AllowanceService", () => {
     };
   }
 
+  function makeTransaction(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: "txn-1",
+      userId,
+      amount: 500,
+      status: TransactionStatus.EXECUTED,
+      createdAt: today,
+      appliedToAllowanceAt: null,
+      dailyAllowanceId: null,
+      ...overrides,
+    };
+  }
+
   beforeEach(() => {
     prisma = {
       user: { findUniqueOrThrow: jest.fn().mockResolvedValue(makeUser()) },
       dailyAllowance: {
         findUnique: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
       },
+      transaction: {
+        findUniqueOrThrow: jest.fn(),
+        update: jest.fn(),
+      },
+      $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
 
     service = new AllowanceService(
@@ -160,6 +200,29 @@ describe("AllowanceService", () => {
       expect(result.withinWindow).toBe(true);
       expect(result.type).toBe(TransactionType.NORMAL);
     });
+
+    it("bypasses window/fee enforcement entirely once disciplineExitedAt is set", async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        makeUser({ disciplineExitedAt: new Date(2026, 0, 1) }),
+      );
+      // Deliberately outside the window and over the remaining allowance — would
+      // otherwise be EARLY_ACCESS or BORROWED with a fee attached.
+      prisma.dailyAllowance.findUnique.mockResolvedValue(
+        makeAllowance({ amountSpent: 9_999 }),
+      );
+
+      const result = await service.evaluateSpend(
+        userId,
+        50_000,
+        outsideWindowNow,
+      );
+
+      expect(result.type).toBe(TransactionType.NORMAL);
+      expect(result.withinWindow).toBe(true);
+      expect(result.feeAmount).toBe(0);
+      expect(result.waived).toBe(false);
+      expect(result.totalCost).toBe(50_000);
+    });
   });
 
   describe("getOrCreateTodayAllowance", () => {
@@ -209,28 +272,146 @@ describe("AllowanceService", () => {
         }),
       );
     });
-  });
 
-  describe("recordSpend", () => {
-    it("adds the spent amount onto the existing amountSpent for today", async () => {
-      prisma.dailyAllowance.findUnique.mockResolvedValue(
-        makeAllowance({ amountSpent: 1_000 }),
+    it("computes the FLAT daily amount from flatDailyAmount, not monthlyIncome/30", async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        makeUser({
+          budgetMethod: BudgetMethod.FLAT,
+          flatDailyAmount: 4_500,
+          monthlyIncome: 900_000,
+        }),
       );
-      prisma.dailyAllowance.update.mockResolvedValue(
-        makeAllowance({ amountSpent: 1_500 }),
-      );
+      prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null); // today
+      prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null); // yesterday
+      prisma.dailyAllowance.create.mockResolvedValue(makeAllowance());
 
-      await service.recordSpend(userId, 500);
+      await service.getOrCreateTodayAllowance(userId);
 
-      expect(prisma.dailyAllowance.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { amountSpent: 1_500 } }),
+      expect(prisma.dailyAllowance.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ amountAllocated: 4_500 }),
+        }),
       );
     });
 
-    it("throws if there is no allowance row for today", async () => {
+    it("computes the PERCENTAGE daily amount as monthlyIncome * budgetPercentage / days in month", async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        makeUser({
+          budgetMethod: BudgetMethod.PERCENTAGE,
+          monthlyIncome: 300_000,
+          budgetPercentage: 0.5,
+        }),
+      );
+      prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null);
+      prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null);
+      prisma.dailyAllowance.create.mockResolvedValue(makeAllowance());
+
+      await service.getOrCreateTodayAllowance(userId);
+
+      // computeDailyAmount spreads across the *actual* current month (it isn't
+      // parameterized by a `now`, unlike evaluateSpend) — so days-in-month has to
+      // be derived from real wall-clock time here, not the Jan-2026 test fixtures.
+      const now = new Date();
+      const daysInCurrentMonth = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        0,
+      ).getDate();
+      const expected = (300_000 * 0.5) / daysInCurrentMonth;
+      expect(prisma.dailyAllowance.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            amountAllocated: expect.closeTo(expected, 5),
+          }),
+        }),
+      );
+    });
+
+    it("returns 0 for PERCENTAGE when no plan has been set yet", async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        makeUser({
+          budgetMethod: BudgetMethod.PERCENTAGE,
+          monthlyIncome: null,
+          budgetPercentage: null,
+        }),
+      );
+      prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null);
+      prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null);
+      prisma.dailyAllowance.create.mockResolvedValue(makeAllowance());
+
+      await service.getOrCreateTodayAllowance(userId);
+
+      expect(prisma.dailyAllowance.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ amountAllocated: 0 }),
+        }),
+      );
+    });
+  });
+
+  describe("recordSpend", () => {
+    it("applies the transaction's amount to that day's allowance and marks it applied", async () => {
+      const transaction = makeTransaction({ amount: 500 });
+      const allowance = makeAllowance({ amountSpent: 1_000 });
+      prisma.transaction.findUniqueOrThrow.mockResolvedValue(transaction);
+      prisma.dailyAllowance.findUnique.mockResolvedValue(allowance);
+      prisma.transaction.update.mockResolvedValue({
+        ...transaction,
+        appliedToAllowanceAt: new Date(),
+      });
+      prisma.dailyAllowance.update.mockResolvedValue({
+        ...allowance,
+        amountSpent: 1_500,
+      });
+
+      const result = await service.recordSpend("txn-1");
+
+      expect(prisma.transaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "txn-1" },
+          data: expect.objectContaining({ dailyAllowanceId: allowance.id }),
+        }),
+      );
+      expect(prisma.dailyAllowance.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { amountSpent: 1_500 } }),
+      );
+      expect(result.amountSpent).toBe(1_500);
+    });
+
+    it("is idempotent — a second call on an already-applied transaction is a no-op", async () => {
+      const allowance = makeAllowance({ amountSpent: 1_500 });
+      const appliedTransaction = makeTransaction({
+        appliedToAllowanceAt: new Date(),
+        dailyAllowanceId: allowance.id,
+      });
+      prisma.transaction.findUniqueOrThrow.mockResolvedValue(
+        appliedTransaction,
+      );
+      prisma.dailyAllowance.findUniqueOrThrow.mockResolvedValue(allowance);
+
+      const result = await service.recordSpend("txn-1");
+
+      expect(result).toBe(allowance);
+      expect(prisma.dailyAllowance.update).not.toHaveBeenCalled();
+      expect(prisma.transaction.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses to apply a transaction that is not EXECUTED", async () => {
+      prisma.transaction.findUniqueOrThrow.mockResolvedValue(
+        makeTransaction({ status: TransactionStatus.PENDING_CONFIRMATION }),
+      );
+
+      await expect(service.recordSpend("txn-1")).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.dailyAllowance.update).not.toHaveBeenCalled();
+    });
+
+    it("throws if there is no allowance row for the transaction's day", async () => {
+      prisma.transaction.findUniqueOrThrow.mockResolvedValue(makeTransaction());
       prisma.dailyAllowance.findUnique.mockResolvedValue(null);
 
-      await expect(service.recordSpend(userId, 500)).rejects.toThrow();
+      await expect(service.recordSpend("txn-1")).rejects.toThrow();
     });
   });
 });
