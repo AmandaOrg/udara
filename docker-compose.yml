@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kedu
+      POSTGRES_PASSWORD: kedu
+      POSTGRES_DB: kedu
+    ports:
+      - "5432:5432"
+    volumes:
+      - kedu_pgdata:/var/lib/postgresql/data
+
+volumes:
+  kedu_pgdata:

@@ -1,0 +1,5 @@
+export enum IncomeType {
+  SALARIED = 'SALARIED',
+  FOUNDER = 'FOUNDER',
+  MULTIPLE_STREAMS = 'MULTIPLE_STREAMS',
+}
