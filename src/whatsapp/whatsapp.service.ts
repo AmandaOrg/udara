@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
-import { firstValueFrom } from 'rxjs';
+import { Injectable } from "@nestjs/common";
+import { HttpService } from "@nestjs/axios";
+import { ConfigService } from "@nestjs/config";
+import { firstValueFrom } from "rxjs";
 
 /**
  * Thin wrapper around WhatsApp Cloud API — another piece you've already
@@ -15,16 +15,16 @@ export class WhatsappService {
   ) {}
 
   async sendText(to: string, body: string): Promise<void> {
-    const phoneNumberId = this.config.get<string>('WHATSAPP_PHONE_NUMBER_ID');
-    const token = this.config.get<string>('WHATSAPP_ACCESS_TOKEN');
+    const phoneNumberId = this.config.get<string>("WHATSAPP_PHONE_NUMBER_ID");
+    const token = this.config.get<string>("WHATSAPP_ACCESS_TOKEN");
 
     await firstValueFrom(
       this.http.post(
         `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
         {
-          messaging_product: 'whatsapp',
+          messaging_product: "whatsapp",
           to,
-          type: 'text',
+          type: "text",
           text: { body },
         },
         { headers: { Authorization: `Bearer ${token}` } },

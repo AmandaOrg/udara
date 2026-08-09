@@ -1,8 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { WindowService } from './window.service';
-import { FeeCalculatorService } from './fee-calculator.service';
-import { TransactionType } from '../common/enums/transaction-type.enum';
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { WindowService } from "./window.service";
+import { FeeCalculatorService } from "./fee-calculator.service";
+import { TransactionType } from "../common/enums/transaction-type.enum";
 
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -26,7 +26,12 @@ export class AllowanceService {
 
   /** Fetch or lazily create today's allowance row for a user. */
   async getOrCreateTodayAllowance(userId: string) {
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    // TODO (Phase 5): use `user` to compute the real plan-derived daily figure
+    // (FLAT -> user.flatDailyAmount, PERCENTAGE -> monthlyIncome * budgetPercentage)
+    // instead of the dailyAmount=0 placeholder below.
+    const _user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
     const today = startOfDay(new Date());
 
     const existing = await this.prisma.dailyAllowance.findUnique({
@@ -46,7 +51,8 @@ export class AllowanceService {
 
     const sameWeek =
       yesterdayAllowance &&
-      startOfIsoWeek(yesterdayAllowance.date).getTime() === startOfIsoWeek(today).getTime();
+      startOfIsoWeek(yesterdayAllowance.date).getTime() ===
+        startOfIsoWeek(today).getTime();
 
     const surplus =
       sameWeek && yesterdayAllowance
@@ -72,7 +78,9 @@ export class AllowanceService {
    * only after the user confirms (pre-transfer confirmation, PRD section 4a/5).
    */
   async evaluateSpend(userId: string, amount: number, now: Date = new Date()) {
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
     const allowance = await this.getOrCreateTodayAllowance(userId);
 
     const withinWindow = this.windowService.isWithinWindow(
@@ -117,7 +125,7 @@ export class AllowanceService {
     const allowance = await this.prisma.dailyAllowance.findUnique({
       where: { userId_date: { userId, date: today } },
     });
-    if (!allowance) throw new NotFoundException('No allowance row for today');
+    if (!allowance) throw new NotFoundException("No allowance row for today");
 
     return this.prisma.dailyAllowance.update({
       where: { id: allowance.id },

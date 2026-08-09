@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { OnboardingStage } from '@prisma/client';
+import { Injectable } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { OnboardingStage } from "@prisma/client";
 
 /**
  * The conversational AI slice of the app (see the AI-skill discussion):
@@ -17,7 +17,7 @@ export class OnboardingService {
   async getOrStartSession(userId: string) {
     const latest = await this.prisma.onboardingSession.findFirst({
       where: { userId },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
     });
     if (latest) return latest;
 
@@ -30,7 +30,11 @@ export class OnboardingService {
     });
   }
 
-  async appendMessage(sessionId: string, role: 'user' | 'assistant', content: string) {
+  async appendMessage(
+    sessionId: string,
+    role: "user" | "assistant",
+    content: string,
+  ) {
     const session = await this.prisma.onboardingSession.findUniqueOrThrow({
       where: { id: sessionId },
     });

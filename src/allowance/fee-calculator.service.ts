@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { TransactionType } from '../common/enums/transaction-type.enum';
+import { Injectable } from "@nestjs/common";
+import { TransactionType } from "../common/enums/transaction-type.enum";
 
 export interface FeeResult {
   feeAmount: number;
@@ -14,8 +14,12 @@ export interface FeeResult {
  */
 @Injectable()
 export class FeeCalculatorService {
-  private readonly EARLY_ACCESS_FLAT = Number(process.env.EARLY_ACCESS_FLAT_FEE ?? 1000);
-  private readonly EARLY_ACCESS_PCT = Number(process.env.EARLY_ACCESS_PERCENT_FEE ?? 0.002);
+  private readonly EARLY_ACCESS_FLAT = Number(
+    process.env.EARLY_ACCESS_FLAT_FEE ?? 1000,
+  );
+  private readonly EARLY_ACCESS_PCT = Number(
+    process.env.EARLY_ACCESS_PERCENT_FEE ?? 0.002,
+  );
   private readonly BORROW_FLAT = Number(process.env.BORROW_FLAT_FEE ?? 1000);
   private readonly BORROW_PCT = Number(process.env.BORROW_PERCENT_FEE ?? 0.004);
 

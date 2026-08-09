@@ -1,6 +1,6 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { SettingsChangeType, SettingsChangeStatus } from '@prisma/client';
+import { Injectable, BadRequestException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { SettingsChangeType, SettingsChangeStatus } from "@prisma/client";
 
 const MIN_DAYS = Number(process.env.SETTINGS_CHANGE_MIN_DAYS ?? 7);
 
@@ -37,7 +37,11 @@ export class ManagerService {
     });
   }
 
-  async reviewRequest(requestId: string, decision: 'APPROVED' | 'REJECTED', managerNotes?: string) {
+  async reviewRequest(
+    requestId: string,
+    decision: "APPROVED" | "REJECTED",
+    managerNotes?: string,
+  ) {
     const request = await this.prisma.settingsChangeRequest.findUniqueOrThrow({
       where: { id: requestId },
     });

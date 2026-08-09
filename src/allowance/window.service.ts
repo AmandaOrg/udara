@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable } from "@nestjs/common";
 
 /**
  * Deliberately dumb: a time-of-day comparison, nothing else.
@@ -10,15 +10,20 @@ export class WindowService {
   /**
    * @param now Injectable for testability — defaults to current time.
    */
-  isWithinWindow(startHour: number, endHour: number, now: Date = new Date()): boolean {
+  isWithinWindow(
+    startHour: number,
+    endHour: number,
+    now: Date = new Date(),
+  ): boolean {
     const hour = now.getHours();
     return hour >= startHour && hour < endHour;
   }
 
   hoursUntilWindowOpens(startHour: number, now: Date = new Date()): number {
     const hour = now.getHours();
-    if (hour < startHour) return startHour - hour;
-    // window already passed today — opens tomorrow
+    // <= , not < : at hour === startHour the window is already open per
+    // isWithinWindow's `hour >= startHour` — 0 hours to wait, not "opens tomorrow".
+    if (hour <= startHour) return startHour - hour;
     return 24 - hour + startHour;
   }
 }

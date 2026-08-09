@@ -1,10 +1,10 @@
-import { Controller, Get, Post, Query, Body, Res } from '@nestjs/common';
-import { Response } from 'express';
-import { ConfigService } from '@nestjs/config';
-import { WhatsappService } from './whatsapp.service';
-import { AllowanceService } from '../allowance/allowance.service';
+import { Controller, Get, Post, Query, Body, Res } from "@nestjs/common";
+import { Response } from "express";
+import { ConfigService } from "@nestjs/config";
+import { WhatsappService } from "./whatsapp.service";
+import { AllowanceService } from "../allowance/allowance.service";
 
-@Controller('webhooks/whatsapp')
+@Controller("webhooks/whatsapp")
 export class WhatsappController {
   constructor(
     private readonly config: ConfigService,
@@ -15,13 +15,13 @@ export class WhatsappController {
   /** Meta's webhook verification handshake. */
   @Get()
   verify(
-    @Query('hub.mode') mode: string,
-    @Query('hub.verify_token') token: string,
-    @Query('hub.challenge') challenge: string,
+    @Query("hub.mode") mode: string,
+    @Query("hub.verify_token") token: string,
+    @Query("hub.challenge") challenge: string,
     @Res() res: Response,
   ) {
-    const expected = this.config.get<string>('WHATSAPP_WEBHOOK_VERIFY_TOKEN');
-    if (mode === 'subscribe' && token === expected) {
+    const expected = this.config.get<string>("WHATSAPP_WEBHOOK_VERIFY_TOKEN");
+    if (mode === "subscribe" && token === expected) {
       res.status(200).send(challenge);
     } else {
       res.sendStatus(403);

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kedu
+          POSTGRES_PASSWORD: kedu
+          POSTGRES_DB: kedu
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://kedu:kedu@localhost:5433/kedu?schema=public
+      DAILY_WINDOW_START_HOUR: '11'
+      DAILY_WINDOW_END_HOUR: '20'
+      EARLY_ACCESS_FLAT_FEE: '1000'
+      EARLY_ACCESS_PERCENT_FEE: '0.002'
+      BORROW_FLAT_FEE: '1000'
+      BORROW_PERCENT_FEE: '0.004'
+      SETTINGS_CHANGE_MIN_DAYS: '7'
+      PORT: '3000'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npm run build
+      - run: npm test

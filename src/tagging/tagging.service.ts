@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { RecipientLabel } from '@prisma/client';
+import { Injectable } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { RecipientLabel } from "@prisma/client";
 
 @Injectable()
 export class TaggingService {
@@ -8,7 +8,9 @@ export class TaggingService {
 
   async findRecipient(userId: string, accountNumber: string, bankCode: string) {
     return this.prisma.recipient.findUnique({
-      where: { userId_accountNumber_bankCode: { userId, accountNumber, bankCode } },
+      where: {
+        userId_accountNumber_bankCode: { userId, accountNumber, bankCode },
+      },
     });
   }
 

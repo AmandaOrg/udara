@@ -76,6 +76,62 @@ enum SettingsChangeStatus {
   REJECTED
 }
 
+enum WhatsappMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum WhatsappMessageType {
+  TEXT
+  BUTTON_REPLY
+  LIST_REPLY
+  AUDIO
+  IMAGE
+  DOCUMENT
+  LOCATION
+  STATUS
+  UNKNOWN
+}
+
+enum WhatsappMessageStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+enum ConversationPersona {
+  KEDU
+  MANAGER
+}
+
+enum ConversationSessionStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum LlmCallPurpose {
+  ONBOARDING_EXTRACTION
+  CONVERSATION_REPLY
+  MANAGER_REPLY
+  TRANSFER_INTENT_PARSE
+  INTENT_CLASSIFICATION
+  OTHER
+}
+
+enum RubiesWebhookEventType {
+  TRANSFER_STATUS
+  INCOMING_CREDIT
+  UNKNOWN
+}
+
+enum NudgeType {
+  WINDOW_OPEN
+  DAILY_SUMMARY
+  BORROW_WARNING
+  SETTINGS_ELIGIBLE
+  OTHER
+}
+
 // ---------------------------------------------------------------------------
 // Core models
 // ---------------------------------------------------------------------------
@@ -91,6 +147,7 @@ model User {
   incomePosture     IncomePosture @default(RESTRICT)
   budgetMethod      BudgetMethod  @default(FLAT)
   budgetPercentage  Decimal?      @db.Decimal(5, 4) // used when budgetMethod = PERCENTAGE
+  flatDailyAmount   Decimal?      @db.Decimal(14, 2) // used when budgetMethod = FLAT, set at PLAN_PROPOSED
   strictnessLevel   Int?          // user-chosen strictness, 1-5 or similar scale
 
   // The stated goal captured at onboarding — quoted back by the Manager persona (section 7)
@@ -100,6 +157,25 @@ model User {
   // Discipline window (defaults from env, overridable per-user)
   windowStartHour   Int      @default(11)
   windowEndHour     Int      @default(20)
+
+  // Deliberate exit (PRD 4.1) — set only by ManagerConversationService once an
+  // EXIT_RESTRICTIONS SettingsChangeRequest is APPROVED. While set, AllowanceService
+  // bypasses window/fee enforcement entirely — this is what "account returns to
+  // normal" means mechanically.
+  disciplineExitedAt DateTime?
+
+  // KYC fields required by Rubies wallet provisioning — exactly one of bvn/nin is used.
+  bvn               String?
+  nin               String?
+
+  // Rubies wallet details returned by create-wallet — distinct from rubiesAccountId
+  // (=customerId): accountNumber/accountName are what fund-transfer actually debits.
+  rubiesAccountNumber String? @unique
+  rubiesAccountName   String?
+  rubiesBankCode      String?
+
+  // Drives the WhatsApp 24h free-form-vs-template send decision.
+  lastInboundMessageAt DateTime?
 
   onboardingStage   OnboardingStage @default(DISCOVERY)
   onboardingCompletedAt DateTime?
@@ -113,6 +189,11 @@ model User {
   overrides         OverrideHistory[]
   settingsRequests  SettingsChangeRequest[]
   onboardingSessions OnboardingSession[]
+  whatsappMessages  WhatsappMessage[]
+  conversationSessions ConversationSession[]
+  llmCallLogs       LlmCallLog[]
+  incomingCredits   IncomingCredit[]
+  nudgeLogs         NudgeLog[]
 }
 
 // One row per user per calendar day — the heart of the discipline engine.
@@ -130,6 +211,8 @@ model DailyAllowance {
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  transactions    Transaction[]
 
   @@unique([userId, date])
   @@index([userId, weekStartDate])
@@ -166,6 +249,14 @@ model Transaction {
   feeAmount       Decimal  @default(0) @db.Decimal(14, 2)
 
   rubiesReference String?  // external reference once executed via Rubies
+
+  // Idempotency / allowance-application linkage — makes recordSpend safe to call twice
+  // and ties a spend to the exact button-confirm that authorized it.
+  dailyAllowanceId String?
+  dailyAllowance   DailyAllowance? @relation(fields: [dailyAllowanceId], references: [id])
+  appliedToAllowanceAt DateTime?
+  idempotencyKey  String?  @unique
+  whatsappMessageId String?
 
   createdAt       DateTime @default(now())
   confirmedAt     DateTime?
@@ -221,4 +312,109 @@ model OnboardingSession {
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Messaging, AI audit trail, and Rubies inbound models
+// ---------------------------------------------------------------------------
+
+// Inbound/outbound WhatsApp message log. waMessageId is the real dedup key —
+// Meta redelivers webhooks, and this unique constraint is what makes processing
+// idempotent.
+model WhatsappMessage {
+  id             String   @id @default(uuid())
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id])
+  waMessageId    String   @unique
+  direction      WhatsappMessageDirection
+  type           WhatsappMessageType
+  fromNumber     String
+  textBody       String?
+  buttonPayload  String?  // button/list id picked
+  mediaId        String?  // Meta media id for audio/image/doc — plumbing only, no download in v0
+  mediaMimeType  String?
+  transcript     String?  // filled in by the transcription fast-follow, not v0
+  rawPayload     Json
+  status         WhatsappMessageStatus @default(RECEIVED)
+  createdAt      DateTime @default(now())
+  processedAt    DateTime?
+
+  @@index([userId, createdAt])
+}
+
+// Post-onboarding conversation state. OnboardingSession stays dedicated to the
+// stage machine; everything after COMPLETE uses this instead.
+model ConversationSession {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  persona     ConversationPersona @default(KEDU)
+  status      ConversationSessionStatus @default(ACTIVE)
+  messages    Json     // rolling window, same {role,content,at} shape as OnboardingSession
+  contextData Json?    // pending transfer draft, last classified intent, etc.
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+// The AI audit trail — "every output is a proposal, never a command." Every
+// LlmService.complete() call is logged here, raw proposal separate from
+// whatever validation/write actually happened as a result.
+model LlmCallLog {
+  id               String   @id @default(uuid())
+  userId           String?
+  user             User?    @relation(fields: [userId], references: [id])
+  purpose          LlmCallPurpose
+  provider         String
+  model            String
+  promptTokens     Int?
+  completionTokens Int?
+  latencyMs        Int?
+  rawResponse      Json     // the model's raw proposal — distinct from what was actually written
+  validationResult Json?    // ExtractionValidatorService verdict
+  appliedToUser    Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@index([userId, purpose, createdAt])
+}
+
+// Every inbound Rubies webhook event, regardless of outcome — signature result
+// included so a bad/unverifiable event is still auditable rather than silently
+// dropped.
+model RubiesWebhookEvent {
+  id              String   @id @default(uuid())
+  eventType       RubiesWebhookEventType
+  rubiesReference String?
+  rawPayload      Json
+  signatureValid  Boolean  @default(false)
+  processedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([rubiesReference])
+}
+
+// Confirmed incoming credits (PRD #4a — incoming funds notification).
+model IncomingCredit {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  amount          Decimal  @db.Decimal(14, 2)
+  rubiesReference String   @unique
+  sourceNarration String?
+  creditedAt      DateTime
+  createdAt       DateTime @default(now())
+}
+
+// Proactive nudge dedup (PRD #13 — post-v0, see plan Phase 9).
+model NudgeLog {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  type         NudgeType
+  sentAt       DateTime @default(now())
+  channel      String   // "template" | "freeform"
+  templateName String?
+
+  @@index([userId, type, sentAt])
 }

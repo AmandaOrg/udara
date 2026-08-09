@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
+import { Injectable } from "@nestjs/common";
+import { HttpService } from "@nestjs/axios";
+import { ConfigService } from "@nestjs/config";
 
 export interface RubiesAccount {
   accountId: string;
@@ -10,7 +10,7 @@ export interface RubiesAccount {
 
 export interface RubiesTransferResult {
   reference: string;
-  status: 'SUCCESS' | 'FAILED' | 'PENDING';
+  status: "SUCCESS" | "FAILED" | "PENDING";
 }
 
 /**
@@ -27,29 +27,30 @@ export class RubiesService {
     private readonly http: HttpService,
     private readonly config: ConfigService,
   ) {
-    this.baseUrl = this.config.get<string>('RUBIES_BASE_URL', '');
+    this.baseUrl = this.config.get<string>("RUBIES_BASE_URL", "");
   }
 
-  async provisionAccount(userId: string): Promise<RubiesAccount> {
-    // TODO: KYC/BVN payload, sandbox vs live base URL switch.
-    throw new Error('Not implemented');
+  async provisionAccount(_userId: string): Promise<RubiesAccount> {
+    // TODO (Phase 7): KYC/BVN-or-NIN payload via baas-wallet/create-wallet, dev vs prod stage switch.
+    throw new Error("Not implemented");
   }
 
-  async getBalance(accountId: string): Promise<number> {
-    // TODO
-    throw new Error('Not implemented');
+  async getBalance(_accountId: string): Promise<number> {
+    // TODO (Phase 7): baas-wallet/balance-enquiry.
+    throw new Error("Not implemented");
   }
 
-  async initiateTransfer(params: {
+  async initiateTransfer(_params: {
     fromAccountId: string;
     toAccountNumber: string;
     toBankCode: string;
     amount: number;
     narration: string;
   }): Promise<RubiesTransferResult> {
-    // TODO: this is the only path by which money leaves a Kedu account —
-    // callers must have already run AllowanceService.evaluateSpend and
-    // gotten explicit user confirmation before this is ever called.
-    throw new Error('Not implemented');
+    // TODO (Phase 7): baas-transaction/fund-transfer. This is the only path by which
+    // money leaves a Kedu account — callers must have already run
+    // AllowanceService.evaluateSpend and gotten explicit user confirmation before
+    // this is ever called.
+    throw new Error("Not implemented");
   }
 }

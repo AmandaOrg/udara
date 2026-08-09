@@ -1,6 +1,6 @@
-import { Module } from '@nestjs/common';
-import { HttpModule } from '@nestjs/axios';
-import { RubiesService } from './rubies.service';
+import { Module } from "@nestjs/common";
+import { HttpModule } from "@nestjs/axios";
+import { RubiesService } from "./rubies.service";
 
 @Module({
   imports: [HttpModule],
