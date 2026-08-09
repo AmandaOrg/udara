@@ -44,6 +44,10 @@ class EnvironmentVariables {
   WHATSAPP_WEBHOOK_VERIFY_TOKEN?: string;
 
   @IsOptional()
+  @IsString()
+  WHATSAPP_APP_SECRET?: string;
+
+  @IsOptional()
   @IsUrl({ require_tld: false })
   RUBIES_BASE_URL?: string;
 

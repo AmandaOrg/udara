@@ -2,6 +2,9 @@ import { Module } from "@nestjs/common";
 import { HttpModule } from "@nestjs/axios";
 import { WhatsappController } from "./whatsapp.controller";
 import { WhatsappService } from "./whatsapp.service";
+import { WhatsappSignatureGuard } from "./whatsapp-signature.guard";
+import { WhatsappMessageService } from "./whatsapp-message.service";
+import { WhatsappRouterService } from "./whatsapp-router.service";
 import { AllowanceModule } from "../allowance/allowance.module";
 import { RubiesModule } from "../rubies/rubies.module";
 import { TaggingModule } from "../tagging/tagging.module";
@@ -18,6 +21,12 @@ import { ManagerModule } from "../manager/manager.module";
     ManagerModule,
   ],
   controllers: [WhatsappController],
-  providers: [WhatsappService],
+  providers: [
+    WhatsappService,
+    WhatsappSignatureGuard,
+    WhatsappMessageService,
+    WhatsappRouterService,
+  ],
+  exports: [WhatsappService, WhatsappMessageService],
 })
 export class WhatsappModule {}

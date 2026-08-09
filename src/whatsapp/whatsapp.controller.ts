@@ -1,15 +1,29 @@
-import { Controller, Get, Post, Query, Body, Res } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Logger,
+  Post,
+  Query,
+  Res,
+  UseGuards,
+} from "@nestjs/common";
 import { Response } from "express";
 import { ConfigService } from "@nestjs/config";
-import { WhatsappService } from "./whatsapp.service";
-import { AllowanceService } from "../allowance/allowance.service";
+import { WhatsappMessageStatus } from "@prisma/client";
+import { WhatsappSignatureGuard } from "./whatsapp-signature.guard";
+import { WhatsappMessageService } from "./whatsapp-message.service";
+import { WhatsappRouterService } from "./whatsapp-router.service";
+import { parseInboundPayload } from "./parsers/whatsapp-payload.parser";
 
 @Controller("webhooks/whatsapp")
 export class WhatsappController {
+  private readonly logger = new Logger(WhatsappController.name);
+
   constructor(
     private readonly config: ConfigService,
-    private readonly whatsapp: WhatsappService,
-    private readonly allowance: AllowanceService,
+    private readonly messages: WhatsappMessageService,
+    private readonly router: WhatsappRouterService,
   ) {}
 
   /** Meta's webhook verification handshake. */
@@ -29,21 +43,50 @@ export class WhatsappController {
   }
 
   /**
-   * Inbound message entry point. This is the top of the flow described in
-   * PRD section 5: webhook-in -> window check -> allowance check ->
-   * override-fee logic -> recipient tagging/confirmation -> Rubies call ->
-   * response-out. Routing to onboarding vs. transfer-intent vs. general
-   * conversation happens here — kept as a TODO since the message-parsing
-   * shape depends on how you structure the conversation-model call.
+   * Inbound message entry point — PRD §5's flow (webhook-in -> window check ->
+   * allowance check -> override-fee logic -> recipient tagging/confirmation ->
+   * Rubies call -> response-out) starts here. Acks Meta immediately (well
+   * under its ~20s timeout) and processes every parsed message afterward —
+   * fire-and-forget from the response's perspective, but each message is
+   * individually try/caught so one bad message can never crash the process or
+   * block processing/redelivery of the rest of the batch.
    */
+  @UseGuards(WhatsappSignatureGuard)
   @Post()
-  async receive(@Body() payload: any, @Res() res: Response) {
-    res.sendStatus(200); // ack Meta immediately; process async
+  async receive(@Body() payload: unknown, @Res() res: Response) {
+    res.sendStatus(200);
 
-    // TODO: parse payload -> { from, text } per WhatsApp Cloud API shape
-    // TODO: look up/create User by `from`
-    // TODO: if mid-onboarding -> OnboardingService
-    // TODO: if transfer intent -> AllowanceService.evaluateSpend -> confirm -> RubiesService.initiateTransfer
-    // TODO: else -> general conversation / manager escalation routing
+    const parsedMessages = parseInboundPayload(payload);
+
+    for (const parsed of parsedMessages) {
+      try {
+        const { isNew, record } = await this.messages.recordInboundIfNew(
+          parsed,
+          payload,
+        );
+        // Duplicate redelivery, or a STATUS (delivery/read receipt) callback — nothing to route.
+        if (!isNew || !record) continue;
+
+        try {
+          await this.router.route(record);
+          await this.messages.markProcessed(
+            record.id,
+            WhatsappMessageStatus.PROCESSED,
+          );
+        } catch (err) {
+          this.logger.error(
+            `Failed to route WhatsApp message ${record.id}: ${String(err)}`,
+          );
+          await this.messages.markProcessed(
+            record.id,
+            WhatsappMessageStatus.FAILED,
+          );
+        }
+      } catch (err) {
+        this.logger.error(
+          `Failed to record inbound WhatsApp message: ${String(err)}`,
+        );
+      }
+    }
   }
 }
