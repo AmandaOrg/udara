@@ -3,12 +3,16 @@ import {
   CONFIRM_BUTTON_PREFIX,
   CANCEL_BUTTON_PREFIX,
 } from "./transfer-confirmation.service";
-import { RecipientLabel, TransactionStatus } from "@prisma/client";
+import {
+  OnboardingStage,
+  RecipientLabel,
+  TransactionStatus,
+} from "@prisma/client";
 import { TransactionType } from "../common/enums/transaction-type.enum";
 
 describe("TransferConfirmationService", () => {
   let prisma: {
-    user: { findUniqueOrThrow: jest.Mock };
+    user: { findUniqueOrThrow: jest.Mock; update: jest.Mock };
     transaction: {
       create: jest.Mock;
       findUnique: jest.Mock;
@@ -16,8 +20,13 @@ describe("TransferConfirmationService", () => {
       update: jest.Mock;
     };
     overrideHistory: { create: jest.Mock };
+    dailyAllowance: { findMany: jest.Mock };
   };
-  let allowance: { evaluateSpend: jest.Mock; recordSpend: jest.Mock };
+  let allowance: {
+    evaluateSpend: jest.Mock;
+    recordSpend: jest.Mock;
+    getOrCreateTodayAllowance: jest.Mock;
+  };
   let rubies: {
     nameEnquiry: jest.Mock;
     getBalance: jest.Mock;
@@ -43,7 +52,10 @@ describe("TransferConfirmationService", () => {
 
   beforeEach(() => {
     prisma = {
-      user: { findUniqueOrThrow: jest.fn().mockResolvedValue(user) },
+      user: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(user),
+        update: jest.fn().mockResolvedValue(user),
+      },
       transaction: {
         create: jest.fn(),
         findUnique: jest.fn(),
@@ -51,6 +63,7 @@ describe("TransferConfirmationService", () => {
         update: jest.fn(),
       },
       overrideHistory: { create: jest.fn() },
+      dailyAllowance: { findMany: jest.fn().mockResolvedValue([]) },
     };
     allowance = {
       evaluateSpend: jest.fn().mockResolvedValue({
@@ -62,6 +75,12 @@ describe("TransferConfirmationService", () => {
         totalCost: 5000,
       }),
       recordSpend: jest.fn(),
+      getOrCreateTodayAllowance: jest.fn().mockResolvedValue({
+        amountAllocated: 10000,
+        surplusCarriedIn: 0,
+        amountSpent: 5000,
+        weekStartDate: new Date(2026, 0, 5),
+      }),
     };
     rubies = {
       nameEnquiry: jest.fn().mockResolvedValue({
@@ -474,6 +493,55 @@ describe("TransferConfirmationService", () => {
         }),
       );
       expect(allowance.recordSpend).toHaveBeenCalledWith("txn-1");
+    });
+
+    it("completes onboarding (-> COMPLETE) instead of the normal 'Done' message when the user was FUNDED/ACCOUNT_CREATED", async () => {
+      prisma.transaction.findUniqueOrThrow.mockResolvedValue({
+        id: "txn-1",
+        status: TransactionStatus.CONFIRMED,
+        user: { ...user, onboardingStage: OnboardingStage.FUNDED },
+        userId: "user-1",
+        recipient,
+        amount: 5000,
+        type: TransactionType.NORMAL,
+        feeAmount: 0,
+      });
+
+      await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "user-1" },
+          data: expect.objectContaining({
+            onboardingStage: OnboardingStage.COMPLETE,
+            onboardingCompletedAt: expect.any(Date),
+          }),
+        }),
+      );
+      const [, message] =
+        whatsapp.sendText.mock.calls[whatsapp.sendText.mock.calls.length - 1];
+      expect(message).toContain("payment successful");
+      expect(message).not.toContain("Done —");
+    });
+
+    it("sends the normal 'Done' message (no onboarding transition) for an already-COMPLETE user", async () => {
+      prisma.transaction.findUniqueOrThrow.mockResolvedValue({
+        id: "txn-1",
+        status: TransactionStatus.CONFIRMED,
+        user: { ...user, onboardingStage: OnboardingStage.COMPLETE },
+        userId: "user-1",
+        recipient,
+        amount: 5000,
+        type: TransactionType.NORMAL,
+        feeAmount: 0,
+      });
+
+      await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      const [, message] =
+        whatsapp.sendText.mock.calls[whatsapp.sendText.mock.calls.length - 1];
+      expect(message).toContain("Done —");
     });
   });
 });

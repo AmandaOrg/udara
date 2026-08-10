@@ -10,6 +10,12 @@ export interface InteractiveButton {
   title: string; // Meta caps this at 20 chars — truncated here to match what's actually shown
 }
 
+export interface ListRow {
+  id: string;
+  title: string; // Meta caps this at 24 chars — truncated here; put the full text in `description` if it doesn't fit
+  description?: string; // Meta caps this at 72 chars
+}
+
 interface MetaSendResponse {
   messages?: { id: string }[];
 }
@@ -99,6 +105,60 @@ export class WhatsappService {
             type: "reply",
             reply: { id: b.id, title: b.title.slice(0, 20) },
           })),
+        },
+      },
+    };
+    const response = await this.post(payload);
+    const waMessageId = response.messages?.[0]?.id ?? "";
+    await this.messages.recordOutbound({
+      waMessageId,
+      to,
+      type: WhatsappMessageType.TEXT,
+      userId,
+      textBody: bodyText,
+      rawPayload: payload,
+    });
+    return { waMessageId };
+  }
+
+  /**
+   * A WhatsApp "list" message — up to 10 rows, opened via a button. Used for
+   * the onboarding script's structured multiple-choice questions, which have
+   * up to 6 options each (sendInteractiveButtons' 3-button cap can't fit
+   * those; this is the WhatsApp-native way to offer more than 3 choices
+   * without falling back to typed free text).
+   */
+  async sendListMessage(
+    to: string,
+    bodyText: string,
+    buttonLabel: string,
+    rows: ListRow[],
+    userId?: string,
+  ): Promise<{ waMessageId: string }> {
+    if (rows.length === 0 || rows.length > 10) {
+      throw new Error(
+        `sendListMessage: WhatsApp allows 1-10 rows, got ${rows.length}`,
+      );
+    }
+
+    const payload = {
+      messaging_product: "whatsapp",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "list",
+        body: { text: bodyText },
+        action: {
+          button: buttonLabel.slice(0, 20),
+          sections: [
+            {
+              rows: rows.map((r) => ({
+                id: r.id,
+                title: r.title.slice(0, 24),
+                description: r.description?.slice(0, 72),
+              })),
+            },
+          ],
         },
       },
     };

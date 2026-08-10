@@ -129,6 +129,7 @@ enum NudgeType {
   DAILY_SUMMARY
   BORROW_WARNING
   SETTINGS_ELIGIBLE
+  HABIT_FORMING_FOLLOWUP // onboarding script stage 13 — ~10h after onboarding completes, once ever
   OTHER
 }
 
@@ -140,6 +141,13 @@ model User {
   id                String   @id @default(uuid())
   whatsappNumber    String   @unique
   rubiesAccountId   String?  @unique
+
+  // Identity captured during onboarding (Identity/AI Reflection stages, onboarding script)
+  name              String?
+  occupation        String?
+  city              String?
+  dateOfBirth       DateTime? // collected at the Trust Moment specifically — Rubies KYC needs a real DOB, not just age
+  email             String?
 
   // Financial profile (captured at onboarding — section 7 / 7a of PRD)
   monthlyIncome     Decimal? @db.Decimal(14, 2)

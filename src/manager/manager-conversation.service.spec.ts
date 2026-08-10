@@ -13,7 +13,10 @@ describe("ManagerConversationService", () => {
   };
   let manager: { fileChangeRequest: jest.Mock; reviewRequest: jest.Mock };
   let whatsapp: { sendText: jest.Mock };
+  let chunkedMessenger: { sendChunkedReply: jest.Mock };
   let config: { get: jest.Mock };
+  let llm: { complete: jest.Mock };
+  let llmLogger: { log: jest.Mock };
 
   const user = {
     id: "user-1",
@@ -38,13 +41,21 @@ describe("ManagerConversationService", () => {
     whatsapp = {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "wamid.1" }),
     };
+    chunkedMessenger = {
+      sendChunkedReply: jest.fn().mockResolvedValue(undefined),
+    };
     config = { get: jest.fn((_key: string, fallback?: unknown) => fallback) };
+    llm = { complete: jest.fn() };
+    llmLogger = { log: jest.fn().mockResolvedValue({ id: "log-1" }) };
 
     service = new ManagerConversationService(
       prisma as any,
       manager as any,
       whatsapp as any,
+      chunkedMessenger as any,
       config as any,
+      llm as any,
+      llmLogger as any,
     );
   });
 
@@ -98,8 +109,9 @@ describe("ManagerConversationService", () => {
   });
 
   describe("sendInitialReply", () => {
-    it("quotes the user's statedGoal and states eligibleAt plainly", async () => {
-      const eligibleAt = new Date("2026-08-17T00:00:00Z");
+    const eligibleAt = new Date("2026-08-17T00:00:00Z");
+
+    beforeEach(() => {
       prisma.settingsChangeRequest.findUniqueOrThrow.mockResolvedValue({
         id: "req-1",
         userId: "user-1",
@@ -107,14 +119,28 @@ describe("ManagerConversationService", () => {
         reason: "flexibility",
         eligibleAt,
       });
+    });
+
+    it("uses the AI-generated text when the LLM call succeeds", async () => {
+      llm.complete.mockResolvedValue({
+        text: "generated procedural reply",
+        raw: {},
+        latencyMs: 1,
+        provider: "stub",
+        model: "stub",
+      });
 
       await service.sendInitialReply("req-1");
 
-      const [, message] = whatsapp.sendText.mock.calls[0];
-      expect(message).toContain("buy a landed property this year");
-      expect(message).toContain(eligibleAt.toDateString());
-      expect(message).toContain("turn off the window");
-      expect(message).toContain("flexibility");
+      expect(llm.complete).toHaveBeenCalledWith(
+        expect.objectContaining({ purpose: "MANAGER_REPLY", userId: "user-1" }),
+      );
+      expect(llmLogger.log).toHaveBeenCalled();
+      expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
+        "234801",
+        "generated procedural reply",
+        "user-1",
+      );
       expect(prisma.settingsChangeRequest.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "req-1" },
@@ -123,37 +149,61 @@ describe("ManagerConversationService", () => {
       );
     });
 
-    it("still states eligibleAt plainly when the user has no statedGoal", async () => {
+    it("falls back to the deterministic template (still quoting statedGoal and eligibleAt) when the LLM call throws", async () => {
+      llm.complete.mockRejectedValue(new Error("provider down"));
+
+      await service.sendInitialReply("req-1");
+
+      const [, message] = chunkedMessenger.sendChunkedReply.mock.calls[0];
+      expect(message).toContain("buy a landed property this year");
+      expect(message).toContain(eligibleAt.toDateString());
+      expect(prisma.settingsChangeRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { initialReplySentAt: expect.any(Date) },
+        }),
+      );
+    });
+
+    it("falls back to the deterministic template when the LLM returns no text", async () => {
+      llm.complete.mockResolvedValue({
+        raw: {},
+        latencyMs: 1,
+        provider: "stub",
+        model: "stub",
+      });
+
+      await service.sendInitialReply("req-1");
+
+      const [, message] = chunkedMessenger.sendChunkedReply.mock.calls[0];
+      expect(message).toContain(eligibleAt.toDateString());
+    });
+
+    it("still states eligibleAt plainly in the fallback when the user has no statedGoal", async () => {
       prisma.user.findUniqueOrThrow.mockResolvedValue({
         ...user,
         statedGoal: null,
         statedGoalSetAt: null,
       });
-      const eligibleAt = new Date("2026-08-17T00:00:00Z");
-      prisma.settingsChangeRequest.findUniqueOrThrow.mockResolvedValue({
-        id: "req-1",
-        userId: "user-1",
-        requestedChange: "x",
-        reason: null,
-        eligibleAt,
-      });
+      llm.complete.mockRejectedValue(new Error("provider down"));
 
       await service.sendInitialReply("req-1");
 
-      const [, message] = whatsapp.sendText.mock.calls[0];
+      const [, message] = chunkedMessenger.sendChunkedReply.mock.calls[0];
       expect(message).toContain(eligibleAt.toDateString());
       expect(message).not.toContain("undefined");
     });
 
-    it("leaves initialReplySentAt unset if the WhatsApp send fails, so it stays eligible for retry", async () => {
-      prisma.settingsChangeRequest.findUniqueOrThrow.mockResolvedValue({
-        id: "req-1",
-        userId: "user-1",
-        requestedChange: "x",
-        reason: null,
-        eligibleAt: new Date(),
+    it("leaves initialReplySentAt unset if the send itself fails, so it stays eligible for retry", async () => {
+      llm.complete.mockResolvedValue({
+        text: "reply",
+        raw: {},
+        latencyMs: 1,
+        provider: "stub",
+        model: "stub",
       });
-      whatsapp.sendText.mockRejectedValue(new Error("Meta API down"));
+      chunkedMessenger.sendChunkedReply.mockRejectedValue(
+        new Error("Meta API down"),
+      );
 
       await expect(service.sendInitialReply("req-1")).rejects.toThrow(
         "Meta API down",

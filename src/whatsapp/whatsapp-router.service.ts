@@ -1,7 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsappService } from "./whatsapp.service";
-import { OnboardingService } from "../onboarding/onboarding.service";
+import {
+  OnboardingService,
+  isPreAccountStage,
+} from "../onboarding/onboarding.service";
 import { SpendSummaryService } from "../allowance/spend-summary.service";
 import {
   TransferConfirmationService,
@@ -9,32 +12,29 @@ import {
   CANCEL_BUTTON_PREFIX,
 } from "./transfer-confirmation.service";
 import { ManagerConversationService } from "../manager/manager-conversation.service";
+import { KeduChatService } from "./kedu-chat.service";
 import {
   parseManagerCommand,
   parseTransferCommand,
   isSpendSummaryQuery,
 } from "./parsers/text-command.parser";
-import {
-  OnboardingStage,
-  User,
-  WhatsappMessage,
-  WhatsappMessageType,
-} from "@prisma/client";
+import { User, WhatsappMessage, WhatsappMessageType } from "@prisma/client";
 
 const STOPGAP_HELP_TEXT =
-  "Kedu's full conversation engine isn't wired up yet. For now, try:\n" +
+  "quick reference — i can also just chat, but these always work:\n" +
   '  "send <amount> to <10-digit account> <6-digit bank code>"\n' +
   '  "summary" — this week\'s spending\n' +
   '  "manager <WINDOW_HOURS|OVERRIDE_FEES|EXIT_RESTRICTIONS|OTHER> <why>"';
 
 /**
  * The top-level inbound decision tree (PRD §5: webhook-in -> window check ->
- * allowance check -> ... -> response-out). Free-text intent classification
- * (AI layer, Phase 3, deliberately deferred) is replaced by a small set of
- * structured text commands (parsers/text-command.parser.ts) — deliberately
- * honest about being a stopgap, not real NLP. Onboarding's structured
- * questions still need Phase 4, also deferred — the onboarding branch below
- * remains a placeholder for that specifically.
+ * allowance check -> ... -> response-out).
+ *
+ * Free-text transfer/settings-change/summary intent is still a small set of
+ * structured stopgap commands (parsers/text-command.parser.ts), not real NLP
+ * classification — deliberately honest about that; nothing downstream
+ * depends on it changing. Everything else (general conversation, and the
+ * full onboarding script) now goes through the real AI layer.
  */
 @Injectable()
 export class WhatsappRouterService {
@@ -47,6 +47,7 @@ export class WhatsappRouterService {
     private readonly spendSummary: SpendSummaryService,
     private readonly transferConfirmation: TransferConfirmationService,
     private readonly managerConversation: ManagerConversationService,
+    private readonly keduChat: KeduChatService,
   ) {}
 
   async route(message: WhatsappMessage): Promise<void> {
@@ -112,10 +113,9 @@ export class WhatsappRouterService {
   }
 
   /**
-   * Dispatches by button-id namespace. The confirm_transfer / cancel_transfer
-   * prefixes (Phase 8) are real. Onboarding quick-reply buttons still need
-   * Phase 4's structured-question handling (deferred) — anything else falls
-   * through to a placeholder.
+   * Dispatches by button-id namespace: confirm_transfer/cancel_transfer to
+   * TransferConfirmationService; during onboarding's STRUCTURED_QUESTIONS
+   * stage, everything else goes to OnboardingService's list-reply handler.
    */
   private async handleButtonReply(
     user: User,
@@ -134,8 +134,13 @@ export class WhatsappRouterService {
       return;
     }
 
+    if (isPreAccountStage(user.onboardingStage)) {
+      await this.onboarding.handleInboundButton(user, payload);
+      return;
+    }
+
     this.logger.debug(
-      `Button reply "${payload}" from ${message.fromNumber} — not yet routed`,
+      `Button reply "${payload}" from ${message.fromNumber} — not routed`,
     );
     await this.whatsapp.sendText(
       message.fromNumber,
@@ -145,13 +150,10 @@ export class WhatsappRouterService {
   }
 
   /**
-   * Onboarding-incomplete users: message history is captured for real (so
-   * nothing is lost once the AI layer lands), but the conversational reply
-   * is a placeholder — OnboardingService.buildPrompt/extractStructuredField
-   * are TODOs (Phase 3/4, deliberately deferred).
-   * Onboarding-complete users: dispatched through the structured-command
-   * stopgap (see module docblock) — transfer / manager / spend-summary — or
-   * the help text if nothing matches.
+   * Pre-account-stage users (still in the onboarding script) go entirely to
+   * OnboardingService. Everyone else gets the structured stopgap commands
+   * first (transfer/manager/summary), falling through to real Kedu-persona
+   * chat for anything else.
    */
   private async handleText(
     user: User,
@@ -159,14 +161,8 @@ export class WhatsappRouterService {
   ): Promise<void> {
     const text = message.textBody ?? "";
 
-    if (user.onboardingStage !== OnboardingStage.COMPLETE) {
-      const session = await this.onboarding.getOrStartSession(user.id);
-      await this.onboarding.appendMessage(session.id, "user", text);
-      await this.whatsapp.sendText(
-        message.fromNumber,
-        "Thanks — I've got that noted. Kedu's onboarding conversation isn't fully wired up yet, but nothing you say here is lost.",
-        user.id,
-      );
+    if (isPreAccountStage(user.onboardingStage)) {
+      await this.onboarding.handleInboundText(user, text);
       return;
     }
 
@@ -198,11 +194,16 @@ export class WhatsappRouterService {
       return;
     }
 
-    await this.whatsapp.sendText(
-      message.fromNumber,
-      STOPGAP_HELP_TEXT,
-      user.id,
-    );
+    if (/^help$|^menu$|^commands$/i.test(text.trim())) {
+      await this.whatsapp.sendText(
+        message.fromNumber,
+        STOPGAP_HELP_TEXT,
+        user.id,
+      );
+      return;
+    }
+
+    await this.keduChat.handleMessage(user, text);
   }
 
   private async handleUnsupportedMedia(

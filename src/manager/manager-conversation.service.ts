@@ -1,9 +1,19 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { ChunkedMessengerService } from "../whatsapp/chunked-messenger.service";
 import { ManagerService } from "./manager.service";
-import { SettingsChangeStatus, SettingsChangeType } from "@prisma/client";
+import { CONVERSATION_LLM, LlmMessage, LlmService } from "../ai/llm.types";
+import { LlmCallLoggerService } from "../ai/llm-call-logger.service";
+import { buildManagerSystemMessage } from "../ai/prompts/manager-persona.prompts";
+import {
+  LlmCallPurpose,
+  SettingsChangeRequest,
+  SettingsChangeStatus,
+  SettingsChangeType,
+  User,
+} from "@prisma/client";
 
 /**
  * The conversation-layer half of "the managers" (PRD §7) — everything
@@ -11,13 +21,12 @@ import { SettingsChangeStatus, SettingsChangeType } from "@prisma/client";
  * deliberate delay, and applying the effect of an approved decision.
  * ManagerService's hard eligibleAt gate is never touched from here.
  *
- * AI is deferred (Phase 3/4, deliberately): the actual conversational reply
- * is a canned template rather than a generated one, but it still does the
- * one thing that matters procedurally — quotes the user's own statedGoal
- * back at them (PRD §7: "the callback should quote the user's own stated
- * goal and progress from onboarding") — and the tone is written to read as
- * more procedural/less warm than Kedu's own replies, even though nothing
- * here is a hallucinated persona voice.
+ * The substantive reply (sendInitialReply) is now real AI generation, using
+ * the Manager persona prompt (docs/✅-Kedu-Character-Tone-Prompt.pdf's "the
+ * one place your tone shifts on purpose") — with a deterministic fallback
+ * template if the call fails, so the mechanic that actually matters (quoting
+ * statedGoal, stating eligibleAt plainly) never breaks just because the AI
+ * provider is unavailable.
  */
 @Injectable()
 export class ManagerConversationService {
@@ -27,7 +36,10 @@ export class ManagerConversationService {
     private readonly prisma: PrismaService,
     private readonly manager: ManagerService,
     private readonly whatsapp: WhatsappService,
+    private readonly chunkedMessenger: ChunkedMessengerService,
     private readonly config: ConfigService,
+    @Inject(CONVERSATION_LLM) private readonly llm: LlmService,
+    private readonly llmLogger: LlmCallLoggerService,
   ) {}
 
   private get initialReplyDelayHours(): number {
@@ -72,13 +84,11 @@ export class ManagerConversationService {
 
   /**
    * The delayed initial reply itself — called by ManagerScheduler once
-   * initialReplyDueAt has passed. Quotes statedGoal when it exists; the
-   * eligibleAt date is stated plainly either way, since that's the one thing
-   * that must never be soft-pedaled. initialReplySentAt is only stamped
-   * *after* the send succeeds — if WhatsApp delivery fails, this throws and
-   * the request stays eligible for findDueInitialReplies, so
-   * ManagerScheduler naturally retries on its next tick instead of losing
-   * the notification silently.
+   * initialReplyDueAt has passed. initialReplySentAt is only stamped *after*
+   * the send succeeds — if WhatsApp delivery fails, this throws and the
+   * request stays eligible for findDueInitialReplies, so ManagerScheduler
+   * naturally retries on its next tick instead of losing the notification
+   * silently.
    */
   async sendInitialReply(requestId: string): Promise<void> {
     const request = await this.prisma.settingsChangeRequest.findUniqueOrThrow({
@@ -88,7 +98,68 @@ export class ManagerConversationService {
       where: { id: request.userId },
     });
 
+    const message = await this.generateInitialReplyText(user, request);
+
+    await this.chunkedMessenger.sendChunkedReply(
+      user.whatsappNumber,
+      message,
+      user.id,
+    );
+    await this.prisma.settingsChangeRequest.update({
+      where: { id: requestId },
+      data: { initialReplySentAt: new Date() },
+    });
+  }
+
+  private async generateInitialReplyText(
+    user: User,
+    request: SettingsChangeRequest,
+  ): Promise<string> {
     const eligibleAtText = request.eligibleAt.toDateString();
+    const goalContext = user.statedGoal
+      ? `On ${user.statedGoalSetAt ? user.statedGoalSetAt.toDateString() : "an earlier date"}, this user told Kedu their goal was: "${user.statedGoal}".`
+      : "This user has not stated a goal yet — don't invent one.";
+
+    const contextMessage: LlmMessage = {
+      role: "system",
+      content: [
+        `Request type: ${request.type}`,
+        `Requested change: "${request.requestedChange}"`,
+        request.reason
+          ? `Reason given: "${request.reason}"`
+          : "No reason given.",
+        goalContext,
+        `This request becomes eligible for a decision on ${eligibleAtText}, not before — this date is fixed and non-negotiable, state it plainly.`,
+        "Write the initial reply now: acknowledge the request, reference their stated goal if one was given, and state the eligibility date plainly.",
+      ].join("\n"),
+    };
+
+    try {
+      const result = await this.llm.complete({
+        messages: [buildManagerSystemMessage(), contextMessage],
+        purpose: LlmCallPurpose.MANAGER_REPLY,
+        userId: user.id,
+      });
+      await this.llmLogger.log({
+        userId: user.id,
+        purpose: LlmCallPurpose.MANAGER_REPLY,
+        result,
+      });
+      if (result.text) return result.text;
+    } catch (err) {
+      this.logger.warn(
+        `Manager AI reply generation failed, falling back to template: ${String(err)}`,
+      );
+    }
+
+    return this.buildFallbackInitialReplyText(user, request, eligibleAtText);
+  }
+
+  private buildFallbackInitialReplyText(
+    user: User,
+    request: SettingsChangeRequest,
+    eligibleAtText: string,
+  ): string {
     const lines = [
       "This is the managers.",
       `We've logged your request: "${request.requestedChange}"`,
@@ -105,12 +176,7 @@ export class ManagerConversationService {
     lines.push(
       `It becomes eligible for a decision on ${eligibleAtText}, not before. We'll follow up then.`,
     );
-
-    await this.whatsapp.sendText(user.whatsappNumber, lines.join(" "), user.id);
-    await this.prisma.settingsChangeRequest.update({
-      where: { id: requestId },
-      data: { initialReplySentAt: new Date() },
-    });
+    return lines.join(" ");
   }
 
   /**

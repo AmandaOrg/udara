@@ -73,11 +73,23 @@ class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  AI_PROVIDER?: string;
+
+  @IsOptional()
+  @IsString()
   CLASSIFIER_MODEL_API_KEY?: string;
 
   @IsOptional()
   @IsString()
   CONVERSATION_MODEL_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  CLASSIFIER_MODEL_NAME?: string;
+
+  @IsOptional()
+  @IsString()
+  CONVERSATION_MODEL_NAME?: string;
 
   @IsInt()
   @Min(0)

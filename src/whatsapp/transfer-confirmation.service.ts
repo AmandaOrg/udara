@@ -6,6 +6,7 @@ import { RubiesService } from "../rubies/rubies.service";
 import { TaggingService } from "../tagging/tagging.service";
 import { WhatsappService } from "./whatsapp.service";
 import {
+  OnboardingStage,
   RecipientLabel,
   TransactionStatus,
   TransactionType,
@@ -289,11 +290,23 @@ export class TransferConfirmationService {
         });
       }
       await this.allowance.recordSpend(transaction.id);
-      await this.whatsapp.sendText(
-        transaction.user.whatsappNumber,
-        `Done — ₦${Number(transaction.amount).toLocaleString("en-NG")} sent to ${transaction.recipient.accountName ?? transaction.recipient.accountNumber}.`,
-        transaction.user.id,
-      );
+
+      const isFirstTransactionOfOnboarding =
+        transaction.user.onboardingStage === OnboardingStage.ACCOUNT_CREATED ||
+        transaction.user.onboardingStage === OnboardingStage.FUNDED;
+
+      if (isFirstTransactionOfOnboarding) {
+        await this.completeOnboardingAfterFirstTransaction(
+          transaction.userId,
+          transaction.user.whatsappNumber,
+        );
+      } else {
+        await this.whatsapp.sendText(
+          transaction.user.whatsappNumber,
+          `Done — ₦${Number(transaction.amount).toLocaleString("en-NG")} sent to ${transaction.recipient.accountName ?? transaction.recipient.accountNumber}.`,
+          transaction.user.id,
+        );
+      }
     } else {
       await this.whatsapp.sendText(
         transaction.user.whatsappNumber,
@@ -301,5 +314,51 @@ export class TransferConfirmationService {
         transaction.user.id,
       );
     }
+  }
+
+  /**
+   * Onboarding script Stage 12 (First Transaction) -> Stage 13 (Habit-Forming
+   * Follow-Up, sent ~10h later by AllowanceScheduler). FUNDED/ACCOUNT_CREATED
+   * users skip straight to COMPLETE here rather than persisting a distinct
+   * FIRST_TRANSACTION row — nothing else in the app branches on that
+   * intermediate value, and the transition is instantaneous in practice.
+   */
+  private async completeOnboardingAfterFirstTransaction(
+    userId: string,
+    whatsappNumber: string,
+  ): Promise<void> {
+    const allowance = await this.allowance.getOrCreateTodayAllowance(userId);
+    const remainingToday =
+      Number(allowance.amountAllocated) +
+      Number(allowance.surplusCarriedIn) -
+      Number(allowance.amountSpent);
+
+    const weekRows = await this.prisma.dailyAllowance.findMany({
+      where: { userId, weekStartDate: allowance.weekStartDate },
+    });
+    const remainingWeek = weekRows.reduce(
+      (sum, row) =>
+        sum +
+        Number(row.amountAllocated) +
+        Number(row.surplusCarriedIn) -
+        Number(row.amountSpent),
+      0,
+    );
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        onboardingStage: OnboardingStage.COMPLETE,
+        onboardingCompletedAt: new Date(),
+      },
+    });
+
+    const text = [
+      "payment successful ✅",
+      `remaining today: ₦${remainingToday.toLocaleString("en-NG")}`,
+      `remaining this week: ₦${remainingWeek.toLocaleString("en-NG")}`,
+      "keep going.",
+    ].join("\n\n");
+    await this.whatsapp.sendText(whatsappNumber, text, userId);
   }
 }

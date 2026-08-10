@@ -91,6 +91,46 @@ export class AllowanceScheduler {
   }
 
   /**
+   * Onboarding script Stage 13 (Habit-Forming Follow-Up, "~10 hours later").
+   * A rolling 10-11h window rather than an exact scheduled fire time — this
+   * runs hourly, so anyone whose onboardingCompletedAt falls in the window
+   * on a given tick gets caught; NudgeLog dedup (no `sentAt` time-bound,
+   * unlike the daily WINDOW_OPEN nudge) makes this a true once-ever send.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async sendHabitFormingFollowUps() {
+    const now = new Date();
+    const windowStart = new Date(now.getTime() - 11 * 60 * 60 * 1000);
+    const windowEnd = new Date(now.getTime() - 10 * 60 * 60 * 1000);
+
+    const dueUsers = await this.prisma.user.findMany({
+      where: { onboardingCompletedAt: { gte: windowStart, lte: windowEnd } },
+    });
+    if (dueUsers.length === 0) return;
+
+    const text = [
+      "one thing that makes kedu work better: remove easy access to the old habits.",
+      "consider:\n- removing saved cards from shopping apps\n- reducing access to other banking apps\n- using kedu as your main spending account",
+      "kedu works best when you design your environment to support your goals.",
+    ].join("\n\n");
+
+    for (const user of dueUsers) {
+      const alreadySent = await this.prisma.nudgeLog.findFirst({
+        where: { userId: user.id, type: NudgeType.HABIT_FORMING_FOLLOWUP },
+      });
+      if (alreadySent) continue;
+
+      try {
+        await this.sendNudge(user, NudgeType.HABIT_FORMING_FOLLOWUP, text);
+      } catch (err) {
+        this.logger.error(
+          `Failed to send habit-forming follow-up to user ${user.id}: ${String(err)}`,
+        );
+      }
+    }
+  }
+
+  /**
    * WhatsApp free-form sends are blocked more than 24h after the user's last
    * inbound message — falls back to a pre-approved template in that case, or
    * skips (loudly logged, not silently) if no template name is configured.

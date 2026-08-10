@@ -196,4 +196,50 @@ describe("AllowanceScheduler", () => {
       expect(prisma.nudgeLog.findFirst).not.toHaveBeenCalled();
     });
   });
+
+  describe("sendHabitFormingFollowUps", () => {
+    it("queries users whose onboardingCompletedAt falls in the 10-11h-ago window", async () => {
+      prisma.user.findMany.mockResolvedValue([]);
+      await scheduler.sendHabitFormingFollowUps();
+      const call = prisma.user.findMany.mock.calls[0][0];
+      const { gte, lte } = call.where.onboardingCompletedAt;
+      expect(lte.getTime() - gte.getTime()).toBe(60 * 60 * 1000); // exactly a 1h window
+      expect(Date.now() - lte.getTime()).toBeCloseTo(10 * 60 * 60 * 1000, -3);
+    });
+
+    it("sends once and logs it via NudgeLog, with no daily-style sentAt bound (once ever)", async () => {
+      const user = makeUser({ onboardingCompletedAt: new Date() });
+      prisma.user.findMany.mockResolvedValue([user]);
+
+      await scheduler.sendHabitFormingFollowUps();
+
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.any(String),
+        "user-1",
+      );
+      expect(prisma.nudgeLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            type: NudgeType.HABIT_FORMING_FOLLOWUP,
+          }),
+        }),
+      );
+      const findFirstCall = prisma.nudgeLog.findFirst.mock.calls[0][0];
+      expect(findFirstCall.where).toEqual({
+        userId: "user-1",
+        type: NudgeType.HABIT_FORMING_FOLLOWUP,
+      });
+    });
+
+    it("never sends a second time once already logged", async () => {
+      const user = makeUser({ onboardingCompletedAt: new Date() });
+      prisma.user.findMany.mockResolvedValue([user]);
+      prisma.nudgeLog.findFirst.mockResolvedValue({ id: "already-sent" });
+
+      await scheduler.sendHabitFormingFollowUps();
+
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+    });
+  });
 });
