@@ -53,11 +53,19 @@ class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  RUBIES_STAGE?: string;
+
+  @IsOptional()
+  @IsString()
   RUBIES_API_KEY?: string;
 
   @IsOptional()
   @IsString()
   RUBIES_SECRET_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  RUBIES_DRY_RUN?: string;
 
   @IsOptional()
   @IsString()

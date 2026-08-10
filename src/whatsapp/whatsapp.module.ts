@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { forwardRef, Module } from "@nestjs/common";
 import { HttpModule } from "@nestjs/axios";
 import { WhatsappController } from "./whatsapp.controller";
 import { WhatsappService } from "./whatsapp.service";
@@ -15,7 +15,9 @@ import { ManagerModule } from "../manager/manager.module";
   imports: [
     HttpModule,
     AllowanceModule,
-    RubiesModule,
+    // forwardRef: RubiesModule's webhook controller needs WhatsappService back —
+    // see rubies.module.ts for the other half of this circular import.
+    forwardRef(() => RubiesModule),
     TaggingModule,
     OnboardingModule,
     ManagerModule,
