@@ -20,7 +20,9 @@ import { ManagerModule } from "../manager/manager.module";
     forwardRef(() => RubiesModule),
     TaggingModule,
     OnboardingModule,
-    ManagerModule,
+    // forwardRef: ManagerModule's ManagerConversationService needs WhatsappService
+    // back — see manager.module.ts for the other half of this circular import.
+    forwardRef(() => ManagerModule),
   ],
   controllers: [WhatsappController],
   providers: [

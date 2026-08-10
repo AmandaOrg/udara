@@ -105,6 +105,11 @@ class EnvironmentVariables {
   @Min(0)
   SETTINGS_CHANGE_MIN_DAYS: number;
 
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  MANAGER_INITIAL_REPLY_DELAY_HOURS?: number;
+
   @IsInt()
   @Min(1)
   @Max(65535)

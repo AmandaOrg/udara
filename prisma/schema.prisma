@@ -295,6 +295,14 @@ model SettingsChangeRequest {
   requestedAt   DateTime @default(now())
   eligibleAt    DateTime // requestedAt + 7 days, computed at creation
 
+  // PRD §7: "a real delay is part of the design... not an instant reply — even a few
+  // hours... gives the impulse room to pass." Separate from and in addition to the
+  // hard `eligibleAt` gate above — this governs only the initial acknowledgment reply,
+  // not eligibility for a decision. Durable (DB-backed, not an in-memory timer) so it
+  // survives a process restart between filing and the scheduled reply.
+  initialReplyDueAt  DateTime?
+  initialReplySentAt DateTime?
+
   status        SettingsChangeStatus @default(PENDING)
   managerNotes  String?
   resolvedAt    DateTime?
