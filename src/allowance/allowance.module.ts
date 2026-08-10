@@ -3,6 +3,7 @@ import { AllowanceService } from "./allowance.service";
 import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { AllowanceScheduler } from "./allowance.scheduler";
+import { SpendSummaryService } from "./spend-summary.service";
 
 @Module({
   providers: [
@@ -10,7 +11,13 @@ import { AllowanceScheduler } from "./allowance.scheduler";
     WindowService,
     FeeCalculatorService,
     AllowanceScheduler,
+    SpendSummaryService,
   ],
-  exports: [AllowanceService, WindowService, FeeCalculatorService],
+  exports: [
+    AllowanceService,
+    WindowService,
+    FeeCalculatorService,
+    SpendSummaryService,
+  ],
 })
 export class AllowanceModule {}

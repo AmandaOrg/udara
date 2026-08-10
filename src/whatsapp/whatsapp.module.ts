@@ -5,6 +5,8 @@ import { WhatsappService } from "./whatsapp.service";
 import { WhatsappSignatureGuard } from "./whatsapp-signature.guard";
 import { WhatsappMessageService } from "./whatsapp-message.service";
 import { WhatsappRouterService } from "./whatsapp-router.service";
+import { TransferConfirmationService } from "./transfer-confirmation.service";
+import { TransferReconciliationScheduler } from "./transfer-reconciliation.scheduler";
 import { AllowanceModule } from "../allowance/allowance.module";
 import { RubiesModule } from "../rubies/rubies.module";
 import { TaggingModule } from "../tagging/tagging.module";
@@ -30,7 +32,13 @@ import { ManagerModule } from "../manager/manager.module";
     WhatsappSignatureGuard,
     WhatsappMessageService,
     WhatsappRouterService,
+    TransferConfirmationService,
+    TransferReconciliationScheduler,
   ],
-  exports: [WhatsappService, WhatsappMessageService],
+  exports: [
+    WhatsappService,
+    WhatsappMessageService,
+    TransferConfirmationService,
+  ],
 })
 export class WhatsappModule {}

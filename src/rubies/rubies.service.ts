@@ -229,7 +229,9 @@ export class RubiesService {
    * transfer (a lesson carried over from the reference wallet integration).
    */
   async getBalance(accountNumber: string): Promise<number> {
-    if (this.dryRun) return 0;
+    // A large fixed figure, not 0 — dry-run exists to simulate "this works," and 0
+    // would make every dry-run transfer fail a caller's insufficient-funds check.
+    if (this.dryRun) return 10_000_000;
 
     const response = await this.post<{ accountBalance?: string }>(
       "/baas-wallet/balance-enquiry",
