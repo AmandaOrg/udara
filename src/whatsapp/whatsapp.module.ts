@@ -16,7 +16,9 @@ import { ManagerModule } from "../manager/manager.module";
 @Module({
   imports: [
     HttpModule,
-    AllowanceModule,
+    // forwardRef: AllowanceModule's AllowanceScheduler needs WhatsappService back
+    // (window-open nudge, Phase 9) — see allowance.module.ts for the other half.
+    forwardRef(() => AllowanceModule),
     // forwardRef: RubiesModule's webhook controller needs WhatsappService back —
     // see rubies.module.ts for the other half of this circular import.
     forwardRef(() => RubiesModule),

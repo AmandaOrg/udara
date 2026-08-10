@@ -48,6 +48,10 @@ class EnvironmentVariables {
   WHATSAPP_APP_SECRET?: string;
 
   @IsOptional()
+  @IsString()
+  WHATSAPP_WINDOW_OPEN_TEMPLATE_NAME?: string;
+
+  @IsOptional()
   @IsUrl({ require_tld: false })
   RUBIES_BASE_URL?: string;
 

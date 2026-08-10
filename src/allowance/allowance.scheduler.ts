@@ -1,27 +1,136 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
+import { AllowanceService } from "./allowance.service";
+import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { NudgeType, User } from "@prisma/client";
+
+const FREE_FORM_WINDOW_MS = 24 * 60 * 60 * 1000; // Meta blocks free-form sends past 24h since the user's last inbound message
 
 /**
  * Allowance rows are created lazily on first check-in (see
- * AllowanceService.getOrCreateTodayAllowance), so this job is mostly a safety
- * net + the place to send the proactive "your day is unlocked" nudge once
- * that's in scope. Keep this thin — the rollover/window math itself lives in
- * AllowanceService, not here.
+ * AllowanceService.getOrCreateTodayAllowance), so the midnight job here is
+ * mostly a safety net. Also home to the window-open proactive nudge (PRD
+ * §13) — explicitly post-v0 per the build-out plan (not a §4.1 must-have),
+ * included because the NudgeLog schema and this scheduler already exist and
+ * the marginal cost is low.
  */
 @Injectable()
 export class AllowanceScheduler {
   private readonly logger = new Logger(AllowanceScheduler.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly allowance: AllowanceService,
+    private readonly whatsapp: WhatsappService,
+    private readonly config: ConfigService,
+  ) {}
+
+  /** "Active" here just means "has a Rubies account" — the only notion of an onboarded user this schema has. */
+  private findActiveUsers(extraWhere: Record<string, unknown> = {}) {
+    return this.prisma.user.findMany({
+      where: { rubiesAccountNumber: { not: null }, ...extraWhere },
+    });
+  }
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleDailyBoundary() {
+    const activeUsers = await this.findActiveUsers();
     this.logger.log(
-      "Daily boundary job running — TODO: pre-warm allowances, send unlock nudges",
+      `Daily boundary: pre-warming allowances for ${activeUsers.length} active user(s)`,
     );
-    // TODO: for each active user, ensure today's DailyAllowance row exists
-    // (or leave fully lazy) and optionally send a WhatsApp "today's allowance
-    // is ready" message once the proactive-nudge feature (PRD #13) is built.
+    for (const user of activeUsers) {
+      try {
+        await this.allowance.getOrCreateTodayAllowance(user.id);
+      } catch (err) {
+        this.logger.error(
+          `Failed to pre-warm allowance for user ${user.id}: ${String(err)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Fires once per user per calendar day, at their own windowStartHour
+   * (per-user overridable, defaults to 11 per DAILY_WINDOW_START_HOUR).
+   * NudgeLog is the dedup key so a scheduler restart or overlapping tick
+   * can't double-send.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async sendWindowOpenNudges() {
+    const now = new Date();
+    const hour = now.getHours();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    const dueUsers = await this.findActiveUsers({ windowStartHour: hour });
+    if (dueUsers.length === 0) return;
+
+    for (const user of dueUsers) {
+      const alreadySent = await this.prisma.nudgeLog.findFirst({
+        where: {
+          userId: user.id,
+          type: NudgeType.WINDOW_OPEN,
+          sentAt: { gte: today },
+        },
+      });
+      if (alreadySent) continue;
+
+      try {
+        await this.sendNudge(
+          user,
+          NudgeType.WINDOW_OPEN,
+          "Your day is unlocked — today's allowance is ready to spend.",
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to send window-open nudge to user ${user.id}: ${String(err)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * WhatsApp free-form sends are blocked more than 24h after the user's last
+   * inbound message — falls back to a pre-approved template in that case, or
+   * skips (loudly logged, not silently) if no template name is configured.
+   */
+  private async sendNudge(
+    user: User,
+    type: NudgeType,
+    text: string,
+  ): Promise<void> {
+    const withinFreeFormWindow =
+      !!user.lastInboundMessageAt &&
+      Date.now() - user.lastInboundMessageAt.getTime() < FREE_FORM_WINDOW_MS;
+
+    if (withinFreeFormWindow) {
+      await this.whatsapp.sendText(user.whatsappNumber, text, user.id);
+      await this.prisma.nudgeLog.create({
+        data: { userId: user.id, type, channel: "freeform" },
+      });
+      return;
+    }
+
+    const templateName = this.config.get<string>(
+      "WHATSAPP_WINDOW_OPEN_TEMPLATE_NAME",
+    );
+    if (!templateName) {
+      this.logger.warn(
+        `Skipping ${type} nudge for user ${user.id} — outside the 24h free-form window and no template configured (WHATSAPP_WINDOW_OPEN_TEMPLATE_NAME)`,
+      );
+      return;
+    }
+
+    await this.whatsapp.sendTemplate(
+      user.whatsappNumber,
+      templateName,
+      "en_US",
+      undefined,
+      user.id,
+    );
+    await this.prisma.nudgeLog.create({
+      data: { userId: user.id, type, channel: "template", templateName },
+    });
   }
 }
