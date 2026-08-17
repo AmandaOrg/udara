@@ -59,6 +59,8 @@ export class WhatsappRouterService {
       case WhatsappMessageType.BUTTON_REPLY:
       case WhatsappMessageType.LIST_REPLY:
         return this.handleButtonReply(user, message);
+      case WhatsappMessageType.FLOW_REPLY:
+        return this.handleFlowReply(user, message);
       case WhatsappMessageType.TEXT:
         return this.handleText(user, message);
       case WhatsappMessageType.IMAGE:
@@ -146,6 +148,27 @@ export class WhatsappRouterService {
       message.fromNumber,
       "Got it — I'm not able to act on that yet, this part of Kedu isn't wired up.",
       user.id,
+    );
+  }
+
+  /**
+   * A WhatsApp Flow submission — currently only the Trust Moment's KYC form
+   * (see OnboardingService.handleInboundFlowReply). Not meaningful outside a
+   * pre-account onboarding stage since nothing else in the app sends a flow.
+   */
+  private async handleFlowReply(
+    user: User,
+    message: WhatsappMessage,
+  ): Promise<void> {
+    if (!isPreAccountStage(user.onboardingStage)) {
+      this.logger.warn(
+        `FLOW_REPLY from ${message.fromNumber} at post-account stage ${user.onboardingStage} — nothing to route it to`,
+      );
+      return;
+    }
+    await this.onboarding.handleInboundFlowReply(
+      user,
+      (message.flowResponseJson as Record<string, unknown> | null) ?? {},
     );
   }
 

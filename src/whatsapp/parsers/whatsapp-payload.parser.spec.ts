@@ -76,6 +76,62 @@ describe("parseInboundPayload", () => {
     });
   });
 
+  it("parses a WhatsApp Flow submission (nfm_reply), decoding response_json", () => {
+    const payload = entryWith({
+      messages: [
+        {
+          id: "wamid.flow1",
+          from: "234801",
+          timestamp: "1700000010",
+          type: "interactive",
+          interactive: {
+            type: "nfm_reply",
+            nfm_reply: {
+              name: "flow",
+              body: "Sent",
+              response_json: JSON.stringify({
+                id_type: "BVN",
+                id_number: "12345678901",
+                email: "me@example.com",
+              }),
+            },
+          },
+        },
+      ],
+    });
+    const [result] = parseInboundPayload(payload);
+    expect(result).toMatchObject({
+      type: WhatsappMessageType.FLOW_REPLY,
+      responseJson: {
+        id_type: "BVN",
+        id_number: "12345678901",
+        email: "me@example.com",
+      },
+    });
+  });
+
+  it("falls back to an empty responseJson for malformed nfm_reply JSON", () => {
+    const payload = entryWith({
+      messages: [
+        {
+          id: "wamid.flow2",
+          from: "234801",
+          timestamp: "1700000011",
+          type: "interactive",
+          interactive: {
+            type: "nfm_reply",
+            nfm_reply: { name: "flow", body: "Sent", response_json: "{not json" },
+          },
+        },
+      ],
+    });
+    const [result] = parseInboundPayload(payload);
+    expect(result).toMatchObject({
+      type: WhatsappMessageType.FLOW_REPLY,
+      responseJson: {},
+    });
+  });
+
   it("parses a legacy quick-reply button message", () => {
     const payload = entryWith({
       messages: [

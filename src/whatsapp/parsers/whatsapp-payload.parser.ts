@@ -33,6 +33,14 @@ export type ParsedInboundMessage =
       listTitle: string;
     }
   | {
+      type: typeof WhatsappMessageType.FLOW_REPLY;
+      waMessageId: string;
+      from: string;
+      timestamp: string;
+      /** Parsed `interactive.nfm_reply.response_json` — whatever field names the flow's own payload used. */
+      responseJson: Record<string, unknown>;
+    }
+  | {
       type: typeof WhatsappMessageType.AUDIO;
       waMessageId: string;
       from: string;
@@ -88,9 +96,10 @@ interface MetaMessage {
   type: string;
   text?: { body: string };
   interactive?: {
-    type: "button_reply" | "list_reply";
+    type: "button_reply" | "list_reply" | "nfm_reply";
     button_reply?: { id: string; title: string };
     list_reply?: { id: string; title: string; description?: string };
+    nfm_reply?: { name: string; body: string; response_json: string };
   };
   button?: { text: string; payload: string }; // legacy quick-reply-button messages
   audio?: { id: string; mime_type: string };
@@ -185,6 +194,26 @@ function parseMessage(message: MetaMessage): ParsedInboundMessage {
           type: WhatsappMessageType.LIST_REPLY,
           listId: message.interactive.list_reply.id,
           listTitle: message.interactive.list_reply.title,
+        };
+      }
+      if (
+        message.interactive?.type === "nfm_reply" &&
+        message.interactive.nfm_reply
+      ) {
+        let responseJson: Record<string, unknown> = {};
+        try {
+          const parsed: unknown = JSON.parse(
+            message.interactive.nfm_reply.response_json,
+          );
+          if (isRecord(parsed)) responseJson = parsed;
+        } catch {
+          // Malformed response_json — leave responseJson empty; the caller
+          // (OnboardingService) treats missing fields as "ask again."
+        }
+        return {
+          ...base,
+          type: WhatsappMessageType.FLOW_REPLY,
+          responseJson,
         };
       }
       return { ...base, type: WhatsappMessageType.UNKNOWN, raw: message };

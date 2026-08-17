@@ -55,6 +55,10 @@ export class WhatsappMessageService {
                 : undefined,
           mediaId: "mediaId" in parsed ? parsed.mediaId : undefined,
           mediaMimeType: "mimeType" in parsed ? parsed.mimeType : undefined,
+          flowResponseJson:
+            parsed.type === WhatsappMessageType.FLOW_REPLY
+              ? (parsed.responseJson as Prisma.InputJsonValue)
+              : undefined,
           rawPayload: rawPayload as Prisma.InputJsonValue,
           status: WhatsappMessageStatus.RECEIVED,
         },

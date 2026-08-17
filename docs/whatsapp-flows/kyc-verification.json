@@ -1,0 +1,72 @@
+{
+  "version": "7.2",
+  "screens": [
+    {
+      "id": "KYC",
+      "title": "Verify your identity",
+      "terminal": true,
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "kyc_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Let's verify your identity"
+              },
+              {
+                "type": "TextBody",
+                "text": "This is a bank requirement to open your Kedu account — the same check any Nigerian bank runs. Your BVN/NIN is passed straight to Rubies Microfinance Bank and isn't stored by Kedu."
+              },
+              {
+                "type": "RadioButtonsGroup",
+                "name": "id_type",
+                "label": "Which ID do you want to use?",
+                "required": true,
+                "data-source": [
+                  { "id": "BVN", "title": "BVN" },
+                  { "id": "NIN", "title": "NIN" }
+                ]
+              },
+              {
+                "type": "TextInput",
+                "name": "id_number",
+                "label": "11-digit ID number",
+                "input-type": "number",
+                "required": true
+              },
+              {
+                "type": "DatePicker",
+                "name": "date_of_birth",
+                "label": "Date of birth",
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "email",
+                "label": "Email address",
+                "input-type": "email",
+                "required": true
+              },
+              {
+                "type": "Footer",
+                "label": "Submit",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "id_type": "${form.id_type}",
+                    "id_number": "${form.id_number}",
+                    "date_of_birth": "${form.date_of_birth}",
+                    "email": "${form.email}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

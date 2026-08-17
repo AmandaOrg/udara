@@ -14,9 +14,10 @@ import { WhatsappMessageStatus } from "@prisma/client";
 import { WhatsappSignatureGuard } from "./whatsapp-signature.guard";
 import { WhatsappMessageService } from "./whatsapp-message.service";
 import { WhatsappRouterService } from "./whatsapp-router.service";
+import { WhatsappService } from "./whatsapp.service";
 import { parseInboundPayload } from "./parsers/whatsapp-payload.parser";
 
-@Controller("webhooks/whatsapp")
+@Controller("webhooks")
 export class WhatsappController {
   private readonly logger = new Logger(WhatsappController.name);
 
@@ -24,10 +25,11 @@ export class WhatsappController {
     private readonly config: ConfigService,
     private readonly messages: WhatsappMessageService,
     private readonly router: WhatsappRouterService,
-  ) {}
+    private readonly whatsapp: WhatsappService,
+  ) { }
 
   /** Meta's webhook verification handshake. */
-  @Get()
+  @Get('whatsapp')
   verify(
     @Query("hub.mode") mode: string,
     @Query("hub.verify_token") token: string,
@@ -36,6 +38,7 @@ export class WhatsappController {
   ) {
     const expected = this.config.get<string>("WHATSAPP_WEBHOOK_VERIFY_TOKEN");
     if (mode === "subscribe" && token === expected) {
+      console.log("success")
       res.status(200).send(challenge);
     } else {
       res.sendStatus(403);
@@ -52,10 +55,11 @@ export class WhatsappController {
    * block processing/redelivery of the rest of the batch.
    */
   @UseGuards(WhatsappSignatureGuard)
-  @Post()
+  @Post('whatsapp')
   async receive(@Body() payload: unknown, @Res() res: Response) {
     res.sendStatus(200);
 
+    this.logger.debug(`Inbound webhook payload: ${JSON.stringify(payload)}`);
     const parsedMessages = parseInboundPayload(payload);
 
     for (const parsed of parsedMessages) {
@@ -66,6 +70,15 @@ export class WhatsappController {
         );
         // Duplicate redelivery, or a STATUS (delivery/read receipt) callback — nothing to route.
         if (!isNew || !record) continue;
+
+        // Fire-and-forget, in parallel with routing — this is a UX nicety
+        // (real "typing…" feedback while we do LLM/DB work), not something
+        // that should ever delay or fail the actual reply.
+        this.whatsapp
+          .markAsReadWithTyping(record.waMessageId)
+          .catch((err) =>
+            this.logger.warn(`markAsReadWithTyping failed: ${String(err)}`),
+          );
 
         try {
           await this.router.route(record);
@@ -89,4 +102,5 @@ export class WhatsappController {
       }
     }
   }
+
 }

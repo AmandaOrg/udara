@@ -25,15 +25,22 @@ describe("splitIntoChunks", () => {
 });
 
 describe("ChunkedMessengerService", () => {
-  let whatsapp: { sendText: jest.Mock };
+  let whatsapp: { sendText: jest.Mock; markAsReadWithTyping: jest.Mock };
+  let prisma: { whatsappMessage: { findFirst: jest.Mock } };
   let service: ChunkedMessengerService;
   let sleepSpy: jest.SpyInstance;
 
   beforeEach(() => {
     whatsapp = {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "wamid.1" }),
+      markAsReadWithTyping: jest.fn().mockResolvedValue(undefined),
     };
-    service = new ChunkedMessengerService(whatsapp as any);
+    prisma = {
+      whatsappMessage: {
+        findFirst: jest.fn().mockResolvedValue({ waMessageId: "wamid.inbound" }),
+      },
+    };
+    service = new ChunkedMessengerService(whatsapp as any, prisma as any);
     // Skip real timers — verify the *calls* to sleep (delay math), not wall-clock time.
     sleepSpy = jest.spyOn(service as any, "sleep").mockResolvedValue(undefined);
   });
@@ -63,38 +70,49 @@ describe("ChunkedMessengerService", () => {
     expect(whatsapp.sendText).not.toHaveBeenCalled();
   });
 
-  it("applies an initial read delay before the first send", async () => {
+  it("sends the first chunk with no delay", async () => {
     await service.sendChunkedReply("234801", "hey", "user-1");
-    // read delay + 1 typing delay = 2 sleep calls for a single-chunk reply
-    expect(sleepSpy).toHaveBeenCalledTimes(2);
-    const [readDelay] = sleepSpy.mock.calls[0];
-    expect(readDelay).toBeGreaterThanOrEqual(1000);
-    expect(readDelay).toBeLessThanOrEqual(3000);
+    expect(sleepSpy).not.toHaveBeenCalled();
   });
 
-  it("uses a longer initial read delay for a long first chunk", async () => {
-    const longFirstChunk = new Array(31).fill("word").join(" ");
-    await service.sendChunkedReply("234801", longFirstChunk, "user-1");
-    const [readDelay] = sleepSpy.mock.calls[0];
-    expect(readDelay).toBeGreaterThanOrEqual(3000);
-    expect(readDelay).toBeLessThanOrEqual(6000);
-  });
-
-  it("inserts a gap delay between chunks but not before the first one", async () => {
+  it("inserts a ~4s gap delay between chunks but not before the first one", async () => {
     await service.sendChunkedReply("234801", "one\n\ntwo\n\nthree", "user-1");
-    // read delay, [typing(1)], gap, typing(2), gap, typing(3) = 1 + 1 + 1 + 1 + 1 + 1 = 6 calls
-    expect(sleepSpy).toHaveBeenCalledTimes(6);
+    // gap before chunk 2, gap before chunk 3 — none before chunk 1
+    expect(sleepSpy).toHaveBeenCalledTimes(2);
+    for (const [gap] of sleepSpy.mock.calls) {
+      expect(gap).toBeGreaterThanOrEqual(3500);
+      expect(gap).toBeLessThanOrEqual(4500);
+    }
   });
 
-  it("computes typing delay roughly proportional to word count", async () => {
+  it("keeps the inter-chunk gap ~4s regardless of chunk length", async () => {
+    const longChunk = new Array(50).fill("word").join(" ");
     await service.sendChunkedReply(
       "234801",
-      "one two three four five six seven eight nine ten",
+      `${longChunk}\n\nsecond chunk`,
       "user-1",
     );
-    const typingDelay = sleepSpy.mock.calls[1][0]; // [0] is the read delay
-    // 10 words at 40-60wpm -> between 10s and 15s
-    expect(typingDelay).toBeGreaterThanOrEqual(10_000);
-    expect(typingDelay).toBeLessThanOrEqual(15_000);
+    const [gap] = sleepSpy.mock.calls[0];
+    expect(gap).toBeGreaterThanOrEqual(3500);
+    expect(gap).toBeLessThanOrEqual(4500);
+  });
+
+  it("re-shows the typing indicator (against the user's last inbound message) before each gap", async () => {
+    await service.sendChunkedReply("234801", "one\n\ntwo\n\nthree", "user-1");
+
+    expect(prisma.whatsappMessage.findFirst).toHaveBeenCalledTimes(2);
+    expect(whatsapp.markAsReadWithTyping).toHaveBeenCalledTimes(2);
+    expect(whatsapp.markAsReadWithTyping).toHaveBeenCalledWith(
+      "wamid.inbound",
+    );
+  });
+
+  it("doesn't fail the send if there's no inbound message to key the typing indicator off, or the call errors", async () => {
+    prisma.whatsappMessage.findFirst.mockResolvedValueOnce(null);
+    whatsapp.markAsReadWithTyping.mockRejectedValueOnce(new Error("boom"));
+
+    await service.sendChunkedReply("234801", "one\n\ntwo\n\nthree", "user-1");
+
+    expect(whatsapp.sendText).toHaveBeenCalledTimes(3);
   });
 });

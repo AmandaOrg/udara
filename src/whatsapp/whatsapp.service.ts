@@ -34,7 +34,7 @@ export class WhatsappService {
     private readonly http: HttpService,
     private readonly config: ConfigService,
     private readonly messages: WhatsappMessageService,
-  ) {}
+  ) { }
 
   private get phoneNumberId(): string {
     return this.config.get<string>("WHATSAPP_PHONE_NUMBER_ID", "");
@@ -213,6 +213,83 @@ export class WhatsappService {
   }
 
   /**
+   * Sends a WhatsApp Flow — a native popup form. Used for the Trust Moment
+   * KYC step (BVN/NIN + DOB + email) specifically so that data collection is
+   * a structured form submission the app parses deterministically, never
+   * something the AI extracts from free text. `flowToken` is caller-supplied
+   * (regenerate on retry) so a resent flow after a Rubies failure can't be
+   * confused with a stale earlier submission.
+   */
+  async sendFlow(params: {
+    to: string;
+    flowId: string;
+    flowToken: string;
+    screenId: string;
+    headerText: string;
+    bodyText: string;
+    ctaText: string;
+    userId?: string;
+  }): Promise<{ waMessageId: string }> {
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: params.to,
+      type: "interactive",
+      interactive: {
+        type: "flow",
+        header: { type: "text", text: params.headerText },
+        body: { text: params.bodyText },
+        action: {
+          name: "flow",
+          parameters: {
+            flow_message_version: "3",
+            flow_token: params.flowToken,
+            flow_id: params.flowId,
+            flow_cta: params.ctaText,
+            flow_action: "navigate",
+            // No `data` key: an explicit empty object here fails Meta's Graph
+            // API with "(#131009) ... data in flow_action_payload for CTA
+            // flow must be of type dynamic_object" — confirmed live against
+            // the API. Omitting the key entirely (this screen has no
+            // declared dynamic inputs) is what actually works.
+            flow_action_payload: { screen: params.screenId },
+          },
+        },
+      },
+    };
+    const response = await this.post(payload);
+    const waMessageId = response.messages?.[0]?.id ?? "";
+    await this.messages.recordOutbound({
+      waMessageId,
+      to: params.to,
+      type: WhatsappMessageType.TEXT,
+      userId: params.userId,
+      textBody: `[flow:${params.flowId}]`,
+      rawPayload: payload,
+    });
+    return { waMessageId };
+  }
+
+  /**
+   * Marks the inbound message as read and shows WhatsApp's native "typing…"
+   * indicator to the user. Meta clears it automatically once we send the
+   * next message (or after ~25s, whichever comes first), so this is a
+   * fire-and-forget call made the moment a message comes in — it's what
+   * gives the user real-time feedback while we're still doing LLM/DB work,
+   * replacing the old approach of faking that feeling with artificial
+   * send-delays (see ChunkedMessengerService). No outbound WhatsappMessage
+   * row is recorded — this isn't a message, just a status update.
+   */
+  async markAsReadWithTyping(waMessageId: string): Promise<void> {
+    await this.post({
+      messaging_product: "whatsapp",
+      status: "read",
+      message_id: waMessageId,
+      typing_indicator: { type: "text" },
+    });
+  }
+
+  /**
    * TODO (post-v0 fast-follow, not built now): download a media object's
    * bytes via Meta's two-step media API — GET /{media-id} for a short-lived
    * URL, then GET that URL with the same bearer token. Typed now so the audio
@@ -228,4 +305,5 @@ export class WhatsappService {
       "Not implemented — audio/media download is a post-v0 fast-follow",
     );
   }
+
 }

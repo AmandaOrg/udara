@@ -99,6 +99,7 @@ describe("isPreAccountStage", () => {
 
 describe("OnboardingService", () => {
   let prisma: ReturnType<typeof createFakePrisma>;
+  let config: { get: jest.Mock };
   let llm: { complete: jest.Mock };
   let validator: {
     validateIdentity: jest.Mock;
@@ -107,7 +108,11 @@ describe("OnboardingService", () => {
   };
   let llmLogger: { log: jest.Mock; markApplied: jest.Mock };
   let chunkedMessenger: { sendChunkedReply: jest.Mock };
-  let whatsapp: { sendText: jest.Mock; sendListMessage: jest.Mock };
+  let whatsapp: {
+    sendText: jest.Mock;
+    sendListMessage: jest.Mock;
+    sendFlow: jest.Mock;
+  };
   let rubies: { provisionAccount: jest.Mock };
   let service: OnboardingService;
 
@@ -126,6 +131,11 @@ describe("OnboardingService", () => {
   }
 
   beforeEach(() => {
+    config = {
+      get: jest.fn((key: string, fallback?: unknown) =>
+        key === "WHATSAPP_KYC_FLOW_ID" ? "flow-123" : fallback,
+      ),
+    };
     llm = { complete: jest.fn() };
     validator = {
       validateIdentity: jest.fn(),
@@ -142,6 +152,7 @@ describe("OnboardingService", () => {
     whatsapp = {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "wamid.1" }),
       sendListMessage: jest.fn().mockResolvedValue({ waMessageId: "wamid.2" }),
+      sendFlow: jest.fn().mockResolvedValue({ waMessageId: "wamid.3" }),
     };
     rubies = { provisionAccount: jest.fn() };
   });
@@ -150,6 +161,7 @@ describe("OnboardingService", () => {
     prisma = createFakePrisma(user);
     service = new OnboardingService(
       prisma as any,
+      config as any,
       llm as any,
       validator as any,
       llmLogger as any,
@@ -480,29 +492,38 @@ describe("OnboardingService", () => {
     });
   });
 
-  describe("PLAN_PROPOSED (Trust Moment)", () => {
-    it("collects BVN/email/DOB incrementally across turns and asks for what's still missing", async () => {
+  describe("PLAN_PROPOSED (Trust Moment) — free text", () => {
+    it("points back at the form and resends the flow, rather than trying to parse the text", async () => {
       const user = build(
         makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
       );
 
       await service.handleInboundText(user as any, "my bvn is 12345678901");
-      expect(whatsapp.sendText).toHaveBeenLastCalledWith(
-        "234801",
-        expect.stringContaining("your email"),
-        "user-1",
-      );
 
-      await service.handleInboundText(user as any, "me@example.com");
-      expect(whatsapp.sendText).toHaveBeenLastCalledWith(
-        "234801",
-        expect.stringContaining("date of birth"),
-        "user-1",
-      );
       expect(rubies.provisionAccount).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("form above"),
+        "user-1",
+      );
+      expect(whatsapp.sendFlow).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "234801", flowId: "flow-123" }),
+      );
     });
+  });
 
-    it("provisions the Rubies account once BVN+email+DOB are all present, in one message", async () => {
+  describe("PLAN_PROPOSED (Trust Moment) — WhatsApp Flow submission", () => {
+    function flowSubmission(overrides: Record<string, unknown> = {}) {
+      return {
+        id_type: "BVN",
+        id_number: "12345678901",
+        email: "me@example.com",
+        date_of_birth: "1998-04-12", // literal-date fallback form; see parseFlowDate
+        ...overrides,
+      };
+    }
+
+    it("provisions the Rubies account from a valid BVN submission", async () => {
       const user = build(
         makeUser({
           onboardingStage: OnboardingStage.PLAN_PROPOSED,
@@ -517,14 +538,12 @@ describe("OnboardingService", () => {
         bankCode: "090175",
       });
 
-      await service.handleInboundText(
-        user as any,
-        "12345678901, me@example.com, 1998-04-12",
-      );
+      await service.handleInboundFlowReply(user as any, flowSubmission());
 
       expect(rubies.provisionAccount).toHaveBeenCalledWith(
         expect.objectContaining({
           bvn: "12345678901",
+          nin: undefined,
           firstName: "Daniel",
           lastName: "Okafor",
           dob: "1998-04-12",
@@ -542,7 +561,72 @@ describe("OnboardingService", () => {
       );
     });
 
-    it("on a Rubies failure: stays on PLAN_PROPOSED, clears bvn/dob (not email) so the retry isn't stuck on stale bad data", async () => {
+    it("provisions with NIN instead of BVN when that's what the user picked", async () => {
+      const user = build(
+        makeUser({
+          onboardingStage: OnboardingStage.PLAN_PROPOSED,
+          name: "Amaka",
+        }),
+      );
+      rubies.provisionAccount.mockResolvedValue({
+        accountId: "CUST-2",
+        accountNumber: "0123456780",
+        accountName: "Amaka",
+        bankCode: "090175",
+      });
+
+      await service.handleInboundFlowReply(
+        user as any,
+        flowSubmission({ id_type: "NIN", id_number: "98765432109" }),
+      );
+
+      expect(rubies.provisionAccount).toHaveBeenCalledWith(
+        expect.objectContaining({ bvn: undefined, nin: "98765432109" }),
+      );
+    });
+
+    it("decodes a DatePicker epoch-millisecond date", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED, name: "D" }),
+      );
+      rubies.provisionAccount.mockResolvedValue({
+        accountId: "CUST-3",
+        accountNumber: "0000000001",
+        accountName: "D",
+        bankCode: "090175",
+      });
+
+      const epochMs = Date.UTC(1998, 3, 12); // 1998-04-12
+      await service.handleInboundFlowReply(
+        user as any,
+        flowSubmission({ date_of_birth: String(epochMs) }),
+      );
+
+      expect(rubies.provisionAccount).toHaveBeenCalledWith(
+        expect.objectContaining({ dob: "1998-04-12" }),
+      );
+    });
+
+    it("on an invalid submission: doesn't call Rubies, explains the problem, and resends the form", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+
+      await service.handleInboundFlowReply(
+        user as any,
+        flowSubmission({ id_number: "123", email: "not-an-email" }),
+      );
+
+      expect(rubies.provisionAccount).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("11 digits"),
+        "user-1",
+      );
+      expect(whatsapp.sendFlow).toHaveBeenCalled();
+    });
+
+    it("on a Rubies failure: stays on PLAN_PROPOSED, reports the reason, and resends the form to retry", async () => {
       const user = build(
         makeUser({
           onboardingStage: OnboardingStage.PLAN_PROPOSED,
@@ -553,10 +637,7 @@ describe("OnboardingService", () => {
         new Error("First name does not match"),
       );
 
-      await service.handleInboundText(
-        user as any,
-        "12345678901, me@example.com, 1998-04-12",
-      );
+      await service.handleInboundFlowReply(user as any, flowSubmission());
 
       expect(prisma._users.get("user-1")?.onboardingStage).toBe(
         OnboardingStage.PLAN_PROPOSED,
@@ -566,16 +647,24 @@ describe("OnboardingService", () => {
         expect.stringContaining("First name does not match"),
         "user-1",
       );
+      expect(whatsapp.sendFlow).toHaveBeenCalledTimes(1); // retry form sent
 
-      // Resending BVN/DOB (not email) should be enough to retry.
       rubies.provisionAccount.mockResolvedValue({
         accountId: "CUST-1",
         accountNumber: "0123456789",
         accountName: "Daniel",
         bankCode: "090175",
       });
-      await service.handleInboundText(user as any, "12345678901, 1998-04-12");
+      await service.handleInboundFlowReply(user as any, flowSubmission());
       expect(rubies.provisionAccount).toHaveBeenCalledTimes(2);
+    });
+
+    it("ignores a flow reply that arrives outside PLAN_PROPOSED", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.ACCOUNT_CREATED }),
+      );
+      await service.handleInboundFlowReply(user as any, flowSubmission());
+      expect(rubies.provisionAccount).not.toHaveBeenCalled();
     });
   });
 

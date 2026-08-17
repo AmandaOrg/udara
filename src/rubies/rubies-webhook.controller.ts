@@ -39,7 +39,7 @@ interface RubiesNotification {
  * (an external manual step, not something this code does — same category as
  * Meta's template approval, Phase 9).
  */
-@Controller("webhooks/rubies")
+@Controller("rubies/webhooks")
 export class RubiesWebhookController {
   private readonly logger = new Logger(RubiesWebhookController.name);
 

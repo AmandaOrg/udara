@@ -85,6 +85,10 @@ enum WhatsappMessageType {
   TEXT
   BUTTON_REPLY
   LIST_REPLY
+  // A WhatsApp Flow submission (interactive.nfm_reply) — the deterministic,
+  // non-AI popup-form path for collecting KYC details (BVN/NIN + DOB +
+  // email) at the Trust Moment. See OnboardingService.handleInboundFlowReply.
+  FLOW_REPLY
   AUDIO
   IMAGE
   DOCUMENT
@@ -350,6 +354,7 @@ model WhatsappMessage {
   mediaId        String?  // Meta media id for audio/image/doc — plumbing only, no download in v0
   mediaMimeType  String?
   transcript     String?  // filled in by the transcription fast-follow, not v0
+  flowResponseJson Json?  // parsed interactive.nfm_reply.response_json for FLOW_REPLY rows
   rawPayload     Json
   status         WhatsappMessageStatus @default(RECEIVED)
   createdAt      DateTime @default(now())

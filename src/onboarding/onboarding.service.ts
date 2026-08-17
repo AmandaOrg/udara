@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   BudgetMethod,
@@ -73,6 +75,7 @@ export class OnboardingService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
     @Inject(CONVERSATION_LLM) private readonly llm: LlmService,
     private readonly validator: ExtractionValidatorService,
     private readonly llmLogger: LlmCallLoggerService,
@@ -166,7 +169,7 @@ export class OnboardingService {
         );
         return;
       case OnboardingStage.PLAN_PROPOSED:
-        return this.handleTrustMomentText(user, session.id, text);
+        return this.handleTrustMomentText(user, session.id);
       default:
         this.logger.warn(
           `handleInboundText called for user ${user.id} at post-account stage ${user.onboardingStage} — router should not route here`,
@@ -184,6 +187,63 @@ export class OnboardingService {
       return;
     }
     return this.handleStructuredAnswer(user, buttonId);
+  }
+
+  /**
+   * Entry point for a WhatsApp Flow submission — currently only the Trust
+   * Moment's KYC form. Deterministic parsing only, same as the old
+   * regex-based trust-moment text path it replaces: the model never sees
+   * BVN/NIN/DOB/email, and nothing here is a "proposal" that needs
+   * ExtractionValidatorService — it's a structured form the user filled in
+   * themselves.
+   */
+  async handleInboundFlowReply(
+    user: User,
+    responseJson: Record<string, unknown>,
+  ): Promise<void> {
+    if (user.onboardingStage !== OnboardingStage.PLAN_PROPOSED) {
+      this.logger.warn(
+        `handleInboundFlowReply called for user ${user.id} at stage ${user.onboardingStage} — router should not route here`,
+      );
+      return;
+    }
+
+    const session = await this.getOrStartSession(user.id);
+
+    const idType = String(responseJson.id_type ?? "").toUpperCase();
+    const idNumber = String(responseJson.id_number ?? "").replace(/\D/g, "");
+    const email = String(responseJson.email ?? "").trim();
+    const dateOfBirth = parseFlowDate(responseJson.date_of_birth);
+
+    const problems: string[] = [];
+    if (idType !== "BVN" && idType !== "NIN") {
+      problems.push("pick either BVN or NIN");
+    }
+    if (idNumber.length !== 11) {
+      problems.push("the ID number should be 11 digits");
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      problems.push("that email doesn't look right");
+    }
+    if (!dateOfBirth) {
+      problems.push("your date of birth didn't come through right");
+    }
+
+    if (problems.length > 0) {
+      const nudge = `hmm, ${problems.join(" and ")} — let's try that again:`;
+      await this.appendMessage(session.id, "assistant", nudge);
+      await this.whatsapp.sendText(user.whatsappNumber, nudge, user.id);
+      await this.sendKycFlow(user);
+      return;
+    }
+
+    await this.provisionRubiesAccount(user, session.id, {
+      idType: idType as "BVN" | "NIN",
+      idNumber,
+      email,
+      // Non-null: the `!dateOfBirth` check above already returned if this were null.
+      dateOfBirth: dateOfBirth!,
+    });
   }
 
   // =========================================================================
@@ -508,9 +568,9 @@ export class OnboardingService {
 
     const trustText = [
       "before i can create your account, i need a few details to verify your identity — this is a bank requirement, not a kedu thing. it's the same verification any nigerian bank asks for.",
-      "here's exactly what i need and why:\n\nyour bvn — this confirms you are who you say you are, and it's required by every licensed bank in nigeria before an account can be opened. kedu doesn't keep hold of your bvn once your account is created — it's passed straight through to rubies microfinance bank, who actually issues your account.\n\nyour email and date of birth — just for your account record.",
+      "you'll pick either your bvn or your nin, plus your date of birth and email — kedu doesn't keep hold of your id number once your account is created, it's passed straight through to rubies microfinance bank, who actually issues your account.",
       "i know handing this over can feel like a lot, especially to something that started as a whatsapp chat. but kedu's account is a real, licensed bank account, not an iou — that's exactly why this step exists, and exactly why your money is actually protected once it's here.",
-      "send me your bvn, email, and date of birth (yyyy-mm-dd) whenever you're ready — any order, one message or three.",
+      "tap the form below to fill it in securely — it never comes through as a chat message.",
     ].join("\n\n");
     await this.appendMessage(sessionId, "assistant", trustText);
     await this.chunkedMessenger.sendChunkedReply(
@@ -518,63 +578,71 @@ export class OnboardingService {
       trustText,
       user.id,
     );
+    await this.sendKycFlow(user);
   }
 
   // =========================================================================
-  // PLAN_PROPOSED (Trust Moment) — BVN/email/DOB, deterministic parsing (not model judgment)
+  // PLAN_PROPOSED (Trust Moment) — BVN/NIN + DOB + email via a WhatsApp Flow
+  // (native popup form), never free text and never the model. See
+  // handleInboundFlowReply for the actual submission handler.
   // =========================================================================
 
+  /** Stray free text during the Trust Moment — point back at the form instead of trying to parse it. */
   private async handleTrustMomentText(
     user: User,
     sessionId: string,
-    text: string,
   ): Promise<void> {
-    const session = await this.prisma.onboardingSession.findUniqueOrThrow({
-      where: { id: sessionId },
-    });
-    const extractedData: ExtractedData = isRecord(session.extractedData)
-      ? { ...session.extractedData }
-      : {};
+    const nudge =
+      "please use the form above to share your bvn/nin, date of birth, and email — it's the secure way to do this. resending it now:";
+    await this.appendMessage(sessionId, "assistant", nudge);
+    await this.whatsapp.sendText(user.whatsappNumber, nudge, user.id);
+    await this.sendKycFlow(user);
+  }
 
-    const bvnMatch = text.match(/\b(\d{11})\b/);
-    // Excludes comma/semicolon too, not just whitespace — "email, dob" in one message
-    // shouldn't glue the trailing punctuation onto the captured address.
-    const emailMatch = text.match(/[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+/);
-    const dobMatch = text.match(/\b(\d{4}-\d{2}-\d{2})\b/);
-
-    if (bvnMatch) extractedData.bvn = bvnMatch[1];
-    if (emailMatch) extractedData.email = emailMatch[0];
-    if (dobMatch) extractedData.dateOfBirth = dobMatch[1];
-
-    await this.prisma.onboardingSession.update({
-      where: { id: sessionId },
-      data: { extractedData: extractedData as Prisma.InputJsonValue },
-    });
-
-    const missing: string[] = [];
-    if (!extractedData.bvn) missing.push("your BVN (11 digits)");
-    if (!extractedData.email) missing.push("your email");
-    if (!extractedData.dateOfBirth)
-      missing.push("your date of birth (YYYY-MM-DD)");
-
-    if (missing.length > 0) {
-      const nudge = `got it — still need ${missing.join(" and ")}.`;
-      await this.appendMessage(sessionId, "assistant", nudge);
-      await this.whatsapp.sendText(user.whatsappNumber, nudge, user.id);
+  /**
+   * Sends the KYC WhatsApp Flow. flowToken is freshly generated on every
+   * send (initial send and every retry) so a resubmission can never be
+   * confused with an earlier one. WHATSAPP_KYC_FLOW_ID unset is a dev-mode
+   * escape hatch — loud warning, not a silent failure — since a Flow must be
+   * created/published in the Meta Business Manager (or via the Graph API)
+   * before it has an ID to send; see docs/whatsapp-flows/.
+   */
+  private async sendKycFlow(user: User): Promise<void> {
+    const flowId = this.config.get<string>("WHATSAPP_KYC_FLOW_ID");
+    if (!flowId) {
+      this.logger.warn(
+        "WHATSAPP_KYC_FLOW_ID is not set — cannot send the KYC form. See docs/whatsapp-flows/.",
+      );
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "the identity-verification form isn't set up on this environment yet — a developer needs to publish it first.",
+        user.id,
+      );
       return;
     }
 
-    await this.provisionRubiesAccount(user, sessionId, {
-      bvn: String(extractedData.bvn),
-      email: String(extractedData.email),
-      dateOfBirth: String(extractedData.dateOfBirth),
+    await this.whatsapp.sendFlow({
+      to: user.whatsappNumber,
+      flowId,
+      flowToken: randomUUID(),
+      screenId: "KYC",
+      headerText: "Verify your identity",
+      bodyText:
+        "Tap below to securely share your BVN or NIN, date of birth, and email — takes under a minute.",
+      ctaText: "Verify identity",
+      userId: user.id,
     });
   }
 
   private async provisionRubiesAccount(
     user: User,
     sessionId: string,
-    kyc: { bvn: string; email: string; dateOfBirth: string },
+    kyc: {
+      idType: "BVN" | "NIN";
+      idNumber: string;
+      email: string;
+      dateOfBirth: string;
+    },
   ): Promise<void> {
     const freshUser = await this.prisma.user.findUniqueOrThrow({
       where: { id: user.id },
@@ -584,7 +652,8 @@ export class OnboardingService {
 
     try {
       const account = await this.rubies.provisionAccount({
-        bvn: kyc.bvn,
+        bvn: kyc.idType === "BVN" ? kyc.idNumber : undefined,
+        nin: kyc.idType === "NIN" ? kyc.idNumber : undefined,
         firstName,
         lastName,
         phoneNumber: freshUser.whatsappNumber,
@@ -601,25 +670,21 @@ export class OnboardingService {
           rubiesBankCode: account.bankCode,
           email: kyc.email,
           dateOfBirth: new Date(kyc.dateOfBirth),
-          // Deliberately never writing bvn to the User record — see the trust-moment
-          // copy above. Scrubbed from the session below too, its job now done.
+          // Deliberately never writing bvn/nin to the User record — see the
+          // trust-moment copy above. The Flow submission is never persisted
+          // to OnboardingSession either (unlike the old free-text path), so
+          // the raw ID number only ever exists in memory for this one call.
         },
       });
+
+      await this.advanceStage(sessionId, OnboardingStage.ACCOUNT_CREATED);
 
       const session = await this.prisma.onboardingSession.findUniqueOrThrow({
         where: { id: sessionId },
       });
       const extractedData = isRecord(session.extractedData)
-        ? { ...session.extractedData }
+        ? session.extractedData
         : {};
-      delete extractedData.bvn;
-      await this.prisma.onboardingSession.update({
-        where: { id: sessionId },
-        data: { extractedData: extractedData as Prisma.InputJsonValue },
-      });
-
-      await this.advanceStage(sessionId, OnboardingStage.ACCOUNT_CREATED);
-
       const plan = isRecord(extractedData.plan)
         ? (extractedData.plan as { monthlyAllowance?: number })
         : {};
@@ -641,24 +706,13 @@ export class OnboardingService {
         `Rubies provisionAccount failed for user ${user.id}: ${String(err)}`,
       );
 
-      // Clear the likely-bad fields (not email, lowest risk of being the actual fault)
-      // so the retry doesn't loop forever on stale data.
-      const session = await this.prisma.onboardingSession.findUniqueOrThrow({
-        where: { id: sessionId },
-      });
-      const extractedData = isRecord(session.extractedData)
-        ? { ...session.extractedData }
-        : {};
-      delete extractedData.bvn;
-      delete extractedData.dateOfBirth;
-      await this.prisma.onboardingSession.update({
-        where: { id: sessionId },
-        data: { extractedData: extractedData as Prisma.InputJsonValue },
-      });
-
-      const message = `that didn't go through — ${(err as Error).message || "rubies rejected the details"}. mind double-checking your bvn and date of birth and resending?`;
+      // Tell them plainly what happened and let them try again right away —
+      // resending the form (fresh flow_token) rather than asking them to
+      // free-type anything.
+      const message = `that didn't go through — ${(err as Error).message || "rubies rejected the details"}. let's try again — here's the form:`;
       await this.appendMessage(sessionId, "assistant", message);
       await this.whatsapp.sendText(user.whatsappNumber, message, user.id);
+      await this.sendKycFlow(user);
     }
   }
 
@@ -710,6 +764,24 @@ export class OnboardingService {
           : "Nothing confirmed about this user yet.",
     };
   }
+}
+
+/**
+ * WhatsApp Flow's DatePicker component submits the chosen date as a string
+ * epoch-millisecond timestamp, not a plain YYYY-MM-DD string — this decodes
+ * that (with a literal-date fallback in case a future Flow version changes
+ * the wire format) and returns YYYY-MM-DD, or null if it can't be parsed at
+ * all (treated the same as "field missing" by the caller).
+ */
+function parseFlowDate(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const ms = Number(raw);
+  if (Number.isFinite(ms) && ms > 0) {
+    const d = new Date(ms);
+    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
