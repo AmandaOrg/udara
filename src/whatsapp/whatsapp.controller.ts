@@ -17,6 +17,16 @@ import { WhatsappRouterService } from "./whatsapp-router.service";
 import { WhatsappService } from "./whatsapp.service";
 import { parseInboundPayload } from "./parsers/whatsapp-payload.parser";
 
+/**
+ * WhatsApp's typing indicator lasts up to ~25s per trigger, then disappears
+ * on its own. A single fire-and-forget call at message-receipt is only good
+ * for that long — if actual processing (LLM call, DB writes, Rubies calls)
+ * runs longer, the indicator vanishes and the user sees dead air until the
+ * reply shows up. Refreshing well under that ceiling keeps it visible for
+ * the whole processing window, not just the start of it.
+ */
+const TYPING_HEARTBEAT_INTERVAL_MS = 8_000;
+
 @Controller("webhooks")
 export class WhatsappController {
   private readonly logger = new Logger(WhatsappController.name);
@@ -73,12 +83,25 @@ export class WhatsappController {
 
         // Fire-and-forget, in parallel with routing — this is a UX nicety
         // (real "typing…" feedback while we do LLM/DB work), not something
-        // that should ever delay or fail the actual reply.
+        // that should ever delay or fail the actual reply. The interval
+        // keeps re-triggering it for as long as routing is actually in
+        // flight, so it stays visible through the full processing time, not
+        // just the first ~25s of it — cleared the moment routing settles,
+        // success or failure.
         this.whatsapp
           .markAsReadWithTyping(record.waMessageId)
           .catch((err) =>
             this.logger.warn(`markAsReadWithTyping failed: ${String(err)}`),
           );
+        const typingHeartbeat = setInterval(() => {
+          this.whatsapp
+            .markAsReadWithTyping(record.waMessageId)
+            .catch((err) =>
+              this.logger.warn(
+                `typing heartbeat failed: ${String(err)}`,
+              ),
+            );
+        }, TYPING_HEARTBEAT_INTERVAL_MS);
 
         try {
           await this.router.route(record);
@@ -94,6 +117,8 @@ export class WhatsappController {
             record.id,
             WhatsappMessageStatus.FAILED,
           );
+        } finally {
+          clearInterval(typingHeartbeat);
         }
       } catch (err) {
         this.logger.error(
