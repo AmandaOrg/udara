@@ -18,7 +18,28 @@
               },
               {
                 "type": "TextBody",
-                "text": "This is a bank requirement to open your Kedu account — the same check any Nigerian bank runs. Your BVN/NIN is passed straight to Rubies Microfinance Bank and isn't stored by Kedu."
+                "text": "This is a bank requirement to open your Kedu account — the same check any Nigerian bank runs. Your BVN/NIN is passed straight to Rubies Microfinance Bank and isn't stored by Kedu. Enter your name exactly as it appears on your BVN/NIN record — Rubies matches it and rejects a mismatch."
+              },
+              {
+                "type": "TextInput",
+                "name": "first_name",
+                "label": "First name",
+                "input-type": "text",
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "middle_name",
+                "label": "Middle name (optional)",
+                "input-type": "text",
+                "required": false
+              },
+              {
+                "type": "TextInput",
+                "name": "last_name",
+                "label": "Last name",
+                "input-type": "text",
+                "required": true
               },
               {
                 "type": "RadioButtonsGroup",
@@ -56,6 +77,9 @@
                 "on-click-action": {
                   "name": "complete",
                   "payload": {
+                    "first_name": "${form.first_name}",
+                    "middle_name": "${form.middle_name}",
+                    "last_name": "${form.last_name}",
                     "id_type": "${form.id_type}",
                     "id_number": "${form.id_number}",
                     "date_of_birth": "${form.date_of_birth}",

@@ -210,12 +210,21 @@ export class OnboardingService {
 
     const session = await this.getOrStartSession(user.id);
 
+    const firstName = String(responseJson.first_name ?? "").trim();
+    const middleName = String(responseJson.middle_name ?? "").trim();
+    const lastName = String(responseJson.last_name ?? "").trim();
     const idType = String(responseJson.id_type ?? "").toUpperCase();
     const idNumber = String(responseJson.id_number ?? "").replace(/\D/g, "");
     const email = String(responseJson.email ?? "").trim();
     const dateOfBirth = parseFlowDate(responseJson.date_of_birth);
 
     const problems: string[] = [];
+    if (!firstName) {
+      problems.push("your first name is missing");
+    }
+    if (!lastName) {
+      problems.push("your last name is missing");
+    }
     if (idType !== "BVN" && idType !== "NIN") {
       problems.push("pick either BVN or NIN");
     }
@@ -238,6 +247,10 @@ export class OnboardingService {
     }
 
     await this.provisionRubiesAccount(user, session.id, {
+      firstName,
+      // Optional field — "" (not present) is a valid value, distinct from "missing/invalid".
+      middleName: middleName || undefined,
+      lastName,
       idType: idType as "BVN" | "NIN",
       idNumber,
       email,
@@ -638,6 +651,9 @@ export class OnboardingService {
     user: User,
     sessionId: string,
     kyc: {
+      firstName: string;
+      middleName?: string;
+      lastName: string;
       idType: "BVN" | "NIN";
       idNumber: string;
       email: string;
@@ -647,15 +663,17 @@ export class OnboardingService {
     const freshUser = await this.prisma.user.findUniqueOrThrow({
       where: { id: user.id },
     });
-    const [firstName, ...rest] = (freshUser.name ?? "Kedu User").split(" ");
-    const lastName = rest.join(" ") || firstName;
 
     try {
+      // Rubies' create-wallet KYC match (>=90% similarity against the
+      // BVN/NIN record) is against firstName/lastName only — its request
+      // schema has no middle-name field, so kyc.middleName is stored on
+      // User below but never sent here.
       const account = await this.rubies.provisionAccount({
         bvn: kyc.idType === "BVN" ? kyc.idNumber : undefined,
         nin: kyc.idType === "NIN" ? kyc.idNumber : undefined,
-        firstName,
-        lastName,
+        firstName: kyc.firstName,
+        lastName: kyc.lastName,
         phoneNumber: freshUser.whatsappNumber,
         dob: kyc.dateOfBirth,
         email: kyc.email,
@@ -668,6 +686,9 @@ export class OnboardingService {
           rubiesAccountNumber: account.accountNumber,
           rubiesAccountName: account.accountName,
           rubiesBankCode: account.bankCode,
+          legalFirstName: kyc.firstName,
+          legalMiddleName: kyc.middleName,
+          legalLastName: kyc.lastName,
           email: kyc.email,
           dateOfBirth: new Date(kyc.dateOfBirth),
           // Deliberately never writing bvn/nin to the User record — see the

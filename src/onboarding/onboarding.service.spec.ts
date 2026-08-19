@@ -515,6 +515,8 @@ describe("OnboardingService", () => {
   describe("PLAN_PROPOSED (Trust Moment) — WhatsApp Flow submission", () => {
     function flowSubmission(overrides: Record<string, unknown> = {}) {
       return {
+        first_name: "Daniel",
+        last_name: "Okafor",
         id_type: "BVN",
         id_number: "12345678901",
         email: "me@example.com",
@@ -523,11 +525,11 @@ describe("OnboardingService", () => {
       };
     }
 
-    it("provisions the Rubies account from a valid BVN submission", async () => {
+    it("provisions the Rubies account from a valid BVN submission, using the form's name fields (not User.name)", async () => {
       const user = build(
         makeUser({
           onboardingStage: OnboardingStage.PLAN_PROPOSED,
-          name: "Daniel Okafor",
+          name: "Danny O", // deliberately different from the form's legal name below
           whatsappNumber: "234801",
         }),
       );
@@ -554,6 +556,8 @@ describe("OnboardingService", () => {
       expect(finalUser.rubiesAccountNumber).toBe("0123456789");
       expect(finalUser.onboardingStage).toBe(OnboardingStage.ACCOUNT_CREATED);
       expect(finalUser.bvn).toBeUndefined(); // never written to the User record
+      expect(finalUser.legalFirstName).toBe("Daniel");
+      expect(finalUser.legalLastName).toBe("Okafor");
       expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
         "234801",
         expect.stringContaining("0123456789"),
@@ -561,12 +565,50 @@ describe("OnboardingService", () => {
       );
     });
 
+    it("stores a middle name when given, but never sends it to Rubies (no such field in its API)", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+      rubies.provisionAccount.mockResolvedValue({
+        accountId: "CUST-4",
+        accountNumber: "0000000002",
+        accountName: "Daniel Okafor",
+        bankCode: "090175",
+      });
+
+      await service.handleInboundFlowReply(
+        user as any,
+        flowSubmission({ middle_name: "Chinedu" }),
+      );
+
+      expect(rubies.provisionAccount).toHaveBeenCalledWith(
+        expect.not.objectContaining({ middleName: expect.anything() }),
+      );
+      expect(prisma._users.get("user-1")?.legalMiddleName).toBe("Chinedu");
+    });
+
+    it("leaves legalMiddleName unset when the form's middle name is blank", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+      rubies.provisionAccount.mockResolvedValue({
+        accountId: "CUST-5",
+        accountNumber: "0000000003",
+        accountName: "Daniel Okafor",
+        bankCode: "090175",
+      });
+
+      await service.handleInboundFlowReply(
+        user as any,
+        flowSubmission({ middle_name: "" }),
+      );
+
+      expect(prisma._users.get("user-1")?.legalMiddleName).toBeUndefined();
+    });
+
     it("provisions with NIN instead of BVN when that's what the user picked", async () => {
       const user = build(
-        makeUser({
-          onboardingStage: OnboardingStage.PLAN_PROPOSED,
-          name: "Amaka",
-        }),
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
       );
       rubies.provisionAccount.mockResolvedValue({
         accountId: "CUST-2",
@@ -587,7 +629,7 @@ describe("OnboardingService", () => {
 
     it("decodes a DatePicker epoch-millisecond date", async () => {
       const user = build(
-        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED, name: "D" }),
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
       );
       rubies.provisionAccount.mockResolvedValue({
         accountId: "CUST-3",
@@ -605,6 +647,30 @@ describe("OnboardingService", () => {
       expect(rubies.provisionAccount).toHaveBeenCalledWith(
         expect.objectContaining({ dob: "1998-04-12" }),
       );
+    });
+
+    it("on a submission missing first/last name: doesn't call Rubies, explains the problem, and resends the form", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+
+      await service.handleInboundFlowReply(
+        user as any,
+        flowSubmission({ first_name: "", last_name: "" }),
+      );
+
+      expect(rubies.provisionAccount).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("first name is missing"),
+        "user-1",
+      );
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("last name is missing"),
+        "user-1",
+      );
+      expect(whatsapp.sendFlow).toHaveBeenCalled();
     });
 
     it("on an invalid submission: doesn't call Rubies, explains the problem, and resends the form", async () => {
@@ -628,10 +694,7 @@ describe("OnboardingService", () => {
 
     it("on a Rubies failure: stays on PLAN_PROPOSED, reports the reason, and resends the form to retry", async () => {
       const user = build(
-        makeUser({
-          onboardingStage: OnboardingStage.PLAN_PROPOSED,
-          name: "Daniel",
-        }),
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
       );
       rubies.provisionAccount.mockRejectedValue(
         new Error("First name does not match"),

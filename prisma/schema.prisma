@@ -151,6 +151,16 @@ model User {
   occupation        String?
   city              String?
   dateOfBirth       DateTime? // collected at the Trust Moment specifically — Rubies KYC needs a real DOB, not just age
+
+  // Legal name as entered on the Trust Moment KYC form (WhatsApp Flow) — kept
+  // separate from `name` above, which is the friendly name from onboarding
+  // chat and may not match the BVN/NIN record exactly. Rubies' 90%
+  // name-similarity KYC match is against firstName/lastName only — it has no
+  // middle-name field — so legalMiddleName is stored for our own records but
+  // never sent to Rubies.
+  legalFirstName    String?
+  legalMiddleName   String?
+  legalLastName     String?
   email             String?
 
   // Financial profile (captured at onboarding — section 7 / 7a of PRD)
