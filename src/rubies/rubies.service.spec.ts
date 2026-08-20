@@ -42,17 +42,25 @@ describe("RubiesService", () => {
   });
 
   describe("live calls (RUBIES_DRY_RUN=false)", () => {
-    it("provisionAccount posts to baas-wallet/create-wallet with the stage in the URL", async () => {
-      http.post.mockReturnValue(
-        of({
-          data: {
-            customerId: "CUST1",
-            accountNumber: "0123456789",
-            accountName: "John Doe",
-            responseCode: "00",
-          },
-        }),
-      );
+    it("provisionAccount posts to baas-wallet/create-wallet, then retrieve-wallet-details for the real per-wallet accountId", async () => {
+      http.post
+        .mockReturnValueOnce(
+          of({
+            data: {
+              // customerId is Rubies' ID for our organisation, not this
+              // wallet — provisionAccount must NOT surface it as accountId.
+              customerId: "BUS0000000135",
+              accountNumber: "0123456789",
+              accountName: "John Doe",
+              responseCode: "00",
+            },
+          }),
+        )
+        .mockReturnValueOnce(
+          of({
+            data: { accountId: "244623", responseCode: "00" },
+          }),
+        );
 
       const account = await service.provisionAccount({
         bvn: "12345678901",
@@ -61,7 +69,8 @@ describe("RubiesService", () => {
         phoneNumber: "08012345678",
       });
 
-      expect(http.post).toHaveBeenCalledWith(
+      expect(http.post).toHaveBeenNthCalledWith(
+        1,
         "https://api-sme-dev.rubies.ng/dev/baas-wallet/create-wallet",
         expect.objectContaining({
           bvn: "12345678901",
@@ -72,12 +81,48 @@ describe("RubiesService", () => {
           headers: expect.objectContaining({ Authorization: "test-key" }),
         }),
       );
+      expect(http.post).toHaveBeenNthCalledWith(
+        2,
+        "https://api-sme-dev.rubies.ng/dev/baas-wallet/retrieve-wallet-details",
+        { accountNumber: "0123456789" },
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: "test-key" }),
+        }),
+      );
       expect(account).toEqual({
-        accountId: "CUST1",
+        accountId: "244623", // the real per-wallet ID, not customerId
         accountNumber: "0123456789",
         accountName: "John Doe",
         bankCode: "090175",
       });
+    });
+
+    it("surfaces a retrieve-wallet-details failure instead of returning a bogus accountId", async () => {
+      http.post
+        .mockReturnValueOnce(
+          of({
+            data: {
+              customerId: "BUS0000000135",
+              accountNumber: "0123456789",
+              accountName: "John Doe",
+              responseCode: "00",
+            },
+          }),
+        )
+        .mockReturnValueOnce(
+          of({
+            data: { responseCode: "99", responseMessage: "Not found" },
+          }),
+        );
+
+      await expect(
+        service.provisionAccount({
+          bvn: "12345678901",
+          firstName: "John",
+          lastName: "Doe",
+          phoneNumber: "08012345678",
+        }),
+      ).rejects.toThrow("Not found");
     });
 
     it("rejects both bvn and nin supplied together", async () => {

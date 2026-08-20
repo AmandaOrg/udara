@@ -730,11 +730,46 @@ export class OnboardingService {
       // Tell them plainly what happened and let them try again right away —
       // resending the form (fresh flow_token) rather than asking them to
       // free-type anything.
-      const message = `that didn't go through — ${(err as Error).message || "rubies rejected the details"}. let's try again — here's the form:`;
+      const message = this.describeProvisioningFailure(err);
       await this.appendMessage(sessionId, "assistant", message);
       await this.whatsapp.sendText(user.whatsappNumber, message, user.id);
       await this.sendKycFlow(user);
     }
+  }
+
+  /**
+   * Turns a provisioning failure into a message that's safe to show the
+   * user. RubiesService's own thrown errors are already clean, user-facing
+   * text (a KYC-mismatch reason from Rubies itself, or a generic "couldn't
+   * reach Rubies") — those are shown as-is. A raw Prisma error is an
+   * internal implementation detail and must never reach the user verbatim.
+   * The specific, actionable case is a P2002 unique-constraint collision on
+   * rubiesAccountId/rubiesAccountNumber: Rubies hands back an *existing*
+   * account instead of creating a new one when the same BVN/NIN has already
+   * been used to provision a different Kedu user (common while testing with
+   * one real identity across multiple numbers) — our schema correctly
+   * refuses to link one Rubies account to two Kedu users, but the resulting
+   * DB error told the user nothing useful. Any other Prisma error falls
+   * back to a generic message rather than leaking ORM/schema internals.
+   */
+  private describeProvisioningFailure(err: unknown): string {
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      if (err.code === "P2002") {
+        const target = err.meta?.target;
+        const fields = Array.isArray(target) ? target : [];
+        if (
+          fields.includes("rubiesAccountId") ||
+          fields.includes("rubiesAccountNumber")
+        ) {
+          return "that bvn/nin is already linked to a different kedu account — if that's a different number of yours, message us from that whatsapp chat instead. if this looks wrong, let us know. here's the form if you'd like to try a different id:";
+        }
+      }
+      return "that didn't go through — something on our end needs a look. here's the form to try again:";
+    }
+
+    const reason =
+      err instanceof Error ? err.message : "rubies rejected the details";
+    return `that didn't go through — ${reason}. let's try again — here's the form:`;
   }
 
   // =========================================================================

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
 import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
@@ -5,7 +6,15 @@ import { firstValueFrom } from "rxjs";
 import { AxiosError } from "axios";
 
 export interface RubiesAccount {
-  accountId: string; // Rubies' customerId — maps onto User.rubiesAccountId
+  // Rubies' own per-wallet accountId (fetched via a retrieve-wallet-details
+  // follow-up call — create-wallet's response never returns it) — maps onto
+  // User.rubiesAccountId. Deliberately NOT create-wallet's `customerId`:
+  // that's Rubies' identifier for *our organisation*, constant across every
+  // wallet Kedu ever provisions, so it can never be a per-user unique key
+  // (confirmed live: two real, distinct wallets both came back with the
+  // same customerId — using it as User.rubiesAccountId caused a real
+  // unique-constraint collision on the second real account created).
+  accountId: string;
   accountNumber: string; // 10-digit wallet number — maps onto User.rubiesAccountNumber
   accountName: string; // KYC-matched account name — maps onto User.rubiesAccountName
   bankCode: string;
@@ -153,7 +162,11 @@ export class RubiesService {
         .slice(-8)
         .padStart(8, "0");
       return {
-        accountId: `DRYRUN-CUST-${suffix}`,
+        // Unique per call (not just per phone number) — a real per-wallet
+        // accountId is unique per wallet Rubies creates, even when the same
+        // person/number provisions more than once, which dry-run should
+        // mirror rather than deterministically colliding on retry.
+        accountId: `DRYRUN-ACCT-${randomUUID()}`,
         accountNumber: `77${suffix}`,
         accountName: `${kyc.firstName} ${kyc.lastName}`,
         bankCode: RUBIES_MFB_BANK_CODE,
@@ -182,12 +195,47 @@ export class RubiesService {
       throw new Error(response.responseMessage || "Wallet creation failed.");
     }
 
+    // create-wallet's response never includes the wallet's own accountId —
+    // only customerId (our organisation's ID, constant across every wallet)
+    // — so fetch it with a follow-up call keyed by the accountNumber we just got.
+    const { accountId } = await this.retrieveWalletDetails(
+      response.accountNumber,
+    );
+
     return {
-      accountId: response.customerId,
+      accountId,
       accountNumber: response.accountNumber,
       accountName: response.accountName ?? `${kyc.firstName} ${kyc.lastName}`,
       bankCode: RUBIES_MFB_BANK_CODE,
     };
+  }
+
+  /**
+   * POST /{stage}/baas-wallet/retrieve-wallet-details — the only Rubies
+   * endpoint that returns a wallet's own accountId (its internal per-wallet
+   * database ID, e.g. "244623"), distinct from customerId (our
+   * organisation's constant ID). Called once, right after create-wallet
+   * succeeds, keyed by the accountNumber that call already returned.
+   */
+  async retrieveWalletDetails(
+    accountNumber: string,
+  ): Promise<{ accountId: string }> {
+    if (this.dryRun) {
+      return { accountId: `DRYRUN-ACCT-${randomUUID()}` };
+    }
+
+    const response = await this.post<{ accountId?: string }>(
+      "/baas-wallet/retrieve-wallet-details",
+      { accountNumber },
+    );
+
+    if (response.responseCode !== "00" || !response.accountId) {
+      throw new Error(
+        response.responseMessage || "Could not retrieve wallet details.",
+      );
+    }
+
+    return { accountId: response.accountId };
   }
 
   /**

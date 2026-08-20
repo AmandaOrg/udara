@@ -120,7 +120,11 @@ describe("parseInboundPayload", () => {
           type: "interactive",
           interactive: {
             type: "nfm_reply",
-            nfm_reply: { name: "flow", body: "Sent", response_json: "{not json" },
+            nfm_reply: {
+              name: "flow",
+              body: "Sent",
+              response_json: "{not json",
+            },
           },
         },
       ],

@@ -9,6 +9,7 @@ import { TransferConfirmationService } from "./transfer-confirmation.service";
 import { TransferReconciliationScheduler } from "./transfer-reconciliation.scheduler";
 import { ChunkedMessengerService } from "./chunked-messenger.service";
 import { KeduChatService } from "./kedu-chat.service";
+import { AccountActionsService } from "./account-actions.service";
 import { AllowanceModule } from "../allowance/allowance.module";
 import { RubiesModule } from "../rubies/rubies.module";
 import { TaggingModule } from "../tagging/tagging.module";
@@ -44,6 +45,7 @@ import { AiModule } from "../ai/ai.module";
     TransferReconciliationScheduler,
     ChunkedMessengerService,
     KeduChatService,
+    AccountActionsService,
   ],
   exports: [
     WhatsappService,

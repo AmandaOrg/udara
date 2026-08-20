@@ -45,9 +45,10 @@ function toGeminiSchema(schema: unknown): unknown {
   if (Array.isArray(input.required)) output.required = input.required;
   if (input.properties && typeof input.properties === "object") {
     output.properties = Object.fromEntries(
-      Object.entries(input.properties as JsonSchemaLike).map(
-        ([key, value]) => [key, toGeminiSchema(value)],
-      ),
+      Object.entries(input.properties as JsonSchemaLike).map(([key, value]) => [
+        key,
+        toGeminiSchema(value),
+      ]),
     );
   }
   if (input.items) output.items = toGeminiSchema(input.items);

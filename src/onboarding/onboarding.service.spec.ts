@@ -4,6 +4,7 @@ import {
   IncomePosture,
   IncomeType,
   OnboardingStage,
+  Prisma,
 } from "@prisma/client";
 
 /**
@@ -720,6 +721,63 @@ describe("OnboardingService", () => {
       });
       await service.handleInboundFlowReply(user as any, flowSubmission());
       expect(rubies.provisionAccount).toHaveBeenCalledTimes(2);
+    });
+
+    it("on a duplicate-account DB collision (P2002 on rubiesAccountId): gives a specific, non-leaky message instead of the raw Prisma error", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+      rubies.provisionAccount.mockResolvedValue({
+        accountId: "BUS0000000135", // already linked to a different User row
+        accountNumber: "1000012845",
+        accountName: "Daniel Okafor",
+        bankCode: "090175",
+      });
+      prisma.user.update.mockImplementationOnce(() => {
+        throw new Prisma.PrismaClientKnownRequestError(
+          "Unique constraint failed on the fields: (`rubiesAccountId`)",
+          {
+            code: "P2002",
+            clientVersion: "5.22.0",
+            meta: { target: ["rubiesAccountId"] },
+          },
+        );
+      });
+
+      await service.handleInboundFlowReply(user as any, flowSubmission());
+
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.PLAN_PROPOSED,
+      );
+      const [, sentText] = whatsapp.sendText.mock.calls[0];
+      expect(sentText).toContain("already linked to a different kedu account");
+      expect(sentText).not.toContain("Prisma");
+      expect(sentText).not.toContain("rubiesAccountId");
+      expect(whatsapp.sendFlow).toHaveBeenCalledTimes(1); // retry form sent
+    });
+
+    it("on an unexpected Prisma error: falls back to a generic message, never the raw error text", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+      rubies.provisionAccount.mockResolvedValue({
+        accountId: "CUST-9",
+        accountNumber: "0000000009",
+        accountName: "Daniel",
+        bankCode: "090175",
+      });
+      prisma.user.update.mockImplementationOnce(() => {
+        throw new Prisma.PrismaClientKnownRequestError("Some other DB error", {
+          code: "P2025",
+          clientVersion: "5.22.0",
+        });
+      });
+
+      await service.handleInboundFlowReply(user as any, flowSubmission());
+
+      const [, sentText] = whatsapp.sendText.mock.calls[0];
+      expect(sentText).not.toContain("Some other DB error");
+      expect(sentText).toContain("something on our end");
     });
 
     it("ignores a flow reply that arrives outside PLAN_PROPOSED", async () => {

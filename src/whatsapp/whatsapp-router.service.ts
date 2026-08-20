@@ -14,17 +14,30 @@ import {
 import { ManagerConversationService } from "../manager/manager-conversation.service";
 import { KeduChatService } from "./kedu-chat.service";
 import {
+  AccountActionsService,
+  BANK_BUTTON_PREFIX,
+  LABEL_BUTTON_PREFIX,
+  MENU_ACCOUNT,
+  MENU_BALANCE,
+  MENU_BUTTON_PREFIX,
+  MENU_LIMITS,
+  MENU_TRANSFER,
+} from "./account-actions.service";
+import {
   parseManagerCommand,
   parseTransferCommand,
   isSpendSummaryQuery,
 } from "./parsers/text-command.parser";
 import { User, WhatsappMessage, WhatsappMessageType } from "@prisma/client";
 
-const STOPGAP_HELP_TEXT =
-  "quick reference — i can also just chat, but these always work:\n" +
-  '  "send <amount> to <10-digit account> <6-digit bank code>"\n' +
-  '  "summary" — this week\'s spending\n' +
-  '  "manager <WINDOW_HOURS|OVERRIDE_FEES|EXIT_RESTRICTIONS|OTHER> <why>"';
+// Quick-access keyword shortcuts — same actions the "menu" list offers,
+// reachable without opening the menu first. Deliberately not a fuzzy/AI
+// match: exact keywords only, consistent with the rest of the stopgap
+// command parsing.
+const BALANCE_RE = /^balance$/i;
+const LIMITS_RE = /^limits?$/i;
+const ACCOUNT_DETAILS_RE = /^account( details)?$/i;
+const TRANSFER_START_RE = /^(send money|transfer)$/i;
 
 /**
  * The top-level inbound decision tree (PRD §5: webhook-in -> window check ->
@@ -48,6 +61,7 @@ export class WhatsappRouterService {
     private readonly transferConfirmation: TransferConfirmationService,
     private readonly managerConversation: ManagerConversationService,
     private readonly keduChat: KeduChatService,
+    private readonly accountActions: AccountActionsService,
   ) {}
 
   async route(message: WhatsappMessage): Promise<void> {
@@ -116,8 +130,10 @@ export class WhatsappRouterService {
 
   /**
    * Dispatches by button-id namespace: confirm_transfer/cancel_transfer to
-   * TransferConfirmationService; during onboarding's STRUCTURED_QUESTIONS
-   * stage, everything else goes to OnboardingService's list-reply handler.
+   * TransferConfirmationService; menu:/bank:/label: to AccountActionsService
+   * (the interactive balance/limits/account/transfer surface); during
+   * onboarding's STRUCTURED_QUESTIONS stage, everything else goes to
+   * OnboardingService's list-reply handler.
    */
   private async handleButtonReply(
     user: User,
@@ -136,6 +152,27 @@ export class WhatsappRouterService {
       return;
     }
 
+    if (payload.startsWith(MENU_BUTTON_PREFIX)) {
+      await this.handleMenuSelection(user, payload);
+      return;
+    }
+    if (
+      payload.startsWith(BANK_BUTTON_PREFIX) ||
+      payload.startsWith(LABEL_BUTTON_PREFIX)
+    ) {
+      const draft = await this.accountActions.getActiveDraft(user.id);
+      if (!draft) {
+        await this.whatsapp.sendText(
+          message.fromNumber,
+          'that request has expired — say "transfer" to start again.',
+          user.id,
+        );
+        return;
+      }
+      await this.accountActions.handleWizardSelection(user, draft.id, payload);
+      return;
+    }
+
     if (isPreAccountStage(user.onboardingStage)) {
       await this.onboarding.handleInboundButton(user, payload);
       return;
@@ -149,6 +186,24 @@ export class WhatsappRouterService {
       "Got it — I'm not able to act on that yet, this part of Kedu isn't wired up.",
       user.id,
     );
+  }
+
+  private async handleMenuSelection(
+    user: User,
+    payload: string,
+  ): Promise<void> {
+    switch (payload) {
+      case MENU_BALANCE:
+        return this.accountActions.sendBalance(user);
+      case MENU_LIMITS:
+        return this.accountActions.sendLimitsStatus(user);
+      case MENU_ACCOUNT:
+        return this.accountActions.sendAccountDetails(user);
+      case MENU_TRANSFER:
+        return this.accountActions.startTransferWizard(user);
+      default:
+        this.logger.warn(`Unrecognized menu selection "${payload}"`);
+    }
   }
 
   /**
@@ -174,9 +229,16 @@ export class WhatsappRouterService {
 
   /**
    * Pre-account-stage users (still in the onboarding script) go entirely to
-   * OnboardingService. Everyone else gets the structured stopgap commands
-   * first (transfer/manager/summary), falling through to real Kedu-persona
-   * chat for anything else.
+   * OnboardingService — the interactive account-actions surface below
+   * (balance/limits/account/transfer) needs a real Rubies account to act on,
+   * so it's only reachable past that point.
+   *
+   * For everyone else: an in-progress send-money wizard step takes priority
+   * over everything (the next message IS that step's answer, not a new
+   * command); then the structured stopgap commands/keyword shortcuts
+   * (interactive, deterministic — never the AI); free-text falls through to
+   * real Kedu-persona chat last, which is also where "increase my limit"
+   * and similar judgment calls stay (via the manager command/chat path).
    */
   private async handleText(
     user: User,
@@ -189,12 +251,35 @@ export class WhatsappRouterService {
       return;
     }
 
+    const activeDraft = await this.accountActions.getActiveDraft(user.id);
+    if (activeDraft) {
+      await this.accountActions.handleWizardText(user, activeDraft.id, text);
+      return;
+    }
+
     const transferCommand = parseTransferCommand(text);
     if (transferCommand) {
       await this.transferConfirmation.initiateTransfer({
         userId: user.id,
         ...transferCommand,
       });
+      return;
+    }
+
+    if (BALANCE_RE.test(text.trim())) {
+      await this.accountActions.sendBalance(user);
+      return;
+    }
+    if (LIMITS_RE.test(text.trim())) {
+      await this.accountActions.sendLimitsStatus(user);
+      return;
+    }
+    if (ACCOUNT_DETAILS_RE.test(text.trim())) {
+      await this.accountActions.sendAccountDetails(user);
+      return;
+    }
+    if (TRANSFER_START_RE.test(text.trim())) {
+      await this.accountActions.startTransferWizard(user);
       return;
     }
 
@@ -218,11 +303,7 @@ export class WhatsappRouterService {
     }
 
     if (/^help$|^menu$|^commands$/i.test(text.trim())) {
-      await this.whatsapp.sendText(
-        message.fromNumber,
-        STOPGAP_HELP_TEXT,
-        user.id,
-      );
+      await this.accountActions.sendMainMenu(user);
       return;
     }
 

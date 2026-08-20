@@ -37,7 +37,9 @@ describe("ChunkedMessengerService", () => {
     };
     prisma = {
       whatsappMessage: {
-        findFirst: jest.fn().mockResolvedValue({ waMessageId: "wamid.inbound" }),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ waMessageId: "wamid.inbound" }),
       },
     };
     service = new ChunkedMessengerService(whatsapp as any, prisma as any);
@@ -102,9 +104,7 @@ describe("ChunkedMessengerService", () => {
 
     expect(prisma.whatsappMessage.findFirst).toHaveBeenCalledTimes(2);
     expect(whatsapp.markAsReadWithTyping).toHaveBeenCalledTimes(2);
-    expect(whatsapp.markAsReadWithTyping).toHaveBeenCalledWith(
-      "wamid.inbound",
-    );
+    expect(whatsapp.markAsReadWithTyping).toHaveBeenCalledWith("wamid.inbound");
   });
 
   it("doesn't fail the send if there's no inbound message to key the typing indicator off, or the call errors", async () => {

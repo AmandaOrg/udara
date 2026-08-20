@@ -62,6 +62,23 @@ enum RecipientLabel {
   OTHER
 }
 
+// The interactive (button/list-driven, non-AI) "send money" wizard's
+// in-progress state — deliberately separate from ConversationSession, which
+// is the AI-chat persona's history. This is a deterministic step machine,
+// same design principle as OnboardingSession's stage field.
+enum TransferDraftStep {
+  AWAITING_AMOUNT
+  AWAITING_ACCOUNT_NUMBER
+  AWAITING_BANK_SELECTION
+  AWAITING_LABEL_SELECTION // only reached for a brand-new recipient
+}
+
+enum TransferDraftStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
 enum SettingsChangeType {
   WINDOW_HOURS
   OVERRIDE_FEES
@@ -208,6 +225,7 @@ model User {
   dailyAllowances   DailyAllowance[]
   transactions      Transaction[]
   recipients        Recipient[]
+  transferDrafts    TransferDraft[]
   overrides         OverrideHistory[]
   settingsRequests  SettingsChangeRequest[]
   onboardingSessions OnboardingSession[]
@@ -255,6 +273,28 @@ model Recipient {
   transactions      Transaction[]
 
   @@unique([userId, accountNumber, bankCode])
+}
+
+model TransferDraft {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+
+  step          TransferDraftStep
+  status        TransferDraftStatus @default(ACTIVE)
+
+  amount        Decimal? @db.Decimal(14, 2)
+  accountNumber String?
+  bankCode      String?
+  bankName      String?
+  resolvedName  String?  // from Rubies name-enquiry, shown back to the user for confirmation
+  isNewRecipient Boolean @default(false)
+  label         RecipientLabel?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, status])
 }
 
 model Transaction {

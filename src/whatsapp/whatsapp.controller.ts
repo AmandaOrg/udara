@@ -36,10 +36,10 @@ export class WhatsappController {
     private readonly messages: WhatsappMessageService,
     private readonly router: WhatsappRouterService,
     private readonly whatsapp: WhatsappService,
-  ) { }
+  ) {}
 
   /** Meta's webhook verification handshake. */
-  @Get('whatsapp')
+  @Get("whatsapp")
   verify(
     @Query("hub.mode") mode: string,
     @Query("hub.verify_token") token: string,
@@ -48,7 +48,7 @@ export class WhatsappController {
   ) {
     const expected = this.config.get<string>("WHATSAPP_WEBHOOK_VERIFY_TOKEN");
     if (mode === "subscribe" && token === expected) {
-      console.log("success")
+      console.log("success");
       res.status(200).send(challenge);
     } else {
       res.sendStatus(403);
@@ -65,7 +65,7 @@ export class WhatsappController {
    * block processing/redelivery of the rest of the batch.
    */
   @UseGuards(WhatsappSignatureGuard)
-  @Post('whatsapp')
+  @Post("whatsapp")
   async receive(@Body() payload: unknown, @Res() res: Response) {
     res.sendStatus(200);
 
@@ -97,9 +97,7 @@ export class WhatsappController {
           this.whatsapp
             .markAsReadWithTyping(record.waMessageId)
             .catch((err) =>
-              this.logger.warn(
-                `typing heartbeat failed: ${String(err)}`,
-              ),
+              this.logger.warn(`typing heartbeat failed: ${String(err)}`),
             );
         }, TYPING_HEARTBEAT_INTERVAL_MS);
 
@@ -127,5 +125,4 @@ export class WhatsappController {
       }
     }
   }
-
 }

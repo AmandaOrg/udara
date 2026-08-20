@@ -50,6 +50,15 @@ export class TransferConfirmationService {
     accountNumber: string;
     bankCode: string;
     amount: number;
+    // Set by the interactive send-money wizard (account-actions.service.ts),
+    // which already ran name-enquiry and — for a new recipient — asked the
+    // user to pick a label via a list message. When set, skip the internal
+    // name-enquiry call (avoid double-hitting Rubies) and use the given
+    // label instead of defaulting to OTHER. Unset for the legacy
+    // "send <amount> to <account> <bank>" text-command shortcut, which
+    // preserves its original auto-tag-OTHER behavior exactly.
+    resolvedName?: string;
+    label?: RecipientLabel;
   }): Promise<void> {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: params.userId },
@@ -79,13 +88,16 @@ export class TransferConfirmationService {
     let isNewRecipient = false;
     if (!recipient) {
       isNewRecipient = true;
-      const resolved = await this.rubies
-        .nameEnquiry({
-          accountNumber: params.accountNumber,
-          bankCode: params.bankCode,
-        })
-        .catch(() => null);
-      if (!resolved) {
+      const resolvedName =
+        params.resolvedName ??
+        (await this.rubies
+          .nameEnquiry({
+            accountNumber: params.accountNumber,
+            bankCode: params.bankCode,
+          })
+          .then((r) => r.accountName)
+          .catch(() => null));
+      if (!resolvedName) {
         await this.whatsapp.sendText(
           user.whatsappNumber,
           `Couldn't verify account ${params.accountNumber} at that bank — double-check the account number and bank code.`,
@@ -97,8 +109,8 @@ export class TransferConfirmationService {
         userId: params.userId,
         accountNumber: params.accountNumber,
         bankCode: params.bankCode,
-        accountName: resolved.accountName,
-        label: RecipientLabel.OTHER,
+        accountName: resolvedName,
+        label: params.label ?? RecipientLabel.OTHER,
       });
     }
 
@@ -117,7 +129,7 @@ export class TransferConfirmationService {
 
     const bodyLines = [
       isNewRecipient
-        ? `New recipient: ${recipient.accountName ?? recipient.accountNumber} (tagged "other" for now).`
+        ? `New recipient: ${recipient.accountName ?? recipient.accountNumber} (tagged "${recipient.label.toLowerCase()}").`
         : `Send to ${recipient.accountName ?? recipient.accountNumber}?`,
       `Amount: ₦${params.amount.toLocaleString("en-NG")}`,
     ];

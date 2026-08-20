@@ -34,7 +34,7 @@ export class WhatsappService {
     private readonly http: HttpService,
     private readonly config: ConfigService,
     private readonly messages: WhatsappMessageService,
-  ) { }
+  ) {}
 
   private get phoneNumberId(): string {
     return this.config.get<string>("WHATSAPP_PHONE_NUMBER_ID", "");
@@ -305,5 +305,4 @@ export class WhatsappService {
       "Not implemented — audio/media download is a post-v0 fast-follow",
     );
   }
-
 }
