@@ -1,15 +1,18 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { randomUUID } from "crypto";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { AllowanceService } from "../allowance/allowance.service";
-import { RubiesService } from "../rubies/rubies.service";
+import { RubiesService, RUBIES_MFB_BANK_CODE } from "../rubies/rubies.service";
 import { TaggingService } from "../tagging/tagging.service";
 import { WhatsappService } from "./whatsapp.service";
 import {
   OnboardingStage,
   RecipientLabel,
+  Transaction,
   TransactionStatus,
   TransactionType,
+  User,
 } from "@prisma/client";
 import { TransactionType as LocalTransactionType } from "../common/enums/transaction-type.enum";
 
@@ -19,26 +22,26 @@ export const CANCEL_BUTTON_PREFIX = "cancel_transfer:";
 /**
  * The confirm-before-transfer flow (PRD §5's pre-transfer confirmation, §4a):
  * evaluateSpend -> tag/confirm recipient -> confirm buttons -> initiateTransfer
- * -> recordSpend. Deterministic end to end — the only "intent" input this
- * needs (recipient + amount) currently comes from a structured text command
- * (see parsers/text-command.parser.ts) rather than free-text classification,
- * since the AI layer (Phase 3) is deferred; nothing below depends on that
- * being true, so swapping in real classification later only changes what
- * calls initiateTransfer, not this service.
- *
- * New-recipient simplification (documented, not silent): WhatsApp's button
- * message type allows at most 3 buttons, but there are 4 recipient labels
- * (RENT/FOOD/VENDOR/OTHER) — rather than build a second interactive-list
- * round-trip just for labeling, new recipients are auto-tagged OTHER and the
- * confirmation message says so. Re-labeling isn't built (needs a command/UI
- * this plan doesn't otherwise have a natural home for yet).
+ * -> recordSpend. Deterministic end to end. Recipient labeling comes either
+ * from AccountActionsService's interactive send-money wizard (a real tap-to-
+ * pick list — see account-actions.service.ts) or defaults to OTHER for the
+ * legacy "send <amount> to <account> <bank>" text-command shortcut, which
+ * doesn't collect a label.
  */
 @Injectable()
 export class TransferConfirmationService {
   private readonly logger = new Logger(TransferConfirmationService.name);
 
+  // In-memory only — re-resolved on process restart. The fees account's
+  // registered name rarely if ever changes, and a resolution failure falls
+  // back to a generic label rather than blocking the sweep (see
+  // sweepFeeToFeesAccount) — a stale/fallback name here is cosmetic only,
+  // it doesn't affect where the money actually goes.
+  private feesAccountNameCache: string | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
     private readonly allowance: AllowanceService,
     private readonly rubies: RubiesService,
     private readonly tagging: TaggingService,
@@ -67,7 +70,7 @@ export class TransferConfirmationService {
     if (!user.rubiesAccountNumber || !user.rubiesAccountName) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "You don't have a Kedu account set up yet, so there's nothing to send from.",
+        "You don't have a Udara account set up yet, so there's nothing to send from.",
         user.id,
       );
       return;
@@ -100,7 +103,7 @@ export class TransferConfirmationService {
       if (!resolvedName) {
         await this.whatsapp.sendText(
           user.whatsappNumber,
-          `Couldn't verify account ${params.accountNumber} at that bank — double-check the account number and bank code.`,
+          `Couldn't verify account ${params.accountNumber} at that bank, double-check the account number and bank code.`,
           user.id,
         );
         return;
@@ -138,7 +141,7 @@ export class TransferConfirmationService {
         `${evaluation.type} fee: ₦${evaluation.feeAmount.toLocaleString("en-NG")}${evaluation.waived ? " (waived)" : ""}`,
       );
     } else if (evaluation.type !== LocalTransactionType.NORMAL) {
-      bodyLines.push(`${evaluation.type} — fee waived by yesterday's surplus`);
+      bodyLines.push(`${evaluation.type}: fee waived by yesterday's surplus`);
     }
     bodyLines.push(
       `Remaining today after this: ₦${(evaluation.remainingToday - params.amount).toLocaleString("en-NG")}`,
@@ -187,7 +190,7 @@ export class TransferConfirmationService {
       });
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        `That transfer needs ₦${totalCost.toLocaleString("en-NG")} but your Kedu account only has ₦${balance.toLocaleString("en-NG")}. Cancelled.`,
+        `That transfer needs ₦${totalCost.toLocaleString("en-NG")} but your Udara account only has ₦${balance.toLocaleString("en-NG")}. Cancelled.`,
         user.id,
       );
       return;
@@ -207,7 +210,7 @@ export class TransferConfirmationService {
       toBankCode: recipient.bankCode,
       toAccountName: recipient.accountName ?? recipient.accountNumber,
       amount: Number(transaction.amount),
-      narration: `Kedu transfer to ${recipient.accountName ?? recipient.accountNumber}`,
+      narration: `Udara transfer to ${recipient.accountName ?? recipient.accountNumber}`,
       idempotencyKey: transaction.idempotencyKey ?? randomUUID(),
     });
 
@@ -216,7 +219,7 @@ export class TransferConfirmationService {
       // scheduler below will resolve this to EXECUTED/FAILED once known.
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "Your transfer is processing — I'll confirm once it's done.",
+        "Your transfer is processing, I'll confirm once it's done.",
         user.id,
       );
       return;
@@ -246,7 +249,7 @@ export class TransferConfirmationService {
     });
     await this.whatsapp.sendText(
       transaction.user.whatsappNumber,
-      "Cancelled — nothing was sent.",
+      "Cancelled, nothing was sent.",
       transaction.user.id,
     );
   }
@@ -301,6 +304,9 @@ export class TransferConfirmationService {
           },
         });
       }
+      // Best-effort: never let a fee-sweep problem affect the transaction
+      // the user already saw succeed — see sweepFeeToFeesAccount.
+      await this.sweepFeeToFeesAccount(transaction, transaction.user);
       await this.allowance.recordSpend(transaction.id);
 
       const isFirstTransactionOfOnboarding =
@@ -315,14 +321,14 @@ export class TransferConfirmationService {
       } else {
         await this.whatsapp.sendText(
           transaction.user.whatsappNumber,
-          `Done — ₦${Number(transaction.amount).toLocaleString("en-NG")} sent to ${transaction.recipient.accountName ?? transaction.recipient.accountNumber}.`,
+          `Done, ₦${Number(transaction.amount).toLocaleString("en-NG")} sent to ${transaction.recipient.accountName ?? transaction.recipient.accountNumber}.`,
           transaction.user.id,
         );
       }
     } else {
       await this.whatsapp.sendText(
         transaction.user.whatsappNumber,
-        "That transfer failed on Rubies' end — nothing was deducted from today's allowance.",
+        "That transfer failed on Rubies' end, nothing was deducted from today's allowance.",
         transaction.user.id,
       );
     }
@@ -372,5 +378,107 @@ export class TransferConfirmationService {
       "keep going.",
     ].join("\n\n");
     await this.whatsapp.sendText(whatsappNumber, text, userId);
+  }
+
+  /**
+   * Sweeps a transaction's override fee (if any) to a dedicated Rubies
+   * "fees account" — configured via RUBIES_FEES_ACCOUNT_NUMBER — so Udara
+   * actually collects the early-access/borrow fee it charges, rather than
+   * only ever tracking it in OverrideHistory without the money moving
+   * anywhere. Best-effort: a failure here is logged loudly but never
+   * affects the transaction the user already saw succeed.
+   *
+   * Not fully reconciled if the sweep itself comes back PENDING or fails:
+   * unlike the main transfer, there's no confirm-button/webhook/
+   * reconciliation-scheduler infrastructure wired specifically for this
+   * secondary transfer yet — feeSweepReference is still recorded either way
+   * so a stuck sweep can be found and retried manually; feeSweptAt (the
+   * "definitely collected" signal, and this method's idempotency guard) is
+   * only set once Rubies confirms SUCCESS.
+   */
+  private async sweepFeeToFeesAccount(
+    transaction: Transaction,
+    user: Pick<User, "id" | "rubiesAccountNumber" | "rubiesAccountName">,
+  ): Promise<void> {
+    const feeAmount = Number(transaction.feeAmount);
+    if (feeAmount <= 0 || transaction.feeSweptAt) return;
+
+    const feesAccountNumber = this.config.get<string>(
+      "RUBIES_FEES_ACCOUNT_NUMBER",
+    );
+    if (!feesAccountNumber) {
+      this.logger.warn(
+        `RUBIES_FEES_ACCOUNT_NUMBER is not set — skipping ₦${feeAmount} fee sweep for transaction ${transaction.id}`,
+      );
+      return;
+    }
+    if (!user.rubiesAccountNumber || !user.rubiesAccountName) {
+      this.logger.error(
+        `Cannot sweep fee for transaction ${transaction.id} — user ${user.id} has no Rubies account`,
+      );
+      return;
+    }
+
+    const feesBankCode = this.config.get<string>(
+      "RUBIES_FEES_BANK_CODE",
+      RUBIES_MFB_BANK_CODE,
+    );
+
+    try {
+      const feesAccountName = await this.resolveFeesAccountName(
+        feesAccountNumber,
+        feesBankCode,
+      );
+      const result = await this.rubies.initiateTransfer({
+        fromAccountNumber: user.rubiesAccountNumber,
+        fromAccountName: user.rubiesAccountName,
+        toAccountNumber: feesAccountNumber,
+        toBankCode: feesBankCode,
+        toAccountName: feesAccountName,
+        amount: feeAmount,
+        narration: `Udara ${transaction.type.toLowerCase()} fee`,
+        // Deliberately distinct from the main transfer's idempotencyKey so
+        // Rubies (and our own dedup) tracks the two transfers independently.
+        idempotencyKey: `${transaction.idempotencyKey ?? transaction.id}-fee`,
+      });
+
+      await this.prisma.transaction.update({
+        where: { id: transaction.id },
+        data: {
+          feeSweepReference: result.reference,
+          feeSweptAt: result.status === "SUCCESS" ? new Date() : undefined,
+        },
+      });
+
+      if (result.status !== "SUCCESS") {
+        this.logger.warn(
+          `Fee sweep for transaction ${transaction.id} came back ${result.status} — not marked as swept, needs manual reconciliation if it never resolves`,
+        );
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to sweep ₦${feeAmount} fee for transaction ${transaction.id} to the fees account: ${String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Resolved once via name-enquiry and cached for the life of the process —
+   * the fees account's registered name essentially never changes. Falls
+   * back to a generic label rather than blocking the sweep if the lookup
+   * itself fails; the fallback only affects a cosmetic display field on the
+   * Rubies side, not where the money goes.
+   */
+  private async resolveFeesAccountName(
+    accountNumber: string,
+    bankCode: string,
+  ): Promise<string> {
+    if (this.feesAccountNameCache) return this.feesAccountNameCache;
+
+    const resolved = await this.rubies
+      .nameEnquiry({ accountNumber, bankCode })
+      .catch(() => null);
+    this.feesAccountNameCache = resolved?.accountName ?? "Udara Fees";
+    return this.feesAccountNameCache;
   }
 }

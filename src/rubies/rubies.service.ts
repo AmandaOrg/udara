@@ -38,8 +38,13 @@ export interface RubiesBank {
   bankName: string;
 }
 
-/** Rubies MFB's own CBN bank code — constant across every wallet Rubies provisions. */
-const RUBIES_MFB_BANK_CODE = "090175";
+/**
+ * Rubies MFB's own CBN bank code — constant across every wallet Rubies
+ * provisions. Exported so callers sending money to another Rubies-hosted
+ * wallet (e.g. TransferConfirmationService's fee sweep to the fees account)
+ * don't need to hardcode it a second time.
+ */
+export const RUBIES_MFB_BANK_CODE = "090175";
 
 /**
  * Rubies' shared response-code buckets, documented once at the API level

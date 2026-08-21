@@ -27,14 +27,25 @@ enum IncomePosture {
   GROW     // income-tier branch: not enough room to restrict further
 }
 
+// Ordered to match the canonical Udara onboarding script's actual stage
+// sequence (docs/Udara-Onboarding-Script), not alphabetically. Two additions
+// vs the original Kedu script: FREQUENCY_CHECK (Stage 3b, a button follow-up
+// on the "why did you come to me" answer — also absorbs what used to be a
+// separate, near-duplicate structured question about unplanned-spending
+// frequency) and PLAN_REVIEW (Stage 8's "does this feel right?" checkpoint,
+// which didn't exist before). The account-creation/KYC step (PLAN_PROPOSED)
+// now fires right after FREQUENCY_CHECK instead of at the very end — see
+// OnboardingService for the full stage-machine.
 enum OnboardingStage {
   DISCOVERY
   WELCOME
   IDENTITY
+  FREQUENCY_CHECK
+  PLAN_PROPOSED
   MONEY_STORY
   AI_REFLECTION
   STRUCTURED_QUESTIONS
-  PLAN_PROPOSED
+  PLAN_REVIEW
   ACCOUNT_CREATED
   FUNDED
   FIRST_TRANSACTION
@@ -309,6 +320,12 @@ model Transaction {
   status          TransactionStatus @default(PENDING_CONFIRMATION)
 
   feeAmount       Decimal  @default(0) @db.Decimal(14, 2)
+  // Set once the feeAmount (if any) has actually been moved to
+  // RUBIES_FEES_ACCOUNT_NUMBER — separate from feeAmount/type, which are
+  // computed at confirm-time regardless of whether the sweep transfer
+  // itself later succeeds. See TransferConfirmationService.sweepFeeToFeesAccount.
+  feeSweptAt      DateTime?
+  feeSweepReference String?
 
   rubiesReference String?  // external reference once executed via Rubies
 

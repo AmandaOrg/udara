@@ -34,6 +34,7 @@ describe("TransferConfirmationService", () => {
   };
   let tagging: { findRecipient: jest.Mock; tagRecipient: jest.Mock };
   let whatsapp: { sendText: jest.Mock; sendInteractiveButtons: jest.Mock };
+  let config: { get: jest.Mock };
   let service: TransferConfirmationService;
 
   const user = {
@@ -104,9 +105,13 @@ describe("TransferConfirmationService", () => {
         .fn()
         .mockResolvedValue({ waMessageId: "wamid.2" }),
     };
+    // Unset by default — matches the real "fee sweep skipped with a warning"
+    // dev-mode behavior. Individual tests override this to exercise the sweep.
+    config = { get: jest.fn((_key: string, fallback?: unknown) => fallback) };
 
     service = new TransferConfirmationService(
       prisma as any,
+      config as any,
       allowance as any,
       rubies as any,
       tagging as any,
@@ -130,7 +135,7 @@ describe("TransferConfirmationService", () => {
 
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
-        expect.stringContaining("don't have a Kedu account"),
+        expect.stringContaining("don't have a Udara account"),
         "user-1",
       );
       expect(allowance.evaluateSpend).not.toHaveBeenCalled();
@@ -521,7 +526,7 @@ describe("TransferConfirmationService", () => {
       const [, message] =
         whatsapp.sendText.mock.calls[whatsapp.sendText.mock.calls.length - 1];
       expect(message).toContain("payment successful");
-      expect(message).not.toContain("Done —");
+      expect(message).not.toContain("Done,");
     });
 
     it("sends the normal 'Done' message (no onboarding transition) for an already-COMPLETE user", async () => {
@@ -541,7 +546,145 @@ describe("TransferConfirmationService", () => {
       expect(prisma.user.update).not.toHaveBeenCalled();
       const [, message] =
         whatsapp.sendText.mock.calls[whatsapp.sendText.mock.calls.length - 1];
-      expect(message).toContain("Done —");
+      expect(message).toContain("Done,");
+    });
+
+    describe("fee sweep", () => {
+      function executedWithFee(
+        overrides: Partial<Record<string, unknown>> = {},
+      ) {
+        return {
+          id: "txn-1",
+          status: TransactionStatus.CONFIRMED,
+          user,
+          userId: "user-1",
+          recipient,
+          amount: 5000,
+          type: TransactionType.EARLY_ACCESS,
+          feeAmount: 1020,
+          idempotencyKey: "idem-1",
+          feeSweptAt: null,
+          ...overrides,
+        };
+      }
+
+      it("skips the sweep (with a warning) when RUBIES_FEES_ACCOUNT_NUMBER isn't set — doesn't touch the main flow", async () => {
+        prisma.transaction.findUniqueOrThrow.mockResolvedValue(
+          executedWithFee(),
+        );
+
+        await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+        // Only the main-flow calls are on this shared mock — no fee-sweep transfer attempted.
+        expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+        expect(allowance.recordSpend).toHaveBeenCalledWith("txn-1");
+      });
+
+      it("sweeps the fee to the configured fees account and marks it swept on success", async () => {
+        config.get.mockImplementation((key: string, fallback?: unknown) => {
+          if (key === "RUBIES_FEES_ACCOUNT_NUMBER") return "9998887777";
+          if (key === "RUBIES_FEES_BANK_CODE") return "090175";
+          return fallback;
+        });
+        prisma.transaction.findUniqueOrThrow.mockResolvedValue(
+          executedWithFee(),
+        );
+        rubies.initiateTransfer.mockResolvedValue({
+          reference: "FEE-REF-1",
+          status: "SUCCESS",
+          responseCode: "00",
+        });
+
+        await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+        expect(rubies.initiateTransfer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            fromAccountNumber: "7712345678",
+            toAccountNumber: "9998887777",
+            toBankCode: "090175",
+            amount: 1020,
+            idempotencyKey: "idem-1-fee",
+          }),
+        );
+        expect(prisma.transaction.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              feeSweepReference: "FEE-REF-1",
+              feeSweptAt: expect.any(Date),
+            }),
+          }),
+        );
+      });
+
+      it("records the reference but not feeSweptAt when the sweep itself comes back PENDING", async () => {
+        config.get.mockImplementation((key: string, fallback?: unknown) =>
+          key === "RUBIES_FEES_ACCOUNT_NUMBER" ? "9998887777" : fallback,
+        );
+        prisma.transaction.findUniqueOrThrow.mockResolvedValue(
+          executedWithFee(),
+        );
+        rubies.initiateTransfer.mockResolvedValue({
+          reference: "FEE-REF-2",
+          status: "PENDING",
+          responseCode: "09",
+        });
+
+        await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+        expect(prisma.transaction.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              feeSweepReference: "FEE-REF-2",
+              feeSweptAt: undefined,
+            }),
+          }),
+        );
+      });
+
+      it("never lets a sweep failure block recordSpend or the user's confirmation message", async () => {
+        config.get.mockImplementation((key: string, fallback?: unknown) =>
+          key === "RUBIES_FEES_ACCOUNT_NUMBER" ? "9998887777" : fallback,
+        );
+        prisma.transaction.findUniqueOrThrow.mockResolvedValue(
+          executedWithFee(),
+        );
+        rubies.initiateTransfer.mockRejectedValue(new Error("Rubies down"));
+
+        await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+        expect(allowance.recordSpend).toHaveBeenCalledWith("txn-1");
+        expect(whatsapp.sendText).toHaveBeenCalledWith(
+          "234801",
+          expect.stringContaining("Done"),
+          "user-1",
+        );
+      });
+
+      it("doesn't sweep again once feeSweptAt is already set", async () => {
+        config.get.mockImplementation((key: string, fallback?: unknown) =>
+          key === "RUBIES_FEES_ACCOUNT_NUMBER" ? "9998887777" : fallback,
+        );
+        prisma.transaction.findUniqueOrThrow.mockResolvedValue(
+          executedWithFee({ feeSweptAt: new Date() }),
+        );
+
+        await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+        expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+      });
+
+      it("never attempts a sweep when feeAmount is 0", async () => {
+        config.get.mockImplementation((key: string, fallback?: unknown) =>
+          key === "RUBIES_FEES_ACCOUNT_NUMBER" ? "9998887777" : fallback,
+        );
+        prisma.transaction.findUniqueOrThrow.mockResolvedValue(
+          executedWithFee({ type: TransactionType.NORMAL, feeAmount: 0 }),
+        );
+
+        await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+        expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+      });
     });
   });
 });

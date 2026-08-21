@@ -1,14 +1,14 @@
 import { Body, Controller, Logger, Post, UseGuards } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { AllowanceService } from "../allowance/allowance.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { TransferConfirmationService } from "../whatsapp/transfer-confirmation.service";
+import { AllowanceService } from "../allowance/allowance.service";
 import { RubiesSignatureGuard } from "./rubies-signature.guard";
 import { mapRubiesResponseCode } from "./rubies.service";
 import {
   OnboardingStage,
   Prisma,
   RubiesWebhookEventType,
-  TransactionStatus,
 } from "@prisma/client";
 
 /**
@@ -45,8 +45,9 @@ export class RubiesWebhookController {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly allowance: AllowanceService,
     private readonly whatsapp: WhatsappService,
+    private readonly transferConfirmation: TransferConfirmationService,
+    private readonly allowance: AllowanceService,
   ) {}
 
   @UseGuards(RubiesSignatureGuard)
@@ -89,10 +90,15 @@ export class RubiesWebhookController {
   }
 
   /**
-   * PRD §3 #4a — "when Kedu receives funds into the account, it sends a
+   * PRD §3 #4a — "when Udara receives funds into the account, it sends a
    * WhatsApp message confirming receipt." A v0 must-have on its own, distinct
    * from and simpler than the deferred proactive-nudge feature (§13/Phase 9)
    * — this send is unconditional, not gated behind any nudge/dedup logic.
+   *
+   * When this credit is the one that completes onboarding (user was sitting
+   * at ACCOUNT_CREATED, i.e. plan built, awaiting first funding — Udara
+   * script Stage 9/10), the message is the celebratory activation copy with
+   * the actual daily/weekly figures instead of the generic notice.
    */
   private async handleIncomingCredit(
     payload: RubiesNotification,
@@ -126,27 +132,51 @@ export class RubiesWebhookController {
       },
     });
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
-      `We've received ₦${amount.toLocaleString("en-NG")} into your Kedu account. It'll be available during your next spending window.`,
-      user.id,
-    );
+    const completesOnboarding =
+      user.onboardingStage === OnboardingStage.ACCOUNT_CREATED;
 
-    if (user.onboardingStage === OnboardingStage.ACCOUNT_CREATED) {
+    if (completesOnboarding) {
+      const dailyAllowance = await this.allowance.getOrCreateTodayAllowance(
+        user.id,
+      );
+      const daily = Number(dailyAllowance.amountAllocated);
+      const weekly = daily * 7;
+      const firstName = (user.name ?? "there").split(" ")[0];
+      const message = [
+        `₦${amount.toLocaleString("en-NG")} received, ${firstName} 🎉 your udara account is now active.`,
+        `daily spending limit: ₦${daily.toLocaleString("en-NG")}\nweekly spending limit: ₦${weekly.toLocaleString("en-NG")}`,
+        "spending window opens 11am, closes 8pm. i'll check in with you as you go, let's get started.",
+      ].join("\n\n");
+      await this.whatsapp.sendText(user.whatsappNumber, message, user.id);
+
       await this.prisma.user.update({
         where: { id: user.id },
         data: { onboardingStage: OnboardingStage.FUNDED },
       });
+      return;
     }
+
+    await this.whatsapp.sendText(
+      user.whatsappNumber,
+      `We've received ₦${amount.toLocaleString("en-NG")} into your Udara account. It'll be available during your next spending window.`,
+      user.id,
+    );
   }
 
   /**
    * The async confirmation path for a transfer that came back PENDING from
-   * initiateTransfer — updates Transaction.status from the response code
-   * (same 00/09·90·99/other mapping RubiesService uses) and only then calls
-   * AllowanceService.recordSpend, which is itself idempotent so a duplicate
-   * webhook delivery or overlap with the TSQ reconciliation job (Phase 8) is
-   * always safe.
+   * initiateTransfer — resolves the final status (same 00/09·90·99/other
+   * mapping RubiesService uses) and delegates to
+   * TransferConfirmationService.applyTransferResult, the same method the
+   * TSQ reconciliation scheduler calls for the same scenario. That method
+   * is itself idempotent (a no-op once the transaction is already
+   * EXECUTED/FAILED) and is also what creates OverrideHistory, sweeps any
+   * override fee to the fees account, and sends the user's confirmation
+   * message — this path used to reimplement a partial version of that logic
+   * inline, which meant a transfer resolved via webhook (rather than the
+   * synchronous confirm-button path or the reconciliation scheduler) never
+   * got any of those. Sharing one method fixes that instead of adding a
+   * fourth copy.
    */
   private async handleTransferStatus(
     payload: RubiesNotification,
@@ -166,24 +196,10 @@ export class RubiesWebhookController {
     const status = mapRubiesResponseCode(payload.responseCode);
     if (status === "PENDING") return; // nothing to do yet — wait for a final callback or TSQ reconciliation
 
-    const newStatus =
-      status === "SUCCESS"
-        ? TransactionStatus.EXECUTED
-        : TransactionStatus.FAILED;
-    if (transaction.status === newStatus) return; // already applied, avoid redundant work
-
-    await this.prisma.transaction.update({
-      where: { id: transaction.id },
-      data: {
-        status: newStatus,
-        rubiesReference: payload.paymentReference,
-        executedAt:
-          newStatus === TransactionStatus.EXECUTED ? new Date() : undefined,
-      },
-    });
-
-    if (newStatus === TransactionStatus.EXECUTED) {
-      await this.allowance.recordSpend(transaction.id);
-    }
+    await this.transferConfirmation.applyTransferResult(
+      transaction.id,
+      status,
+      payload.paymentReference,
+    );
   }
 }

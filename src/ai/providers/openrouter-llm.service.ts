@@ -119,8 +119,8 @@ export class OpenRouterLlmService implements LlmService {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         // Optional but recommended by OpenRouter for attributing usage on their dashboard.
-        "HTTP-Referer": "https://github.com/kedu",
-        "X-Title": "Kedu",
+        "HTTP-Referer": "https://github.com/udara",
+        "X-Title": "Udara",
       },
       body: JSON.stringify(body),
     });

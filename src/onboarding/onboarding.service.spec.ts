@@ -1,11 +1,5 @@
 import { OnboardingService, isPreAccountStage } from "./onboarding.service";
-import {
-  BudgetMethod,
-  IncomePosture,
-  IncomeType,
-  OnboardingStage,
-  Prisma,
-} from "@prisma/client";
+import { OnboardingStage, Prisma } from "@prisma/client";
 
 /**
  * A tiny in-memory fake for the two models OnboardingService touches. Each
@@ -80,10 +74,12 @@ describe("isPreAccountStage", () => {
     OnboardingStage.DISCOVERY,
     OnboardingStage.WELCOME,
     OnboardingStage.IDENTITY,
+    OnboardingStage.FREQUENCY_CHECK,
+    OnboardingStage.PLAN_PROPOSED,
     OnboardingStage.MONEY_STORY,
     OnboardingStage.AI_REFLECTION,
     OnboardingStage.STRUCTURED_QUESTIONS,
-    OnboardingStage.PLAN_PROPOSED,
+    OnboardingStage.PLAN_REVIEW,
   ])("%s is pre-account", (stage) => {
     expect(isPreAccountStage(stage)).toBe(true);
   });
@@ -103,14 +99,14 @@ describe("OnboardingService", () => {
   let config: { get: jest.Mock };
   let llm: { complete: jest.Mock };
   let validator: {
-    validateIdentity: jest.Mock;
+    validateQuickQuestions: jest.Mock;
     validateMoneyStory: jest.Mock;
-    validateReflectionContext: jest.Mock;
   };
   let llmLogger: { log: jest.Mock; markApplied: jest.Mock };
   let chunkedMessenger: { sendChunkedReply: jest.Mock };
   let whatsapp: {
     sendText: jest.Mock;
+    sendInteractiveButtons: jest.Mock;
     sendListMessage: jest.Mock;
     sendFlow: jest.Mock;
   };
@@ -123,10 +119,10 @@ describe("OnboardingService", () => {
       whatsappNumber: "234801",
       onboardingStage: OnboardingStage.DISCOVERY,
       name: null,
-      occupation: null,
       monthlyIncome: null,
       statedGoal: null,
       city: null,
+      strictnessLevel: null,
       ...overrides,
     };
   }
@@ -139,9 +135,8 @@ describe("OnboardingService", () => {
     };
     llm = { complete: jest.fn() };
     validator = {
-      validateIdentity: jest.fn(),
+      validateQuickQuestions: jest.fn(),
       validateMoneyStory: jest.fn(),
-      validateReflectionContext: jest.fn(),
     };
     llmLogger = {
       log: jest.fn().mockResolvedValue({ id: "log-1" }),
@@ -152,8 +147,11 @@ describe("OnboardingService", () => {
     };
     whatsapp = {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "wamid.1" }),
-      sendListMessage: jest.fn().mockResolvedValue({ waMessageId: "wamid.2" }),
-      sendFlow: jest.fn().mockResolvedValue({ waMessageId: "wamid.3" }),
+      sendInteractiveButtons: jest
+        .fn()
+        .mockResolvedValue({ waMessageId: "wamid.2" }),
+      sendListMessage: jest.fn().mockResolvedValue({ waMessageId: "wamid.3" }),
+      sendFlow: jest.fn().mockResolvedValue({ waMessageId: "wamid.4" }),
     };
     rubies = { provisionAccount: jest.fn() };
   });
@@ -173,8 +171,8 @@ describe("OnboardingService", () => {
     return prisma._users.get(user.id as string)!;
   }
 
-  describe("DISCOVERY/WELCOME", () => {
-    it("sends the fixed welcome+identity-question text and advances straight to IDENTITY, without calling the LLM", async () => {
+  describe("DISCOVERY", () => {
+    it("sends the fixed introduction, then the comprehension-check buttons, and advances to WELCOME without calling the LLM", async () => {
       build(makeUser({ onboardingStage: OnboardingStage.DISCOVERY }));
 
       await service.handleInboundText(makeUser() as any, "hi");
@@ -182,46 +180,132 @@ describe("OnboardingService", () => {
       expect(llm.complete).not.toHaveBeenCalled();
       expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
         "234801",
-        expect.stringContaining("welcome to kedu"),
+        expect.stringContaining("udara"),
+        "user-1",
+      );
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        "234801",
+        "do you understand?",
+        expect.arrayContaining([
+          expect.objectContaining({ id: "intro:yes" }),
+          expect.objectContaining({ id: "intro:no" }),
+        ]),
         "user-1",
       );
       expect(prisma._users.get("user-1")?.onboardingStage).toBe(
-        OnboardingStage.IDENTITY,
+        OnboardingStage.WELCOME,
       );
     });
   });
 
-  describe("IDENTITY", () => {
-    it("on accepted extraction: writes name/occupation, advances to MONEY_STORY, sends the money-story questions", async () => {
+  describe("WELCOME", () => {
+    it("on 'No, explain more': re-explains, re-asks, and stays on WELCOME", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.WELCOME }),
+      );
+
+      await service.handleInboundButton(user as any, "intro:no");
+
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.WELCOME,
+      );
+      expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("different"),
+        "user-1",
+      );
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        "234801",
+        "do you understand?",
+        expect.any(Array),
+        "user-1",
+      );
+    });
+
+    it("on 'Yes, I understand': advances to IDENTITY and sends the four quick questions", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.WELCOME }),
+      );
+
+      await service.handleInboundButton(user as any, "intro:yes");
+
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.IDENTITY,
+      );
+      expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("4 quick things"),
+        "user-1",
+      );
+    });
+
+    it("stray text re-sends the comprehension-check buttons rather than advancing", async () => {
+      build(makeUser({ onboardingStage: OnboardingStage.WELCOME }));
+
+      await service.handleInboundText(
+        makeUser({ onboardingStage: OnboardingStage.WELCOME }) as any,
+        "yes",
+      );
+
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.WELCOME,
+      );
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        "234801",
+        "do you understand?",
+        expect.any(Array),
+        "user-1",
+      );
+    });
+  });
+
+  describe("IDENTITY (Four Quick Questions)", () => {
+    it("on accepted extraction: writes name/city/monthlyIncome, advances to FREQUENCY_CHECK, sends the frequency buttons", async () => {
       build(makeUser({ onboardingStage: OnboardingStage.IDENTITY }));
       llm.complete.mockResolvedValue({
         toolCall: {
-          name: "record_identity",
-          arguments: { name: "Daniel", occupation: "software engineer" },
+          name: "record_quick_questions",
+          arguments: {
+            name: "Daniel",
+            city: "Lagos",
+            monthlyIncome: 1_500_000,
+            spendingRegret: "food delivery",
+          },
         },
         raw: {},
         latencyMs: 1,
         provider: "stub",
         model: "stub",
       });
-      validator.validateIdentity.mockReturnValue({
+      validator.validateQuickQuestions.mockReturnValue({
         accepted: true,
-        cleanedValue: { name: "Daniel", occupation: "software engineer" },
+        cleanedValue: {
+          name: "Daniel",
+          city: "Lagos",
+          monthlyIncome: 1_500_000,
+          spendingRegret: "food delivery",
+        },
       });
 
       await service.handleInboundText(
         makeUser({ onboardingStage: OnboardingStage.IDENTITY }) as any,
-        "Daniel, software engineer",
+        "Daniel, Lagos, 1.5m, food delivery",
       );
 
       expect(prisma._users.get("user-1")).toMatchObject({
         name: "Daniel",
-        occupation: "software engineer",
-        onboardingStage: OnboardingStage.MONEY_STORY,
+        city: "Lagos",
+        monthlyIncome: 1_500_000,
+        onboardingStage: OnboardingStage.FREQUENCY_CHECK,
       });
-      expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
         "234801",
-        expect.stringContaining("nice to meet you, Daniel"),
+        expect.stringContaining("how often"),
+        expect.arrayContaining([
+          expect.objectContaining({ id: "freq:weekly" }),
+          expect.objectContaining({ id: "freq:monthly" }),
+          expect.objectContaining({ id: "freq:often" }),
+        ]),
         "user-1",
       );
     });
@@ -230,15 +314,20 @@ describe("OnboardingService", () => {
       build(makeUser({ onboardingStage: OnboardingStage.IDENTITY }));
       llm.complete.mockResolvedValue({
         toolCall: {
-          name: "record_identity",
-          arguments: { name: "", occupation: "" },
+          name: "record_quick_questions",
+          arguments: {
+            name: "",
+            city: "",
+            monthlyIncome: 0,
+            spendingRegret: "",
+          },
         },
         raw: {},
         latencyMs: 1,
         provider: "stub",
         model: "stub",
       });
-      validator.validateIdentity.mockReturnValue({
+      validator.validateQuickQuestions.mockReturnValue({
         accepted: false,
         reason: "name is missing",
       });
@@ -274,7 +363,7 @@ describe("OnboardingService", () => {
         "hey",
       );
 
-      expect(validator.validateIdentity).not.toHaveBeenCalled();
+      expect(validator.validateQuickQuestions).not.toHaveBeenCalled();
       expect(prisma._users.get("user-1")?.onboardingStage).toBe(
         OnboardingStage.IDENTITY,
       );
@@ -286,115 +375,35 @@ describe("OnboardingService", () => {
     });
   });
 
-  describe("MONEY_STORY", () => {
-    it("on accepted extraction: writes income/goal, advances to AI_REFLECTION, and immediately triggers the reflection turn", async () => {
-      build(
+  describe("FREQUENCY_CHECK", () => {
+    it("records the answer, acknowledges, advances to PLAN_PROPOSED and sends the account-creation ask + KYC flow", async () => {
+      const user = build(
         makeUser({
-          onboardingStage: OnboardingStage.MONEY_STORY,
+          onboardingStage: OnboardingStage.FREQUENCY_CHECK,
           name: "Daniel",
         }),
       );
-      llm.complete
-        .mockResolvedValueOnce({
-          toolCall: {
-            name: "record_money_story",
-            arguments: {
-              monthlyIncome: 1_500_000,
-              statedGoal: "save for a car",
-            },
-          },
-          raw: {},
-          latencyMs: 1,
-          provider: "stub",
-          model: "stub",
-        })
-        .mockResolvedValueOnce({
-          text: "thanks for sharing — how old are you and where are you based?",
-          raw: {},
-          latencyMs: 1,
-          provider: "stub",
-          model: "stub",
-        });
-      validator.validateMoneyStory.mockReturnValue({
-        accepted: true,
-        cleanedValue: {
-          monthlyIncome: 1_500_000,
-          statedGoal: "save for a car",
-        },
-      });
 
-      await service.handleInboundText(
-        makeUser({
-          onboardingStage: OnboardingStage.MONEY_STORY,
-          name: "Daniel",
-        }) as any,
-        "1.5m, save for a car",
+      await service.handleInboundButton(user as any, "freq:weekly");
+
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.PLAN_PROPOSED,
       );
-
-      expect(prisma._users.get("user-1")).toMatchObject({
-        monthlyIncome: 1_500_000,
-        statedGoal: "save for a car",
-        onboardingStage: OnboardingStage.AI_REFLECTION,
-      });
-      // Two LLM calls: the money-story extraction, then the chained reflection turn.
-      expect(llm.complete).toHaveBeenCalledTimes(2);
-      expect(chunkedMessenger.sendChunkedReply).toHaveBeenLastCalledWith(
-        "234801",
-        "thanks for sharing — how old are you and where are you based?",
-        "user-1",
+      expect(whatsapp.sendFlow).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "234801", flowId: "flow-123" }),
       );
     });
-  });
 
-  describe("AI_REFLECTION", () => {
-    it("on accepted extraction: writes city, advances to STRUCTURED_QUESTIONS, sends the first list question", async () => {
-      build(makeUser({ onboardingStage: OnboardingStage.AI_REFLECTION }));
-      llm.complete.mockResolvedValue({
-        toolCall: {
-          name: "record_reflection_context",
-          arguments: { city: "Abuja", age: 26 },
-        },
-        raw: {},
-        latencyMs: 1,
-        provider: "stub",
-        model: "stub",
-      });
-      validator.validateReflectionContext.mockReturnValue({
-        accepted: true,
-        cleanedValue: { city: "Abuja", age: 26 },
-      });
-
-      await service.handleInboundText(
-        makeUser({ onboardingStage: OnboardingStage.AI_REFLECTION }) as any,
-        "26, Abuja",
+    it("nudges on an unrecognized button id, stays on FREQUENCY_CHECK", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.FREQUENCY_CHECK }),
       );
 
-      expect(prisma._users.get("user-1")).toMatchObject({
-        city: "Abuja",
-        onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS,
-      });
-      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
-        "234801",
-        expect.any(String),
-        expect.any(String),
-        expect.any(Array),
-        "user-1",
-      );
-    });
-  });
+      await service.handleInboundButton(user as any, "freq:not-a-real-option");
 
-  describe("STRUCTURED_QUESTIONS (buttons)", () => {
-    it("routes a stray text message to a gentle nudge instead of the AI", async () => {
-      build(
-        makeUser({ onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS }),
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.FREQUENCY_CHECK,
       );
-      await service.handleInboundText(
-        makeUser({
-          onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS,
-        }) as any,
-        "I don't earn enough",
-      );
-      expect(llm.complete).not.toHaveBeenCalled();
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
         expect.stringContaining("tap one of the options"),
@@ -402,98 +411,26 @@ describe("OnboardingService", () => {
       );
     });
 
-    it("records sq1, advances to sq2 (not the last question)", async () => {
-      const user = build(
-        makeUser({ onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS }),
-      );
-      await service.handleInboundButton(user as any, "sq1:earn_struggle");
+    it("stray text is nudged toward the buttons instead of reaching the AI", async () => {
+      build(makeUser({ onboardingStage: OnboardingStage.FREQUENCY_CHECK }));
 
-      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
-        "234801",
-        "What are your biggest impulse spending areas?",
-        expect.any(String),
-        expect.any(Array),
-        "user-1",
+      await service.handleInboundText(
+        makeUser({
+          onboardingStage: OnboardingStage.FREQUENCY_CHECK,
+        }) as any,
+        "every day basically",
       );
-    });
 
-    it("re-sends the current question on an unrecognized button id", async () => {
-      const user = build(
-        makeUser({ onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS }),
-      );
-      await service.handleInboundButton(user as any, "sq1:not-a-real-option");
-
+      expect(llm.complete).not.toHaveBeenCalled();
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
-        expect.stringContaining("doesn't match"),
+        expect.stringContaining("tap one of the options"),
         "user-1",
       );
-      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
-        "234801",
-        "Which statement describes you best?",
-        expect.any(String),
-        expect.any(Array),
-        "user-1",
-      );
-    });
-
-    it("on the last question: computes and writes the plan, advances to PLAN_PROPOSED, presents the plan + trust moment", async () => {
-      const user = build(
-        makeUser({
-          onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS,
-          monthlyIncome: 1_500_000,
-          occupation: "software engineer",
-          name: "Daniel",
-        }),
-      );
-
-      await service.handleInboundButton(user as any, "sq1:earn_struggle");
-      await service.handleInboundButton(user as any, "sq2:food");
-      await service.handleInboundButton(user as any, "sq3:weekly");
-      await service.handleInboundButton(user as any, "sq4:strict");
-
-      const finalUser = prisma._users.get("user-1")!;
-      expect(finalUser.onboardingStage).toBe(OnboardingStage.PLAN_PROPOSED);
-      expect(finalUser.incomeType).toBe(IncomeType.SALARIED); // occupation "software engineer" -> SALARIED heuristic
-      expect(finalUser.incomePosture).toBe(IncomePosture.RESTRICT); // sq1 != "no_earn"
-      expect(finalUser.budgetMethod).toBe(BudgetMethod.FLAT);
-      expect(finalUser.strictnessLevel).toBe(4); // sq4:strict
-      // 1.5M * 20% = 300k monthly -> 10k/day -> matches the script's own worked example.
-      expect(finalUser.flatDailyAmount).toBe(10_000);
-
-      const calls = chunkedMessenger.sendChunkedReply.mock.calls.map(
-        (c: any[]) => c[1],
-      );
-      expect(calls.some((t: string) => t.includes("₦10,000"))).toBe(true);
-      expect(calls.some((t: string) => t.includes("bvn"))).toBe(true);
-    });
-
-    it("uses GROW posture and PERCENTAGE budgeting for a founder who says they don't earn enough", async () => {
-      const user = build(
-        makeUser({
-          onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS,
-          monthlyIncome: 200_000,
-          occupation: "startup founder",
-          name: "Amaka",
-        }),
-      );
-
-      await service.handleInboundButton(user as any, "sq1:no_earn");
-      await service.handleInboundButton(user as any, "sq2:other");
-      await service.handleInboundButton(user as any, "sq3:daily");
-      await service.handleInboundButton(user as any, "sq4:remind");
-
-      const finalUser = prisma._users.get("user-1")!;
-      expect(finalUser.incomeType).toBe(IncomeType.FOUNDER);
-      expect(finalUser.incomePosture).toBe(IncomePosture.GROW);
-      expect(finalUser.budgetMethod).toBe(BudgetMethod.PERCENTAGE);
-      expect(finalUser.budgetPercentage).toBe(0.2);
-      expect(finalUser.flatDailyAmount).toBeNull();
-      expect(finalUser.strictnessLevel).toBe(1); // sq4:remind
     });
   });
 
-  describe("PLAN_PROPOSED (Trust Moment) — free text", () => {
+  describe("PLAN_PROPOSED (Account Creation) — free text", () => {
     it("points back at the form and resends the flow, rather than trying to parse the text", async () => {
       const user = build(
         makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
@@ -513,7 +450,7 @@ describe("OnboardingService", () => {
     });
   });
 
-  describe("PLAN_PROPOSED (Trust Moment) — WhatsApp Flow submission", () => {
+  describe("PLAN_PROPOSED (Account Creation) — WhatsApp Flow submission", () => {
     function flowSubmission(overrides: Record<string, unknown> = {}) {
       return {
         first_name: "Daniel",
@@ -526,7 +463,7 @@ describe("OnboardingService", () => {
       };
     }
 
-    it("provisions the Rubies account from a valid BVN submission, using the form's name fields (not User.name)", async () => {
+    it("provisions the Rubies account from a valid BVN submission, advances to MONEY_STORY (not ACCOUNT_CREATED), and sends the money-story questions", async () => {
       const user = build(
         makeUser({
           onboardingStage: OnboardingStage.PLAN_PROPOSED,
@@ -555,7 +492,7 @@ describe("OnboardingService", () => {
       );
       const finalUser = prisma._users.get("user-1")!;
       expect(finalUser.rubiesAccountNumber).toBe("0123456789");
-      expect(finalUser.onboardingStage).toBe(OnboardingStage.ACCOUNT_CREATED);
+      expect(finalUser.onboardingStage).toBe(OnboardingStage.MONEY_STORY);
       expect(finalUser.bvn).toBeUndefined(); // never written to the User record
       expect(finalUser.legalFirstName).toBe("Daniel");
       expect(finalUser.legalLastName).toBe("Okafor");
@@ -564,6 +501,14 @@ describe("OnboardingService", () => {
         expect.stringContaining("0123456789"),
         "user-1",
       );
+      // The confirmation message no longer includes a funding instruction —
+      // that's deferred to sendFundingInstructions at the end of PLAN_REVIEW.
+      const allSentText = chunkedMessenger.sendChunkedReply.mock.calls.map(
+        (c: any[]) => c[1],
+      );
+      expect(
+        allSentText.some((t: string) => /financial goal|goal you/i.test(t)),
+      ).toBe(true);
     });
 
     it("stores a middle name when given, but never sends it to Rubies (no such field in its API)", async () => {
@@ -750,7 +695,7 @@ describe("OnboardingService", () => {
         OnboardingStage.PLAN_PROPOSED,
       );
       const [, sentText] = whatsapp.sendText.mock.calls[0];
-      expect(sentText).toContain("already linked to a different kedu account");
+      expect(sentText).toContain("already linked to a different udara account");
       expect(sentText).not.toContain("Prisma");
       expect(sentText).not.toContain("rubiesAccountId");
       expect(whatsapp.sendFlow).toHaveBeenCalledTimes(1); // retry form sent
@@ -789,12 +734,315 @@ describe("OnboardingService", () => {
     });
   });
 
-  describe("handleInboundButton outside STRUCTURED_QUESTIONS", () => {
+  describe("MONEY_STORY", () => {
+    it("on accepted extraction: does NOT write yet, stashes it as pending, and asks for confirmation instead", async () => {
+      build(
+        makeUser({
+          onboardingStage: OnboardingStage.MONEY_STORY,
+          name: "Daniel",
+        }),
+      );
+      llm.complete.mockResolvedValue({
+        toolCall: {
+          name: "record_money_story",
+          arguments: {
+            statedGoal: "save for a car",
+            difficulty: "impulse spending on weekends",
+            priorAttempts: "tried a budgeting app, didn't stick",
+          },
+        },
+        raw: {},
+        latencyMs: 1,
+        provider: "stub",
+        model: "stub",
+      });
+      validator.validateMoneyStory.mockReturnValue({
+        accepted: true,
+        cleanedValue: {
+          statedGoal: "save for a car",
+          difficulty: "impulse spending on weekends",
+          priorAttempts: "tried a budgeting app, didn't stick",
+        },
+      });
+
+      await service.handleInboundText(
+        makeUser({
+          onboardingStage: OnboardingStage.MONEY_STORY,
+          name: "Daniel",
+        }) as any,
+        "save for a car, impulse spending, tried a budgeting app",
+      );
+
+      expect(prisma._users.get("user-1")?.statedGoal).toBeNull(); // not written yet
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.MONEY_STORY,
+      );
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("did i get that right"),
+        expect.arrayContaining([
+          expect.objectContaining({ id: "money_story:yes" }),
+          expect.objectContaining({ id: "money_story:no" }),
+        ]),
+        "user-1",
+      );
+    });
+
+    it("confirming 'Yes': writes statedGoal, advances to AI_REFLECTION, sends the deterministic reflection + first structured question", async () => {
+      const user = build(
+        makeUser({
+          onboardingStage: OnboardingStage.MONEY_STORY,
+          name: "Daniel",
+          monthlyIncome: 1_500_000,
+        }),
+      );
+      llm.complete.mockResolvedValue({
+        toolCall: {
+          name: "record_money_story",
+          arguments: {
+            statedGoal: "save for a car",
+            difficulty: "impulse spending",
+            priorAttempts: "none yet",
+          },
+        },
+        raw: {},
+        latencyMs: 1,
+        provider: "stub",
+        model: "stub",
+      });
+      validator.validateMoneyStory.mockReturnValue({
+        accepted: true,
+        cleanedValue: {
+          statedGoal: "save for a car",
+          difficulty: "impulse spending",
+          priorAttempts: "none yet",
+        },
+      });
+      await service.handleInboundText(user as any, "save for a car");
+
+      const midUser = prisma._users.get("user-1")!;
+      await service.handleInboundButton(midUser as any, "money_story:yes");
+
+      const finalUser = prisma._users.get("user-1")!;
+      expect(finalUser.statedGoal).toBe("save for a car");
+      expect(finalUser.onboardingStage).toBe(
+        OnboardingStage.STRUCTURED_QUESTIONS,
+      );
+      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
+        "234801",
+        expect.any(String),
+        expect.any(String),
+        expect.any(Array),
+        "user-1",
+      );
+      // No second LLM call — AI_REFLECTION is fully deterministic now.
+      expect(llm.complete).toHaveBeenCalledTimes(1);
+    });
+
+    it("confirming 'No': clears the pending value, nudges for a re-answer, and stays on MONEY_STORY", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.MONEY_STORY }),
+      );
+
+      await service.handleInboundButton(user as any, "money_story:no");
+
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.MONEY_STORY,
+      );
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("tell me again"),
+        "user-1",
+      );
+    });
+  });
+
+  describe("STRUCTURED_QUESTIONS (buttons)", () => {
+    it("routes a stray text message to a gentle nudge instead of the AI", async () => {
+      build(
+        makeUser({ onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS }),
+      );
+      await service.handleInboundText(
+        makeUser({
+          onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS,
+        }) as any,
+        "I don't earn enough",
+      );
+      expect(llm.complete).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("tap one of the options"),
+        "user-1",
+      );
+    });
+
+    it("records sq1, advances to sq2 (not the last question)", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS }),
+      );
+      await service.handleInboundButton(user as any, "sq1:food");
+
+      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
+        "234801",
+        "how strict do you want Udara to be?",
+        expect.any(String),
+        expect.any(Array),
+        "user-1",
+      );
+    });
+
+    it("re-sends the current question on an unrecognized button id", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS }),
+      );
+      await service.handleInboundButton(user as any, "sq1:not-a-real-option");
+
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("doesn't match"),
+        "user-1",
+      );
+      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
+        "234801",
+        "what are your biggest impulse spending areas?",
+        expect.any(String),
+        expect.any(Array),
+        "user-1",
+      );
+    });
+
+    it("on the last question: computes the universal 30%-of-income plan, advances to PLAN_REVIEW, presents the plan + review buttons", async () => {
+      const user = build(
+        makeUser({
+          onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS,
+          monthlyIncome: 1_500_000,
+          name: "Daniel",
+        }),
+      );
+
+      await service.handleInboundButton(user as any, "sq1:food");
+      await service.handleInboundButton(user as any, "sq2:strict");
+
+      const finalUser = prisma._users.get("user-1")!;
+      expect(finalUser.onboardingStage).toBe(OnboardingStage.PLAN_REVIEW);
+      expect(finalUser.strictnessLevel).toBe(4); // sq2:strict
+
+      // 1.5M * 30% = 450k monthly wants allowance -> 450000/30 = 15,000/day.
+      const calls = chunkedMessenger.sendChunkedReply.mock.calls.map(
+        (c: any[]) => c[1],
+      );
+      expect(calls.some((t: string) => t.includes("₦15,000"))).toBe(true);
+      expect(calls.some((t: string) => t.includes("₦450,000"))).toBe(true);
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("feel right"),
+        expect.arrayContaining([
+          expect.objectContaining({ id: "plan_review:feels_right" }),
+          expect.objectContaining({ id: "plan_review:adjust" }),
+        ]),
+        "user-1",
+      );
+    });
+
+    it("does not write any income-tier/budget-method fields (dropped entirely)", async () => {
+      const user = build(
+        makeUser({
+          onboardingStage: OnboardingStage.STRUCTURED_QUESTIONS,
+          monthlyIncome: 200_000,
+          name: "Amaka",
+        }),
+      );
+
+      await service.handleInboundButton(user as any, "sq1:shopping");
+      await service.handleInboundButton(user as any, "sq2:remind");
+
+      const finalUser = prisma._users.get("user-1")!;
+      expect(finalUser.strictnessLevel).toBe(1); // sq2:remind
+      expect(finalUser.incomeType).toBeUndefined();
+      expect(finalUser.incomePosture).toBeUndefined();
+      expect(finalUser.budgetMethod).toBeUndefined();
+      expect(finalUser.budgetPercentage).toBeUndefined();
+      expect(finalUser.flatDailyAmount).toBeUndefined();
+    });
+  });
+
+  describe("PLAN_REVIEW", () => {
+    it("'Feels right': advances to ACCOUNT_CREATED and sends the funding instructions", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_REVIEW }),
+      );
+
+      await service.handleInboundButton(user as any, "plan_review:feels_right");
+
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.ACCOUNT_CREATED,
+      );
+      expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("fund your udara account"),
+        "user-1",
+      );
+    });
+
+    it("'Let's adjust': asks for the adjustment, stays on PLAN_REVIEW", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_REVIEW }),
+      );
+
+      await service.handleInboundButton(user as any, "plan_review:adjust");
+
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.PLAN_REVIEW,
+      );
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("what you'd like different"),
+        "user-1",
+      );
+    });
+
+    it("free text after 'Let's adjust': acknowledges the note and proceeds to funding anyway (v1 scope)", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_REVIEW }),
+      );
+      await service.handleInboundButton(user as any, "plan_review:adjust");
+      const midUser = prisma._users.get("user-1")!;
+
+      await service.handleInboundText(
+        midUser as any,
+        "can the daily limit be a bit higher",
+      );
+
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.ACCOUNT_CREATED,
+      );
+    });
+
+    it("stray text with no pending adjustment prompt is nudged toward the buttons", async () => {
+      build(makeUser({ onboardingStage: OnboardingStage.PLAN_REVIEW }));
+
+      await service.handleInboundText(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_REVIEW }) as any,
+        "looks good",
+      );
+
+      expect(prisma._users.get("user-1")?.onboardingStage).toBe(
+        OnboardingStage.PLAN_REVIEW,
+      );
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("tap one of the options"),
+        "user-1",
+      );
+    });
+  });
+
+  describe("handleInboundButton outside a stage that handles buttons", () => {
     it("replies that the button doesn't apply", async () => {
       const user = build(
         makeUser({ onboardingStage: OnboardingStage.IDENTITY }),
       );
-      await service.handleInboundButton(user as any, "sq1:earn_struggle");
+      await service.handleInboundButton(user as any, "sq1:food");
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
         expect.stringContaining("doesn't apply"),

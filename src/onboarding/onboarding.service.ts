@@ -3,9 +3,6 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import {
-  BudgetMethod,
-  IncomePosture,
-  IncomeType,
   LlmCallPurpose,
   OnboardingSession,
   OnboardingStage,
@@ -24,8 +21,7 @@ import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { RubiesService } from "../rubies/rubies.service";
 import {
   STRUCTURED_QUESTIONS,
-  STRICTNESS_LEVEL_BY_SQ4_ID,
-  INCOME_POSTURE_GROW_SQ1_ID,
+  STRICTNESS_LEVEL_BY_SQ2_ID,
 } from "./structured-questions.data";
 
 /**
@@ -40,30 +36,36 @@ export function isPreAccountStage(stage: OnboardingStage): boolean {
     stage === OnboardingStage.DISCOVERY ||
     stage === OnboardingStage.WELCOME ||
     stage === OnboardingStage.IDENTITY ||
+    stage === OnboardingStage.FREQUENCY_CHECK ||
+    stage === OnboardingStage.PLAN_PROPOSED ||
     stage === OnboardingStage.MONEY_STORY ||
     stage === OnboardingStage.AI_REFLECTION ||
     stage === OnboardingStage.STRUCTURED_QUESTIONS ||
-    stage === OnboardingStage.PLAN_PROPOSED
+    stage === OnboardingStage.PLAN_REVIEW
   );
-}
-
-function inferIncomeType(occupation: string): IncomeType {
-  const lower = occupation.toLowerCase();
-  if (
-    /founder|entrepreneur|ceo|business owner|own(s|ing)? (a |my )?business/.test(
-      lower,
-    )
-  )
-    return IncomeType.FOUNDER;
-  if (/freelance|consultant|contractor/.test(lower))
-    return IncomeType.MULTIPLE_STREAMS;
-  return IncomeType.SALARIED;
 }
 
 type ExtractedData = Record<string, unknown>;
 
+const INTRO_YES = "intro:yes";
+const INTRO_NO = "intro:no";
+const INTRO_BUTTONS = [
+  { id: INTRO_YES, title: "Yes, I understand" },
+  { id: INTRO_NO, title: "No, explain more" },
+];
+
+const FREQ_WEEKLY = "freq:weekly";
+const FREQ_MONTHLY = "freq:monthly";
+const FREQ_OFTEN = "freq:often";
+
+const MONEY_STORY_YES = "money_story:yes";
+const MONEY_STORY_NO = "money_story:no";
+
+const PLAN_REVIEW_FEELS_RIGHT = "plan_review:feels_right";
+const PLAN_REVIEW_ADJUST = "plan_review:adjust";
+
 /**
- * The stage-based conversation engine (PRD §6, docs/✅-Kedu-Onboarding-Script.pdf).
+ * The stage-based conversation engine (PRD §6, docs/Udara-Onboarding-Script).
  * The model never writes to User directly — every write below goes through
  * ExtractionValidatorService first (or is deterministic, non-AI code for
  * stages that don't need judgment — see the docblock in ai/prompts/onboarding.prompts.ts
@@ -155,21 +157,30 @@ export class OnboardingService {
 
     switch (user.onboardingStage) {
       case OnboardingStage.DISCOVERY:
+        return this.sendIntroduction(user, session.id);
       case OnboardingStage.WELCOME:
-        return this.sendWelcomeAndAskIdentity(user, session.id);
+        return this.nudgeIntroButtons(user);
       case OnboardingStage.IDENTITY:
       case OnboardingStage.MONEY_STORY:
-      case OnboardingStage.AI_REFLECTION:
         return this.runAiTurn(user, session.id, user.onboardingStage);
+      case OnboardingStage.FREQUENCY_CHECK:
+        await this.whatsapp.sendText(
+          user.whatsappNumber,
+          "tap one of the options above.",
+          user.id,
+        );
+        return;
       case OnboardingStage.STRUCTURED_QUESTIONS:
         await this.whatsapp.sendText(
           user.whatsappNumber,
-          "tap one of the options above — if the list didn't show up, try again in a moment.",
+          "tap one of the options above, if the list didn't show up, try again in a moment.",
           user.id,
         );
         return;
       case OnboardingStage.PLAN_PROPOSED:
         return this.handleTrustMomentText(user, session.id);
+      case OnboardingStage.PLAN_REVIEW:
+        return this.handlePlanReviewText(user, session.id, text);
       default:
         this.logger.warn(
           `handleInboundText called for user ${user.id} at post-account stage ${user.onboardingStage} — router should not route here`,
@@ -178,24 +189,32 @@ export class OnboardingService {
   }
 
   async handleInboundButton(user: User, buttonId: string): Promise<void> {
-    if (user.onboardingStage !== OnboardingStage.STRUCTURED_QUESTIONS) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        "that button doesn't apply right now — let's keep going with what i just asked.",
-        user.id,
-      );
-      return;
+    switch (user.onboardingStage) {
+      case OnboardingStage.WELCOME:
+        return this.handleIntroConfirmation(user, buttonId);
+      case OnboardingStage.FREQUENCY_CHECK:
+        return this.handleFrequencyAnswer(user, buttonId);
+      case OnboardingStage.MONEY_STORY:
+        return this.handleMoneyStoryConfirmation(user, buttonId);
+      case OnboardingStage.STRUCTURED_QUESTIONS:
+        return this.handleStructuredAnswer(user, buttonId);
+      case OnboardingStage.PLAN_REVIEW:
+        return this.handlePlanReviewChoice(user, buttonId);
+      default:
+        await this.whatsapp.sendText(
+          user.whatsappNumber,
+          "that button doesn't apply right now, let's keep going with what i just asked.",
+          user.id,
+        );
     }
-    return this.handleStructuredAnswer(user, buttonId);
   }
 
   /**
-   * Entry point for a WhatsApp Flow submission — currently only the Trust
-   * Moment's KYC form. Deterministic parsing only, same as the old
-   * regex-based trust-moment text path it replaces: the model never sees
-   * BVN/NIN/DOB/email, and nothing here is a "proposal" that needs
-   * ExtractionValidatorService — it's a structured form the user filled in
-   * themselves.
+   * Entry point for a WhatsApp Flow submission — currently only the
+   * Account Creation step's KYC form. Deterministic parsing only: the
+   * model never sees BVN/NIN/DOB/email, and nothing here is a "proposal"
+   * that needs ExtractionValidatorService — it's a structured form the
+   * user filled in themselves.
    */
   async handleInboundFlowReply(
     user: User,
@@ -239,7 +258,7 @@ export class OnboardingService {
     }
 
     if (problems.length > 0) {
-      const nudge = `hmm, ${problems.join(" and ")} — let's try that again:`;
+      const nudge = `hmm, ${problems.join(" and ")}, let's try that again:`;
       await this.appendMessage(session.id, "assistant", nudge);
       await this.whatsapp.sendText(user.whatsappNumber, nudge, user.id);
       await this.sendKycFlow(user);
@@ -260,34 +279,103 @@ export class OnboardingService {
   }
 
   // =========================================================================
-  // DISCOVERY/WELCOME — fixed script copy, nothing to extract (deterministic)
+  // DISCOVERY / WELCOME — Personal Introduction + comprehension-check gate.
+  // Fixed script copy, nothing to extract (deterministic). The user must tap
+  // "Yes, I understand" before onboarding continues; "No, explain more"
+  // re-explains and re-asks rather than advancing.
   // =========================================================================
 
-  private async sendWelcomeAndAskIdentity(
+  private async sendIntroduction(user: User, sessionId: string): Promise<void> {
+    const intro = [
+      "hey 👋 my name is udara.",
+      "i'm an ai financial assistant that helps you stop impulse spending, overeating, and overshopping, through strict saving plans and financial education.",
+      "most saving apps and banking platforms just let you put money in and spend it without thinking about what tomorrow holds. i do the opposite. i help you think through your expenses and align your finances with what you actually want your future to look like.",
+    ].join("\n\n");
+    await this.appendMessage(sessionId, "assistant", intro);
+    await this.chunkedMessenger.sendChunkedReply(
+      user.whatsappNumber,
+      intro,
+      user.id,
+    );
+
+    await this.sendComprehensionCheck(user, sessionId);
+    await this.advanceStage(sessionId, OnboardingStage.WELCOME);
+  }
+
+  private async sendComprehensionCheck(
     user: User,
     sessionId: string,
   ): Promise<void> {
-    const welcome = [
-      "hey 👋 welcome to kedu.",
-      "kedu helps people who earn money but struggle with impulse spending and overeating by creating a strict savings and spending system.",
-      "unlike budgeting apps, savings apps, or your bank app that only show you information and wait for you to act, kedu actively helps you think through your money decisions and prevents unnecessary spending.",
-      'fyi: kedu means "how are you?" in igbo.',
-      "before we create your account, i want to understand your money habits. this takes about 3 minutes. please answer honestly — there's no judgment here.",
-      "first, tell me about yourself. what should i call you and what do you do for a living? this helps me understand your lifestyle, income pattern, and create a money system that fits your reality.",
-    ].join("\n\n");
-
-    await this.appendMessage(sessionId, "assistant", welcome);
-    await this.chunkedMessenger.sendChunkedReply(
+    const question = "do you understand?";
+    await this.appendMessage(sessionId, "assistant", question);
+    await this.whatsapp.sendInteractiveButtons(
       user.whatsappNumber,
-      welcome,
+      question,
+      INTRO_BUTTONS,
       user.id,
     );
-    await this.advanceStage(sessionId, OnboardingStage.IDENTITY);
+  }
+
+  private async nudgeIntroButtons(user: User): Promise<void> {
+    await this.whatsapp.sendInteractiveButtons(
+      user.whatsappNumber,
+      "do you understand?",
+      INTRO_BUTTONS,
+      user.id,
+    );
+  }
+
+  private async handleIntroConfirmation(
+    user: User,
+    buttonId: string,
+  ): Promise<void> {
+    const session = await this.getOrStartSession(user.id);
+
+    if (buttonId === INTRO_NO) {
+      const longer = [
+        "sure, let me put it another way.",
+        "most banking and savings apps are passive: they hold your money and let you spend it however and whenever, then just show you a summary afterward, when it's too late to change anything.",
+        "udara is different. i sit between you and your spending. every transfer out of your udara account goes through me first, i check it against a plan built specifically around your income and goals, and i say something if it doesn't fit. the point isn't to make your life harder, it's to catch the moments you'd otherwise regret later.",
+      ].join("\n\n");
+      await this.appendMessage(session.id, "assistant", longer);
+      await this.chunkedMessenger.sendChunkedReply(
+        user.whatsappNumber,
+        longer,
+        user.id,
+      );
+      await this.sendComprehensionCheck(user, session.id);
+      return; // stays on WELCOME
+    }
+
+    if (buttonId === INTRO_YES) {
+      await this.advanceStage(session.id, OnboardingStage.IDENTITY);
+      await this.sendQuickQuestions(user, session.id);
+      return;
+    }
+
+    await this.nudgeIntroButtons(user);
   }
 
   // =========================================================================
-  // IDENTITY / MONEY_STORY / AI_REFLECTION — the three genuinely AI-driven stages
+  // IDENTITY — "Four Quick Questions" (name, city, monthly income, why they
+  // came) and MONEY_STORY — the two genuinely AI-driven stages.
   // =========================================================================
+
+  private async sendQuickQuestions(
+    user: User,
+    sessionId: string,
+  ): Promise<void> {
+    const text = [
+      "for us to work together, you need a secure bank account.",
+      "but before i set up your account, i need 4 quick things from you:\n\nwhat should i call you?\nwhere do you currently live?\nhow much do you make monthly?\nwhy did you come to me?",
+    ].join("\n\n");
+    await this.appendMessage(sessionId, "assistant", text);
+    await this.chunkedMessenger.sendChunkedReply(
+      user.whatsappNumber,
+      text,
+      user.id,
+    );
+  }
 
   private async runAiTurn(
     user: User,
@@ -338,7 +426,7 @@ export class OnboardingService {
       }
 
       // Rejected — same handling as a vague free-text answer: stay put, ask again.
-      const nudge = `hmm, ${outcome.reason ?? "that didn't quite land"} — could you say a bit more?`;
+      const nudge = `hmm, ${outcome.reason ?? "that didn't quite land"}, could you say a bit more?`;
       await this.appendMessage(sessionId, "assistant", nudge);
       await this.chunkedMessenger.sendChunkedReply(
         user.whatsappNumber,
@@ -363,11 +451,9 @@ export class OnboardingService {
   ): ValidationOutcome {
     switch (stage) {
       case OnboardingStage.IDENTITY:
-        return this.validator.validateIdentity(args);
+        return this.validator.validateQuickQuestions(args);
       case OnboardingStage.MONEY_STORY:
         return this.validator.validateMoneyStory(args);
-      case OnboardingStage.AI_REFLECTION:
-        return this.validator.validateReflectionContext(args);
       default:
         return { accepted: false, reason: "no validator wired for this stage" };
     }
@@ -381,53 +467,113 @@ export class OnboardingService {
   ): Promise<void> {
     if (stage === OnboardingStage.IDENTITY) {
       const name = String(value.name);
+      const city = String(value.city);
+      const monthlyIncome = value.monthlyIncome as number;
       await this.prisma.user.update({
         where: { id: user.id },
-        data: { name, occupation: String(value.occupation) },
+        data: { name, city, monthlyIncome },
       });
-      await this.mergeExtractedData(sessionId, { identity: value });
-      await this.advanceStage(sessionId, OnboardingStage.MONEY_STORY);
-      await this.sendMoneyStoryQuestions(user, sessionId, name);
+      await this.mergeExtractedData(sessionId, { quickQuestions: value });
+      await this.advanceStage(sessionId, OnboardingStage.FREQUENCY_CHECK);
+      await this.sendFrequencyCheck(user, sessionId, name);
       return;
     }
 
     if (stage === OnboardingStage.MONEY_STORY) {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: {
-          monthlyIncome: value.monthlyIncome as number,
-          statedGoal: String(value.statedGoal),
-          statedGoalSetAt: new Date(),
+      // Confirm-back, not a straight write: the script's original design for
+      // this step is a voice-note transcription confirmed back to the user
+      // before it's trusted ("did I get that right?"). Kept even though
+      // input is text for now, not voice — see
+      // handleMoneyStoryConfirmation for where this actually gets written.
+      await this.mergeExtractedData(sessionId, { pendingMoneyStory: value });
+
+      const summary = this.buildMoneyStorySummary(
+        value as {
+          statedGoal: string;
+          difficulty: string;
+          priorAttempts: string;
         },
-      });
-      await this.mergeExtractedData(sessionId, { moneyStory: value });
-      await this.advanceStage(sessionId, OnboardingStage.AI_REFLECTION);
-      // The script continues straight into the reflection turn — no new user message needed to trigger it.
-      await this.runAiTurn(user, sessionId, OnboardingStage.AI_REFLECTION);
+      );
+      const confirm = `here's what i heard: ${summary} did i get that right?`;
+      await this.appendMessage(sessionId, "assistant", confirm);
+      await this.whatsapp.sendInteractiveButtons(
+        user.whatsappNumber,
+        confirm,
+        [
+          { id: MONEY_STORY_YES, title: "Yes, that's right" },
+          { id: MONEY_STORY_NO, title: "No, let me clarify" },
+        ],
+        user.id,
+      );
+      return;
+    }
+  }
+
+  private buildMoneyStorySummary(value: {
+    statedGoal: string;
+    difficulty: string;
+    priorAttempts: string;
+  }): string {
+    return `your goal is ${value.statedGoal}. ${value.difficulty} ${value.priorAttempts}`;
+  }
+
+  private async handleMoneyStoryConfirmation(
+    user: User,
+    buttonId: string,
+  ): Promise<void> {
+    const session = await this.getOrStartSession(user.id);
+    const extractedData = isRecord(session.extractedData)
+      ? session.extractedData
+      : {};
+    const pending = isRecord(extractedData.pendingMoneyStory)
+      ? extractedData.pendingMoneyStory
+      : null;
+
+    if (buttonId === MONEY_STORY_NO) {
+      await this.mergeExtractedData(session.id, { pendingMoneyStory: null });
+      const nudge = "no worries, tell me again, what should i have gotten?";
+      await this.appendMessage(session.id, "assistant", nudge);
+      await this.whatsapp.sendText(user.whatsappNumber, nudge, user.id);
+      return; // stays on MONEY_STORY — the next text message re-triggers the AI turn
+    }
+
+    if (buttonId !== MONEY_STORY_YES || !pending) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "tap one of the options above.",
+        user.id,
+      );
       return;
     }
 
-    if (stage === OnboardingStage.AI_REFLECTION) {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { city: String(value.city) },
-      });
-      await this.mergeExtractedData(sessionId, { reflectionContext: value });
-      await this.advanceStage(sessionId, OnboardingStage.STRUCTURED_QUESTIONS);
-      await this.sendStructuredQuestion(user, sessionId, 0);
-      return;
-    }
+    const value = pending as {
+      statedGoal: string;
+      difficulty: string;
+      priorAttempts: string;
+    };
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { statedGoal: value.statedGoal, statedGoalSetAt: new Date() },
+    });
+    await this.mergeExtractedData(session.id, {
+      moneyStory: value,
+      pendingMoneyStory: null,
+    });
+    await this.advanceStage(session.id, OnboardingStage.AI_REFLECTION);
+    await this.sendReflectionAndFirstStructuredQuestion(user, session.id);
   }
 
   private async sendMoneyStoryQuestions(
     user: User,
     sessionId: string,
-    name: string,
   ): Promise<void> {
-    const firstName = name.split(" ")[0];
+    const freshUser = await this.prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+    });
+    const firstName = (freshUser.name ?? "there").split(" ")[0];
     const text = [
-      `nice to meet you, ${firstName}.`,
-      "i want to understand your current money situation — answer these (one at a time is fine, or all together, whatever's natural for you):\n\n- how much do you normally make monthly?\n- what usually happens after you receive money?\n- what do you spend money on that you later regret?\n- what financial goal are you currently trying to achieve?\n- have you tried anything before to control your spending?\n- what makes it difficult for you to stay consistent?",
+      `now that your account is set up, ${firstName}, i want to actually understand your money situation deeply, so that the plan i build for you fits your real life, not a guess.`,
+      "tell me:\n\nwhat financial goal are you currently trying to achieve this year?\nwhat do you think makes it difficult for you to achieve that goal?\nhave you tried anything before to control your spending, and what made it hard to stay consistent?",
     ].join("\n\n");
     await this.appendMessage(sessionId, "assistant", text);
     await this.chunkedMessenger.sendChunkedReply(
@@ -438,175 +584,93 @@ export class OnboardingService {
   }
 
   // =========================================================================
-  // STRUCTURED_QUESTIONS — fixed multiple-choice via WhatsApp lists, deterministic
+  // FREQUENCY_CHECK — Stage 3b, a button follow-up on the "why did you come
+  // to me" answer. Also stands in for what used to be a separate, near-
+  // duplicate structured question about unplanned-spending frequency — see
+  // structured-questions.data.ts.
   // =========================================================================
 
-  private async sendStructuredQuestion(
+  private async sendFrequencyCheck(
     user: User,
     sessionId: string,
-    index: number,
+    _name: string,
   ): Promise<void> {
-    const question = STRUCTURED_QUESTIONS[index];
-    if (!question) return; // caller should have finalized instead of reaching an out-of-range index
-
-    await this.mergeExtractedData(sessionId, {
-      structuredQuestionIndex: index,
-    });
-    await this.whatsapp.sendListMessage(
+    const question = "got it. how often does this happen?";
+    await this.appendMessage(sessionId, "assistant", question);
+    await this.whatsapp.sendInteractiveButtons(
       user.whatsappNumber,
-      question.bodyText,
-      question.buttonLabel,
-      question.rows,
+      question,
+      [
+        { id: FREQ_WEEKLY, title: "Weekly" },
+        { id: FREQ_MONTHLY, title: "Monthly" },
+        { id: FREQ_OFTEN, title: "Almost every payday" },
+      ],
       user.id,
     );
   }
 
-  private async handleStructuredAnswer(
+  private async handleFrequencyAnswer(
     user: User,
     buttonId: string,
   ): Promise<void> {
     const session = await this.getOrStartSession(user.id);
-    const extractedData = isRecord(session.extractedData)
-      ? session.extractedData
-      : {};
-    const index =
-      typeof extractedData.structuredQuestionIndex === "number"
-        ? extractedData.structuredQuestionIndex
-        : 0;
-    const question = STRUCTURED_QUESTIONS[index];
-    if (!question) return;
-
-    if (!question.rows.some((r) => r.id === buttonId)) {
+    if (![FREQ_WEEKLY, FREQ_MONTHLY, FREQ_OFTEN].includes(buttonId)) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "that doesn't match the current question — here it is again.",
-        user.id,
-      );
-      await this.whatsapp.sendListMessage(
-        user.whatsappNumber,
-        question.bodyText,
-        question.buttonLabel,
-        question.rows,
+        "tap one of the options above.",
         user.id,
       );
       return;
     }
 
-    const answers = isRecord(extractedData.structuredAnswers)
-      ? (extractedData.structuredAnswers as Record<string, string>)
-      : {};
-    answers[question.key] = buttonId;
-    await this.mergeExtractedData(session.id, { structuredAnswers: answers });
+    await this.mergeExtractedData(session.id, { spendingFrequency: buttonId });
 
-    const nextIndex = index + 1;
-    if (nextIndex < STRUCTURED_QUESTIONS.length) {
-      await this.sendStructuredQuestion(user, session.id, nextIndex);
-    } else {
-      await this.finalizeStructuredQuestions(user, session.id, answers);
-    }
-  }
-
-  /**
-   * Computes the plan (PRD §7a income-tier branching + the script's number
-   * logic: daily×7=weekly, daily×30=monthly) and presents it, then starts
-   * the Trust Moment. The 20% spending-allocation baseline exactly
-   * reproduces the script's own worked example (₦1.5M income -> ₦300k
-   * monthly allowance -> ₦10k/day) — the rest of income is assumed
-   * protected/saved outside Kedu, which the script itself never states
-   * explicitly as a formula ("illustrative... generated from the actual
-   * profiling formula at build time") but is the only value consistent with
-   * its own example.
-   */
-  private async finalizeStructuredQuestions(
-    user: User,
-    sessionId: string,
-    answers: Record<string, string>,
-  ): Promise<void> {
     const freshUser = await this.prisma.user.findUniqueOrThrow({
       where: { id: user.id },
     });
-
-    // The script never asks income type (salaried/founder/multiple streams) directly —
-    // inferred from occupation text as a documented simplification, correctable later.
-    const incomeType = inferIncomeType(freshUser.occupation ?? "");
-    const incomePosture =
-      answers.sq1 === INCOME_POSTURE_GROW_SQ1_ID
-        ? IncomePosture.GROW
-        : IncomePosture.RESTRICT;
-    const budgetMethod =
-      incomeType === IncomeType.SALARIED
-        ? BudgetMethod.FLAT
-        : BudgetMethod.PERCENTAGE;
-    const strictnessLevel = STRICTNESS_LEVEL_BY_SQ4_ID[answers.sq4] ?? 3;
-
-    const SPENDING_ALLOCATION_PCT = 0.2;
-    const monthlyIncome = Number(freshUser.monthlyIncome ?? 0);
-    const monthlyAllowance =
-      Math.round((monthlyIncome * SPENDING_ALLOCATION_PCT) / 1000) * 1000;
-    const dailyLimit = Math.round(monthlyAllowance / 30);
-    const weeklyLimit = dailyLimit * 7;
-
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        incomeType,
-        incomePosture,
-        budgetMethod,
-        budgetPercentage:
-          budgetMethod === BudgetMethod.PERCENTAGE
-            ? SPENDING_ALLOCATION_PCT
-            : null,
-        flatDailyAmount: budgetMethod === BudgetMethod.FLAT ? dailyLimit : null,
-        strictnessLevel,
-      },
-    });
-
-    await this.advanceStage(sessionId, OnboardingStage.PLAN_PROPOSED);
-    await this.mergeExtractedData(sessionId, {
-      plan: { dailyLimit, weeklyLimit, monthlyAllowance },
-    });
-
     const firstName = (freshUser.name ?? "there").split(" ")[0];
-    const planText = [
-      `${firstName}, i have enough to build your first kedu plan.`,
-      `based on your income, lifestyle, and goals:\n\ndaily spending limit: ₦${dailyLimit.toLocaleString("en-NG")}\nweekly spending limit: ₦${weeklyLimit.toLocaleString("en-NG")}\nmonthly spending allowance: ₦${monthlyAllowance.toLocaleString("en-NG")}`,
-      "spending window: 11am–8pm. outside that window, transfers are locked — no exceptions. within it, if you go over your daily limit, we'll talk through it before anything moves. kedu protects the rest for your goals.",
-    ].join("\n\n");
-    await this.appendMessage(sessionId, "assistant", planText);
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      planText,
-      user.id,
-    );
+    const ack = `got it, ${firstName}.`;
+    await this.appendMessage(session.id, "assistant", ack);
+    await this.whatsapp.sendText(user.whatsappNumber, ack, user.id);
 
-    const trustText = [
-      "before i can create your account, i need a few details to verify your identity — this is a bank requirement, not a kedu thing. it's the same verification any nigerian bank asks for.",
-      "you'll pick either your bvn or your nin, plus your date of birth and email — kedu doesn't keep hold of your id number once your account is created, it's passed straight through to rubies microfinance bank, who actually issues your account.",
-      "i know handing this over can feel like a lot, especially to something that started as a whatsapp chat. but kedu's account is a real, licensed bank account, not an iou — that's exactly why this step exists, and exactly why your money is actually protected once it's here.",
-      "tap the form below to fill it in securely — it never comes through as a chat message.",
+    await this.advanceStage(session.id, OnboardingStage.PLAN_PROPOSED);
+    await this.sendAccountCreationAsk(freshUser, session.id);
+  }
+
+  // =========================================================================
+  // PLAN_PROPOSED — Account Creation (BVN/NIN + DOB + email via a WhatsApp
+  // Flow, native popup form, never free text and never the model). Fires
+  // right after Frequency Check now, not at the end of onboarding — see
+  // handleInboundFlowReply for the actual submission handler.
+  // =========================================================================
+
+  private async sendAccountCreationAsk(
+    user: User,
+    sessionId: string,
+  ): Promise<void> {
+    const firstName = (user.name ?? "there").split(" ")[0];
+    const text = [
+      `${firstName}, this is exactly where i help the most, turning what you just told me into a real plan that actually protects your money, not just tracking it after the fact.`,
+      "for me to help you, i need to set you up with a secure bank account. to create it, i need your email address, your date of birth, and your bvn or nin.",
+      "your funds are secured by our banking partner, rubies microfinance bank, and regulated by the central bank of nigeria. udara never keeps hold of your id number, it's passed straight through to rubies once your account is created.",
+      "tap below to fill it in securely, it never comes through as a chat message.",
     ].join("\n\n");
-    await this.appendMessage(sessionId, "assistant", trustText);
+    await this.appendMessage(sessionId, "assistant", text);
     await this.chunkedMessenger.sendChunkedReply(
       user.whatsappNumber,
-      trustText,
+      text,
       user.id,
     );
     await this.sendKycFlow(user);
   }
 
-  // =========================================================================
-  // PLAN_PROPOSED (Trust Moment) — BVN/NIN + DOB + email via a WhatsApp Flow
-  // (native popup form), never free text and never the model. See
-  // handleInboundFlowReply for the actual submission handler.
-  // =========================================================================
-
-  /** Stray free text during the Trust Moment — point back at the form instead of trying to parse it. */
+  /** Stray free text during Account Creation — point back at the form instead of trying to parse it. */
   private async handleTrustMomentText(
     user: User,
     sessionId: string,
   ): Promise<void> {
     const nudge =
-      "please use the form above to share your bvn/nin, date of birth, and email — it's the secure way to do this. resending it now:";
+      "please use the form above to share your bvn/nin, date of birth, and email, it's the secure way to do this. resending it now:";
     await this.appendMessage(sessionId, "assistant", nudge);
     await this.whatsapp.sendText(user.whatsappNumber, nudge, user.id);
     await this.sendKycFlow(user);
@@ -628,7 +692,7 @@ export class OnboardingService {
       );
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "the identity-verification form isn't set up on this environment yet — a developer needs to publish it first.",
+        "the identity-verification form isn't set up on this environment yet, a developer needs to publish it first.",
         user.id,
       );
       return;
@@ -641,7 +705,7 @@ export class OnboardingService {
       screenId: "KYC",
       headerText: "Verify your identity",
       bodyText:
-        "Tap below to securely share your BVN or NIN, date of birth, and email — takes under a minute.",
+        "Tap below to securely share your BVN or NIN, date of birth, and email. Takes under a minute.",
       ctaText: "Verify identity",
       userId: user.id,
     });
@@ -692,29 +756,21 @@ export class OnboardingService {
           email: kyc.email,
           dateOfBirth: new Date(kyc.dateOfBirth),
           // Deliberately never writing bvn/nin to the User record — see the
-          // trust-moment copy above. The Flow submission is never persisted
-          // to OnboardingSession either (unlike the old free-text path), so
-          // the raw ID number only ever exists in memory for this one call.
+          // account-creation copy above. The Flow submission is never
+          // persisted to OnboardingSession either, so the raw ID number
+          // only ever exists in memory for this one call.
         },
       });
 
-      await this.advanceStage(sessionId, OnboardingStage.ACCOUNT_CREATED);
-
-      const session = await this.prisma.onboardingSession.findUniqueOrThrow({
-        where: { id: sessionId },
-      });
-      const extractedData = isRecord(session.extractedData)
-        ? session.extractedData
-        : {};
-      const plan = isRecord(extractedData.plan)
-        ? (extractedData.plan as { monthlyAllowance?: number })
-        : {};
-      const monthlyAllowance = plan.monthlyAllowance ?? 0;
+      // Onboarding continues into Money Story next, not straight to
+      // ACCOUNT_CREATED — that stage now fires much later, once the whole
+      // script (money story, reflection, structured questions, plan review)
+      // is actually done. See sendFundingInstructions.
+      await this.advanceStage(sessionId, OnboardingStage.MONEY_STORY);
 
       const confirmText = [
-        `your kedu account has been created successfully 🎉 your account number is: ${account.accountNumber}.`,
+        `your udara account has been created successfully 🎉 your account number is: ${account.accountNumber}.`,
         "pin this chat so you can send money here anytime.",
-        `your next step is to fund your kedu account. send ₦${monthlyAllowance.toLocaleString("en-NG")} into this account — that's your full monthly allowance based on the plan we just built. once received, kedu will automatically activate your spending plan.`,
       ].join("\n\n");
       await this.appendMessage(sessionId, "assistant", confirmText);
       await this.chunkedMessenger.sendChunkedReply(
@@ -722,6 +778,8 @@ export class OnboardingService {
         confirmText,
         user.id,
       );
+
+      await this.sendMoneyStoryQuestions(user, sessionId);
     } catch (err) {
       this.logger.warn(
         `Rubies provisionAccount failed for user ${user.id}: ${String(err)}`,
@@ -746,11 +804,11 @@ export class OnboardingService {
    * The specific, actionable case is a P2002 unique-constraint collision on
    * rubiesAccountId/rubiesAccountNumber: Rubies hands back an *existing*
    * account instead of creating a new one when the same BVN/NIN has already
-   * been used to provision a different Kedu user (common while testing with
-   * one real identity across multiple numbers) — our schema correctly
-   * refuses to link one Rubies account to two Kedu users, but the resulting
-   * DB error told the user nothing useful. Any other Prisma error falls
-   * back to a generic message rather than leaking ORM/schema internals.
+   * been used to provision a different Udara user (common while testing
+   * with one real identity across multiple numbers) — our schema correctly
+   * refuses to link one Rubies account to two Udara users, but the
+   * resulting DB error told the user nothing useful. Any other Prisma error
+   * falls back to a generic message rather than leaking ORM/schema internals.
    */
   private describeProvisioningFailure(err: unknown): string {
     if (err instanceof Prisma.PrismaClientKnownRequestError) {
@@ -761,15 +819,317 @@ export class OnboardingService {
           fields.includes("rubiesAccountId") ||
           fields.includes("rubiesAccountNumber")
         ) {
-          return "that bvn/nin is already linked to a different kedu account — if that's a different number of yours, message us from that whatsapp chat instead. if this looks wrong, let us know. here's the form if you'd like to try a different id:";
+          return "that bvn/nin is already linked to a different udara account. if that's a different number of yours, message us from that whatsapp chat instead. if this looks wrong, let us know. here's the form if you'd like to try a different id:";
         }
       }
-      return "that didn't go through — something on our end needs a look. here's the form to try again:";
+      return "that didn't go through, something on our end needs a look. here's the form to try again:";
     }
 
     const reason =
       err instanceof Error ? err.message : "rubies rejected the details";
-    return `that didn't go through — ${reason}. let's try again — here's the form:`;
+    return `that didn't go through, ${reason}. let's try again, here's the form:`;
+  }
+
+  // =========================================================================
+  // AI_REFLECTION — Stage 6: a recap built from fields already captured, no
+  // new question asked, no model call needed. Auto-advances straight into
+  // the first structured question, matching the script's own flow.
+  // =========================================================================
+
+  private async sendReflectionAndFirstStructuredQuestion(
+    user: User,
+    sessionId: string,
+  ): Promise<void> {
+    const freshUser = await this.prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+    });
+    const session = await this.prisma.onboardingSession.findUniqueOrThrow({
+      where: { id: sessionId },
+    });
+    const extractedData = isRecord(session.extractedData)
+      ? session.extractedData
+      : {};
+    const quickQuestions = isRecord(extractedData.quickQuestions)
+      ? extractedData.quickQuestions
+      : {};
+    const moneyStory = isRecord(extractedData.moneyStory)
+      ? extractedData.moneyStory
+      : {};
+
+    const firstName = (freshUser.name ?? "there").split(" ")[0];
+    const regret =
+      typeof quickQuestions.spendingRegret === "string"
+        ? quickQuestions.spendingRegret
+        : "impulse spending";
+    const goal =
+      typeof moneyStory.statedGoal === "string"
+        ? moneyStory.statedGoal
+        : (freshUser.statedGoal ?? "your goal");
+    const income = freshUser.monthlyIncome
+      ? Number(freshUser.monthlyIncome).toLocaleString("en-NG")
+      : "0";
+    const city = freshUser.city ?? "";
+
+    const reflection = [
+      `thanks for sharing, ${firstName}. i have a better understanding now.`,
+      `from what you told me: your biggest challenge is ${regret}. your goal is ${goal}. it looks like your biggest challenge isn't earning money, it's creating a system that protects your money when emotions take over.`,
+      `based on everything you shared:\nincome: ₦${income}/month\nlocation: ${city}\nmain challenge: ${regret}\ngoal: ${goal}`,
+      "now let's build your udara profile.",
+    ].join("\n\n");
+    await this.appendMessage(sessionId, "assistant", reflection);
+    await this.chunkedMessenger.sendChunkedReply(
+      user.whatsappNumber,
+      reflection,
+      user.id,
+    );
+
+    await this.advanceStage(sessionId, OnboardingStage.STRUCTURED_QUESTIONS);
+    await this.sendStructuredQuestion(user, sessionId, 0);
+  }
+
+  // =========================================================================
+  // STRUCTURED_QUESTIONS — fixed multiple-choice via WhatsApp lists, deterministic
+  // =========================================================================
+
+  private async sendStructuredQuestion(
+    user: User,
+    sessionId: string,
+    index: number,
+  ): Promise<void> {
+    const question = STRUCTURED_QUESTIONS[index];
+    if (!question) return; // caller should have finalized instead of reaching an out-of-range index
+
+    await this.mergeExtractedData(sessionId, {
+      structuredQuestionIndex: index,
+    });
+    await this.whatsapp.sendListMessage(
+      user.whatsappNumber,
+      question.bodyText,
+      question.buttonLabel,
+      question.rows,
+      user.id,
+    );
+  }
+
+  private async handleStructuredAnswer(
+    user: User,
+    buttonId: string,
+  ): Promise<void> {
+    const session = await this.getOrStartSession(user.id);
+    const extractedData = isRecord(session.extractedData)
+      ? session.extractedData
+      : {};
+    const index =
+      typeof extractedData.structuredQuestionIndex === "number"
+        ? extractedData.structuredQuestionIndex
+        : 0;
+    const question = STRUCTURED_QUESTIONS[index];
+    if (!question) return;
+
+    if (!question.rows.some((r) => r.id === buttonId)) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "that doesn't match the current question, here it is again.",
+        user.id,
+      );
+      await this.whatsapp.sendListMessage(
+        user.whatsappNumber,
+        question.bodyText,
+        question.buttonLabel,
+        question.rows,
+        user.id,
+      );
+      return;
+    }
+
+    const answers = isRecord(extractedData.structuredAnswers)
+      ? (extractedData.structuredAnswers as Record<string, string>)
+      : {};
+    answers[question.key] = buttonId;
+    await this.mergeExtractedData(session.id, { structuredAnswers: answers });
+
+    const nextIndex = index + 1;
+    if (nextIndex < STRUCTURED_QUESTIONS.length) {
+      await this.sendStructuredQuestion(user, session.id, nextIndex);
+    } else {
+      await this.finalizeStructuredQuestions(user, session.id, answers);
+    }
+  }
+
+  /**
+   * Computes the plan and presents it, then opens the Plan Review checkpoint
+   * (Stage 8 — new vs. the old Kedu script, which didn't have one). Udara's
+   * budgeting formula (50/30/20) is a single universal rule: 30% of monthly
+   * income is the "wants" allowance Udara actively manages day to day — no
+   * income-tier branching (the old GROW/RESTRICT posture and FLAT/PERCENTAGE
+   * method distinctions are gone, this is deliberate, see AllowanceService's
+   * matching change). Fixed /30 divisor, not calendar days-in-month, per the
+   * script's own stated invariant that daily x 30 always equals the monthly
+   * figure exactly, no exceptions.
+   */
+  private async finalizeStructuredQuestions(
+    user: User,
+    sessionId: string,
+    answers: Record<string, string>,
+  ): Promise<void> {
+    const freshUser = await this.prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+    });
+
+    const strictnessLevel = STRICTNESS_LEVEL_BY_SQ2_ID[answers.sq2] ?? 3;
+
+    const WANTS_ALLOCATION_PCT = 0.3;
+    const monthlyIncome = Number(freshUser.monthlyIncome ?? 0);
+    const monthlyAllowance =
+      Math.round((monthlyIncome * WANTS_ALLOCATION_PCT) / 1000) * 1000;
+    const dailyLimit = Math.round(monthlyAllowance / 30);
+    const weeklyLimit = dailyLimit * 7;
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { strictnessLevel },
+    });
+
+    await this.mergeExtractedData(sessionId, {
+      structuredAnswers: answers,
+      plan: { dailyLimit, weeklyLimit, monthlyAllowance },
+    });
+    await this.advanceStage(sessionId, OnboardingStage.PLAN_REVIEW);
+
+    const firstName = (freshUser.name ?? "there").split(" ")[0];
+    const planText = [
+      `${firstName}, i have enough to build your first udara plan.`,
+      `here's how i'm splitting your ₦${monthlyIncome.toLocaleString("en-NG")}. the 50/30/20 principle means 50% goes to needs like rent and bills, 30% goes to wants like food, shopping, and going out, and 20% goes to savings.`,
+      `that 30% wants portion, ₦${monthlyAllowance.toLocaleString("en-NG")}, is what i'll actively help you manage day to day:\n\ndaily spending limit: ₦${dailyLimit.toLocaleString("en-NG")}\nweekly spending limit: ₦${weeklyLimit.toLocaleString("en-NG")}\nmonthly spending allowance: ₦${monthlyAllowance.toLocaleString("en-NG")}`,
+      "spending window: 11am to 8pm. outside that window, transfers are locked, no exceptions. within it, if you go over your daily limit, we'll talk through it before anything moves.",
+    ].join("\n\n");
+    await this.appendMessage(sessionId, "assistant", planText);
+    await this.chunkedMessenger.sendChunkedReply(
+      user.whatsappNumber,
+      planText,
+      user.id,
+    );
+
+    const checkpoint =
+      "what do you think, does this feel right, or want to adjust anything?";
+    await this.appendMessage(sessionId, "assistant", checkpoint);
+    await this.whatsapp.sendInteractiveButtons(
+      user.whatsappNumber,
+      checkpoint,
+      [
+        { id: PLAN_REVIEW_FEELS_RIGHT, title: "Feels right" },
+        { id: PLAN_REVIEW_ADJUST, title: "Let's adjust" },
+      ],
+      user.id,
+    );
+  }
+
+  // =========================================================================
+  // PLAN_REVIEW — Stage 8's "does this feel right?" checkpoint.
+  // =========================================================================
+
+  private async handlePlanReviewChoice(
+    user: User,
+    buttonId: string,
+  ): Promise<void> {
+    const session = await this.getOrStartSession(user.id);
+
+    if (buttonId === PLAN_REVIEW_ADJUST) {
+      await this.mergeExtractedData(session.id, {
+        awaitingAdjustmentNote: true,
+      });
+      const ask =
+        "tell me what you'd like different, i'll take it into account.";
+      await this.appendMessage(session.id, "assistant", ask);
+      await this.whatsapp.sendText(user.whatsappNumber, ask, user.id);
+      return; // stays on PLAN_REVIEW — next text handled by handlePlanReviewText
+    }
+
+    if (buttonId === PLAN_REVIEW_FEELS_RIGHT) {
+      await this.sendFundingInstructions(user, session.id);
+      return;
+    }
+
+    await this.whatsapp.sendText(
+      user.whatsappNumber,
+      "tap one of the options above.",
+      user.id,
+    );
+  }
+
+  /**
+   * "Let's adjust"'s free-text follow-up. v1 scope: the note is acknowledged
+   * and kept on the session for reference, not used to actually recompute
+   * the plan yet — there's no plan-editing engine built. Proceeds straight
+   * to funding, same as "Feels right." A real adjustment flow (re-deriving
+   * daily/weekly/monthly figures from a described change) is a documented
+   * fast-follow, not built now.
+   */
+  private async handlePlanReviewText(
+    user: User,
+    sessionId: string,
+    text: string,
+  ): Promise<void> {
+    const session = await this.prisma.onboardingSession.findUniqueOrThrow({
+      where: { id: sessionId },
+    });
+    const extractedData = isRecord(session.extractedData)
+      ? session.extractedData
+      : {};
+
+    if (!extractedData.awaitingAdjustmentNote) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "tap one of the options above.",
+        user.id,
+      );
+      return;
+    }
+
+    await this.mergeExtractedData(sessionId, {
+      adjustmentNote: text,
+      awaitingAdjustmentNote: false,
+    });
+    const ack =
+      "got it, noted. you can always fine-tune this with me later, let's get your account funded for now.";
+    await this.appendMessage(sessionId, "assistant", ack);
+    await this.whatsapp.sendText(user.whatsappNumber, ack, user.id);
+
+    await this.sendFundingInstructions(user, sessionId);
+  }
+
+  /**
+   * Stage 9. Advances to ACCOUNT_CREATED here (not at KYC time anymore) —
+   * this is the point the onboarding *script* is actually done and the app
+   * is just waiting on funding, matching what that stage name has always
+   * meant to the rest of the app (RubiesWebhookController's ACCOUNT_CREATED
+   * -> FUNDED transition, TransferConfirmationService's first-transaction
+   * completion check).
+   */
+  private async sendFundingInstructions(
+    user: User,
+    sessionId: string,
+  ): Promise<void> {
+    const session = await this.prisma.onboardingSession.findUniqueOrThrow({
+      where: { id: sessionId },
+    });
+    const extractedData = isRecord(session.extractedData)
+      ? session.extractedData
+      : {};
+    const plan = isRecord(extractedData.plan)
+      ? (extractedData.plan as { monthlyAllowance?: number })
+      : {};
+    const monthlyAllowance = plan.monthlyAllowance ?? 0;
+
+    await this.advanceStage(sessionId, OnboardingStage.ACCOUNT_CREATED);
+
+    const text = `your next step is to fund your udara account. send ₦${monthlyAllowance.toLocaleString("en-NG")} into this account, that's your full monthly spending allowance based on the plan we just built. once received, udara will automatically activate your spending plan.`;
+    await this.appendMessage(sessionId, "assistant", text);
+    await this.chunkedMessenger.sendChunkedReply(
+      user.whatsappNumber,
+      text,
+      user.id,
+    );
   }
 
   // =========================================================================
@@ -794,23 +1154,20 @@ export class OnboardingService {
     const extractedData = isRecord(session.extractedData)
       ? session.extractedData
       : {};
-    const moneyStory = isRecord(extractedData.moneyStory)
-      ? extractedData.moneyStory
+    const quickQuestions = isRecord(extractedData.quickQuestions)
+      ? extractedData.quickQuestions
       : {};
 
     const known: string[] = [];
     if (user.name) known.push(`name: ${user.name}`);
-    if (user.occupation) known.push(`occupation: ${user.occupation}`);
+    if (user.city) known.push(`city: ${user.city}`);
     if (user.monthlyIncome)
       known.push(
         `monthly income: ~₦${Number(user.monthlyIncome).toLocaleString("en-NG")}`,
       );
     if (user.statedGoal) known.push(`stated goal: ${user.statedGoal}`);
-    if (user.city) known.push(`city: ${user.city}`);
-    if (typeof moneyStory.spendingRegret === "string")
-      known.push(`spending regret: ${moneyStory.spendingRegret}`);
-    if (typeof moneyStory.spendingTrigger === "string")
-      known.push(`spending trigger: ${moneyStory.spendingTrigger}`);
+    if (typeof quickQuestions.spendingRegret === "string")
+      known.push(`why they came to udara: ${quickQuestions.spendingRegret}`);
 
     return {
       role: "system",

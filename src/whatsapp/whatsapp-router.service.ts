@@ -123,7 +123,7 @@ export class WhatsappRouterService {
   ): Promise<void> {
     await this.whatsapp.sendText(
       message.fromNumber,
-      "I can't listen to voice notes yet — could you type that instead?",
+      "I can't listen to voice notes yet, could you type that instead?",
       user.id,
     );
   }
@@ -164,7 +164,7 @@ export class WhatsappRouterService {
       if (!draft) {
         await this.whatsapp.sendText(
           message.fromNumber,
-          'that request has expired — say "transfer" to start again.',
+          'that request has expired, say "transfer" to start again.',
           user.id,
         );
         return;
@@ -183,7 +183,7 @@ export class WhatsappRouterService {
     );
     await this.whatsapp.sendText(
       message.fromNumber,
-      "Got it — I'm not able to act on that yet, this part of Kedu isn't wired up.",
+      "Got it, I'm not able to act on that yet, this part of Udara isn't wired up.",
       user.id,
     );
   }
@@ -316,7 +316,7 @@ export class WhatsappRouterService {
   ): Promise<void> {
     await this.whatsapp.sendText(
       message.fromNumber,
-      "I can't do anything with that kind of message yet — could you send it as text?",
+      "I can't do anything with that kind of message yet, could you send it as text?",
       user.id,
     );
   }

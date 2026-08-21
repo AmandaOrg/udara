@@ -16,8 +16,8 @@ export class StubLlmService implements LlmService {
   ): Promise<LlmCompleteResult<T>> {
     return {
       text:
-        "[stub LLM — no AI_PROVIDER configured]\n\n" +
-        "i heard you, but i can't give a real reply right now — no ai provider is wired up.",
+        "[stub LLM, no AI_PROVIDER configured]\n\n" +
+        "i heard you, but i can't give a real reply right now - no ai provider is wired up.",
       raw: { stub: true, purpose: params.purpose },
       latencyMs: 0,
       provider: "stub",

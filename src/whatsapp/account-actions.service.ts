@@ -85,7 +85,7 @@ export class AccountActionsService {
     if (!user.rubiesAccountNumber) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "you don't have a kedu account yet.",
+        "you don't have a udara account yet.",
         user.id,
       );
       return;
@@ -97,7 +97,7 @@ export class AccountActionsService {
     if (balance === null) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "couldn't reach rubies to check your balance right now — try again in a moment.",
+        "couldn't reach rubies to check your balance right now, try again in a moment.",
         user.id,
       );
       return;
@@ -136,7 +136,7 @@ export class AccountActionsService {
 
     if (user.disciplineExitedAt) {
       lines.push(
-        "restrictions are off for your account — the spending window and override fees don't apply.",
+        "restrictions are off for your account, the spending window and override fees don't apply.",
       );
     } else if (
       this.windowService.isWithinWindow(
@@ -150,7 +150,7 @@ export class AccountActionsService {
         user.windowStartHour,
       );
       lines.push(
-        `spending window is closed — opens in about ${hoursUntil}h (${user.windowStartHour}:00).`,
+        `spending window is closed, opens in about ${hoursUntil}h (${user.windowStartHour}:00).`,
       );
     }
 
@@ -165,7 +165,7 @@ export class AccountActionsService {
     if (!user.rubiesAccountNumber) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "you don't have a kedu account yet.",
+        "you don't have a udara account yet.",
         user.id,
       );
       return;
@@ -200,7 +200,7 @@ export class AccountActionsService {
     if (!user.rubiesAccountNumber) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "you don't have a kedu account yet, so there's nothing to send from.",
+        "you don't have a udara account yet, so there's nothing to send from.",
         user.id,
       );
       return;
@@ -256,7 +256,7 @@ export class AccountActionsService {
       default:
         await this.whatsapp.sendText(
           user.whatsappNumber,
-          'tap one of the options above — if you\'d rather start over, say "cancel".',
+          'tap one of the options above, or if you\'d rather start over, say "cancel".',
           user.id,
         );
     }
@@ -296,7 +296,7 @@ export class AccountActionsService {
 
     await this.whatsapp.sendText(
       user.whatsappNumber,
-      "that doesn't match what I asked — let's try again.",
+      "that doesn't match what I asked, let's try again.",
       user.id,
     );
   }
@@ -310,7 +310,7 @@ export class AccountActionsService {
     if (!Number.isFinite(amount) || amount <= 0) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "that doesn't look like a valid amount — just send the number, e.g. 5000.",
+        "that doesn't look like a valid amount, just send the number, e.g. 5000.",
         user.id,
       );
       return;
@@ -322,7 +322,7 @@ export class AccountActionsService {
     });
     await this.whatsapp.sendText(
       user.whatsappNumber,
-      `got it — ₦${amount.toLocaleString("en-NG")}. what's the recipient's 10-digit account number?`,
+      `got it, ₦${amount.toLocaleString("en-NG")}. what's the recipient's 10-digit account number?`,
       user.id,
     );
   }
@@ -336,7 +336,7 @@ export class AccountActionsService {
     if (accountNumber.length !== 10) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "that should be a 10-digit account number — try again.",
+        "that should be a 10-digit account number, try again.",
         user.id,
       );
       return;
@@ -373,7 +373,7 @@ export class AccountActionsService {
     if (matches.length === 0) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "couldn't find that bank — try a different spelling, or the exact bank name.",
+        "couldn't find that bank, try a different spelling, or the exact bank name.",
         user.id,
       );
       return;
@@ -392,7 +392,7 @@ export class AccountActionsService {
     if (matches.length > 10) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        `that matches ${matches.length} banks — try typing more of the name.`,
+        `that matches ${matches.length} banks, try typing more of the name.`,
         user.id,
       );
       return;
@@ -400,7 +400,7 @@ export class AccountActionsService {
 
     await this.whatsapp.sendListMessage(
       user.whatsappNumber,
-      "a few banks match — which one?",
+      "a few banks match, which one?",
       "Pick a bank",
       matches.map((b) => ({
         id: `${BANK_BUTTON_PREFIX}${b.bankCode}`,
@@ -447,7 +447,7 @@ export class AccountActionsService {
       });
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        `couldn't verify that account at ${bankName} — double-check the account number and try again.`,
+        `couldn't verify that account at ${bankName}, double-check the account number and try again.`,
         user.id,
       );
       return;
@@ -485,7 +485,7 @@ export class AccountActionsService {
     });
     await this.whatsapp.sendListMessage(
       user.whatsappNumber,
-      `found it — ${resolved.accountName}. how should I tag this recipient?`,
+      `found it, ${resolved.accountName}. how should I tag this recipient?`,
       "Tag recipient",
       LABEL_ROWS,
       user.id,

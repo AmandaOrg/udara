@@ -80,7 +80,7 @@ export class AllowanceScheduler {
         await this.sendNudge(
           user,
           NudgeType.WINDOW_OPEN,
-          "Your day is unlocked — today's allowance is ready to spend.",
+          "Your day is unlocked - today's allowance is ready to spend.",
         );
       } catch (err) {
         this.logger.error(
@@ -109,9 +109,9 @@ export class AllowanceScheduler {
     if (dueUsers.length === 0) return;
 
     const text = [
-      "one thing that makes kedu work better: remove easy access to the old habits.",
-      "consider:\n- removing saved cards from shopping apps\n- reducing access to other banking apps\n- using kedu as your main spending account",
-      "kedu works best when you design your environment to support your goals.",
+      "one thing that makes udara work better: remove easy access to the old habits.",
+      "consider:\n- removing saved cards from shopping apps\n- reducing access to other banking apps\n- using udara as your main spending account",
+      "udara works best when you design your environment to support your goals.",
     ].join("\n\n");
 
     for (const user of dueUsers) {

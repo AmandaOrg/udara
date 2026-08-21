@@ -73,6 +73,14 @@ class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  RUBIES_FEES_ACCOUNT_NUMBER?: string;
+
+  @IsOptional()
+  @IsString()
+  RUBIES_FEES_BANK_CODE?: string;
+
+  @IsOptional()
+  @IsString()
   AI_PROVIDER?: string;
 
   @IsOptional()

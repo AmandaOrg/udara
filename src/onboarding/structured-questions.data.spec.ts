@@ -1,12 +1,11 @@
 import {
   STRUCTURED_QUESTIONS,
-  STRICTNESS_LEVEL_BY_SQ4_ID,
-  INCOME_POSTURE_GROW_SQ1_ID,
+  STRICTNESS_LEVEL_BY_SQ2_ID,
 } from "./structured-questions.data";
 
 describe("STRUCTURED_QUESTIONS", () => {
-  it("has 4 questions, matching the onboarding script", () => {
-    expect(STRUCTURED_QUESTIONS).toHaveLength(4);
+  it("has 2 questions, matching the Udara onboarding script's merged Stage 7", () => {
+    expect(STRUCTURED_QUESTIONS).toHaveLength(2);
   });
 
   it("keeps every row within WhatsApp's list-message limits (<=10 rows, title<=24, description<=72)", () => {
@@ -26,18 +25,12 @@ describe("STRUCTURED_QUESTIONS", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("every sq4 row id has a strictness level mapping", () => {
-    const sq4 = STRUCTURED_QUESTIONS.find((q) => q.key === "sq4");
-    for (const row of sq4?.rows ?? []) {
-      expect(STRICTNESS_LEVEL_BY_SQ4_ID[row.id]).toBeGreaterThanOrEqual(1);
-      expect(STRICTNESS_LEVEL_BY_SQ4_ID[row.id]).toBeLessThanOrEqual(4);
+  it("every sq2 row id has a strictness level mapping between 1 and 4", () => {
+    const sq2 = STRUCTURED_QUESTIONS.find((q) => q.key === "sq2");
+    expect(sq2?.rows.length).toBeGreaterThan(0);
+    for (const row of sq2?.rows ?? []) {
+      expect(STRICTNESS_LEVEL_BY_SQ2_ID[row.id]).toBeGreaterThanOrEqual(1);
+      expect(STRICTNESS_LEVEL_BY_SQ2_ID[row.id]).toBeLessThanOrEqual(4);
     }
-  });
-
-  it("INCOME_POSTURE_GROW_SQ1_ID matches an actual sq1 row", () => {
-    const sq1 = STRUCTURED_QUESTIONS.find((q) => q.key === "sq1");
-    expect(sq1?.rows.some((r) => r.id === INCOME_POSTURE_GROW_SQ1_ID)).toBe(
-      true,
-    );
   });
 });

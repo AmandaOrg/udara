@@ -175,7 +175,7 @@ describe("AccountActionsService", () => {
       expect(rubies.getBalance).not.toHaveBeenCalled();
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
-        expect.stringContaining("don't have a kedu account"),
+        expect.stringContaining("don't have a udara account"),
         "user-1",
       );
     });

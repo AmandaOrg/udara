@@ -7,7 +7,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
-import { BudgetMethod, TransactionStatus, User } from "@prisma/client";
+import { TransactionStatus, User } from "@prisma/client";
 
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -21,10 +21,6 @@ function startOfIsoWeek(d: Date): Date {
   return date;
 }
 
-function daysInMonth(d: Date): number {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-}
-
 @Injectable()
 export class AllowanceService {
   constructor(
@@ -34,28 +30,22 @@ export class AllowanceService {
   ) {}
 
   /**
-   * The plan-derived daily figure, per PRD §7a income-tier branching: FLAT uses
-   * the explicit naira figure set at PLAN_PROPOSED onboarding (never
-   * monthlyIncome/30 — nothing defines FLAT that way); PERCENTAGE spreads
-   * monthlyIncome * budgetPercentage evenly across the actual days in the
-   * current month. Returns 0 if the user hasn't been onboarded onto a plan yet
-   * (no flatDailyAmount/monthlyIncome set) — evaluateSpend still works, it just
-   * won't allow any NORMAL spend until a plan exists.
+   * Udara's universal budgeting formula (50/30/20 principle, Udara onboarding
+   * script Stage 7): 30% of monthly income is the "wants" allowance Udara
+   * actively manages day to day, split evenly across a fixed 30-day month —
+   * not the actual calendar days in the current month — so that the figure
+   * shown to the user at onboarding (dailyLimit * 30 === monthlyAllowance,
+   * see OnboardingService.finalizeStructuredQuestions) never silently drifts
+   * from what this method computes later. No income-tier branching: every
+   * user gets the same formula, regardless of income level. Returns 0 if the
+   * user hasn't been onboarded onto a plan yet (no monthlyIncome set) —
+   * evaluateSpend still works, it just won't allow any NORMAL spend until a
+   * plan exists.
    */
-  private computeDailyAmount(
-    user: Pick<
-      User,
-      "budgetMethod" | "monthlyIncome" | "budgetPercentage" | "flatDailyAmount"
-    >,
-  ): number {
-    if (user.budgetMethod === BudgetMethod.PERCENTAGE) {
-      if (!user.monthlyIncome || !user.budgetPercentage) return 0;
-      return (
-        (Number(user.monthlyIncome) * Number(user.budgetPercentage)) /
-        daysInMonth(new Date())
-      );
-    }
-    return Number(user.flatDailyAmount ?? 0);
+  private computeDailyAmount(user: Pick<User, "monthlyIncome">): number {
+    if (!user.monthlyIncome) return 0;
+    const WANTS_ALLOCATION_PCT = 0.3;
+    return (Number(user.monthlyIncome) * WANTS_ALLOCATION_PCT) / 30;
   }
 
   /** Fetch or lazily create today's allowance row for a user. */

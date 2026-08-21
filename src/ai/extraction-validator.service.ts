@@ -6,23 +6,17 @@ export interface ValidationOutcome<T = unknown> {
   reason?: string;
 }
 
-export interface IdentityFields {
+export interface QuickQuestionsFields {
   name: string;
-  occupation: string;
+  city: string;
+  monthlyIncome: number;
+  spendingRegret: string;
 }
 
 export interface MoneyStoryFields {
-  monthlyIncome: number;
   statedGoal: string;
-  spendingRegret?: string;
-  spendingTrigger?: string;
-  priorAttempts?: string;
-  consistencyBlocker?: string;
-}
-
-export interface ReflectionContextFields {
-  city: string;
-  age?: number;
+  difficulty: string;
+  priorAttempts: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -48,7 +42,9 @@ function cleanString(value: unknown, maxLength: number): string | null {
  */
 @Injectable()
 export class ExtractionValidatorService {
-  validateIdentity(args: unknown): ValidationOutcome<IdentityFields> {
+  validateQuickQuestions(
+    args: unknown,
+  ): ValidationOutcome<QuickQuestionsFields> {
     if (!isRecord(args))
       return { accepted: false, reason: "malformed tool call" };
 
@@ -56,19 +52,9 @@ export class ExtractionValidatorService {
     if (!name)
       return { accepted: false, reason: "name is missing or implausible" };
 
-    const occupation = cleanString(args.occupation, 150);
-    if (!occupation)
-      return {
-        accepted: false,
-        reason: "occupation is missing or implausible",
-      };
-
-    return { accepted: true, cleanedValue: { name, occupation } };
-  }
-
-  validateMoneyStory(args: unknown): ValidationOutcome<MoneyStoryFields> {
-    if (!isRecord(args))
-      return { accepted: false, reason: "malformed tool call" };
+    const city = cleanString(args.city, 100);
+    if (!city)
+      return { accepted: false, reason: "city is missing or implausible" };
 
     const monthlyIncome = Number(args.monthlyIncome);
     if (
@@ -82,6 +68,23 @@ export class ExtractionValidatorService {
       };
     }
 
+    const spendingRegret = cleanString(args.spendingRegret, 500);
+    if (!spendingRegret)
+      return {
+        accepted: false,
+        reason: "spendingRegret is missing or implausible",
+      };
+
+    return {
+      accepted: true,
+      cleanedValue: { name, city, monthlyIncome, spendingRegret },
+    };
+  }
+
+  validateMoneyStory(args: unknown): ValidationOutcome<MoneyStoryFields> {
+    if (!isRecord(args))
+      return { accepted: false, reason: "malformed tool call" };
+
     const statedGoal = cleanString(args.statedGoal, 500);
     if (!statedGoal)
       return {
@@ -89,42 +92,23 @@ export class ExtractionValidatorService {
         reason: "statedGoal is missing or implausible",
       };
 
+    const difficulty = cleanString(args.difficulty, 500);
+    if (!difficulty)
+      return {
+        accepted: false,
+        reason: "difficulty is missing or implausible",
+      };
+
+    const priorAttempts = cleanString(args.priorAttempts, 500);
+    if (!priorAttempts)
+      return {
+        accepted: false,
+        reason: "priorAttempts is missing or implausible",
+      };
+
     return {
       accepted: true,
-      cleanedValue: {
-        monthlyIncome,
-        statedGoal,
-        spendingRegret: cleanString(args.spendingRegret, 500) ?? undefined,
-        spendingTrigger: cleanString(args.spendingTrigger, 300) ?? undefined,
-        priorAttempts: cleanString(args.priorAttempts, 500) ?? undefined,
-        consistencyBlocker:
-          cleanString(args.consistencyBlocker, 500) ?? undefined,
-      },
+      cleanedValue: { statedGoal, difficulty, priorAttempts },
     };
-  }
-
-  validateReflectionContext(
-    args: unknown,
-  ): ValidationOutcome<ReflectionContextFields> {
-    if (!isRecord(args))
-      return { accepted: false, reason: "malformed tool call" };
-
-    const city = cleanString(args.city, 100);
-    if (!city)
-      return { accepted: false, reason: "city is missing or implausible" };
-
-    let age: number | undefined;
-    if (args.age !== undefined && args.age !== null) {
-      const parsedAge = Number(args.age);
-      if (!Number.isFinite(parsedAge) || parsedAge < 16 || parsedAge > 100) {
-        return {
-          accepted: false,
-          reason: "age is present but outside a plausible range",
-        };
-      }
-      age = parsedAge;
-    }
-
-    return { accepted: true, cleanedValue: { city, age } };
   }
 }

@@ -46,7 +46,7 @@ export class KeduChatService {
     });
 
     const reply =
-      result.text ?? "hmm, lost my train of thought there — say that again?";
+      result.text ?? "hmm, lost my train of thought there, say that again?";
     await this.appendMessage(session.id, "assistant", reply);
     await this.chunkedMessenger.sendChunkedReply(
       user.whatsappNumber,

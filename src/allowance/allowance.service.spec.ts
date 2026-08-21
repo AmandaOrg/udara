@@ -3,7 +3,7 @@ import { AllowanceService } from "./allowance.service";
 import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
-import { BudgetMethod, TransactionStatus } from "@prisma/client";
+import { TransactionStatus } from "@prisma/client";
 
 /**
  * Uses real WindowService/FeeCalculatorService (both pure/deterministic) and a
@@ -37,10 +37,7 @@ describe("AllowanceService", () => {
       windowStartHour: number;
       windowEndHour: number;
       disciplineExitedAt: Date | null;
-      budgetMethod: BudgetMethod;
       monthlyIncome: number | null;
-      budgetPercentage: number | null;
-      flatDailyAmount: number | null;
     }> = {},
   ) {
     return {
@@ -48,10 +45,7 @@ describe("AllowanceService", () => {
       windowStartHour: 11,
       windowEndHour: 20,
       disciplineExitedAt: null,
-      budgetMethod: BudgetMethod.FLAT,
       monthlyIncome: null,
-      budgetPercentage: null,
-      flatDailyAmount: null,
       ...overrides,
     };
   }
@@ -273,13 +267,9 @@ describe("AllowanceService", () => {
       );
     });
 
-    it("computes the FLAT daily amount from flatDailyAmount, not monthlyIncome/30", async () => {
+    it("computes the daily amount as a fixed 30% of monthlyIncome spread over 30 days, no income-tier branching", async () => {
       prisma.user.findUniqueOrThrow.mockResolvedValue(
-        makeUser({
-          budgetMethod: BudgetMethod.FLAT,
-          flatDailyAmount: 4_500,
-          monthlyIncome: 900_000,
-        }),
+        makeUser({ monthlyIncome: 900_000 }),
       );
       prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null); // today
       prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null); // yesterday
@@ -287,53 +277,19 @@ describe("AllowanceService", () => {
 
       await service.getOrCreateTodayAllowance(userId);
 
+      // (900_000 * 0.3) / 30 = 9_000 — a fixed /30 divisor, never the actual
+      // days in the current calendar month, so this figure always matches
+      // the plan shown at onboarding (dailyLimit * 30 === monthlyAllowance).
       expect(prisma.dailyAllowance.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ amountAllocated: 4_500 }),
+          data: expect.objectContaining({ amountAllocated: 9_000 }),
         }),
       );
     });
 
-    it("computes the PERCENTAGE daily amount as monthlyIncome * budgetPercentage / days in month", async () => {
+    it("returns 0 when no plan has been set yet (monthlyIncome unset)", async () => {
       prisma.user.findUniqueOrThrow.mockResolvedValue(
-        makeUser({
-          budgetMethod: BudgetMethod.PERCENTAGE,
-          monthlyIncome: 300_000,
-          budgetPercentage: 0.5,
-        }),
-      );
-      prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null);
-      prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null);
-      prisma.dailyAllowance.create.mockResolvedValue(makeAllowance());
-
-      await service.getOrCreateTodayAllowance(userId);
-
-      // computeDailyAmount spreads across the *actual* current month (it isn't
-      // parameterized by a `now`, unlike evaluateSpend) — so days-in-month has to
-      // be derived from real wall-clock time here, not the Jan-2026 test fixtures.
-      const now = new Date();
-      const daysInCurrentMonth = new Date(
-        now.getFullYear(),
-        now.getMonth() + 1,
-        0,
-      ).getDate();
-      const expected = (300_000 * 0.5) / daysInCurrentMonth;
-      expect(prisma.dailyAllowance.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            amountAllocated: expect.closeTo(expected, 5),
-          }),
-        }),
-      );
-    });
-
-    it("returns 0 for PERCENTAGE when no plan has been set yet", async () => {
-      prisma.user.findUniqueOrThrow.mockResolvedValue(
-        makeUser({
-          budgetMethod: BudgetMethod.PERCENTAGE,
-          monthlyIncome: null,
-          budgetPercentage: null,
-        }),
+        makeUser({ monthlyIncome: null }),
       );
       prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null);
       prisma.dailyAllowance.findUnique.mockResolvedValueOnce(null);

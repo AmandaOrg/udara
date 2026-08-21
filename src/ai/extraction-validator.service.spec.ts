@@ -3,115 +3,120 @@ import { ExtractionValidatorService } from "./extraction-validator.service";
 describe("ExtractionValidatorService", () => {
   const validator = new ExtractionValidatorService();
 
-  describe("validateIdentity", () => {
-    it("accepts a well-formed name and occupation", () => {
-      const result = validator.validateIdentity({
+  describe("validateQuickQuestions", () => {
+    it("accepts a well-formed record with all four fields", () => {
+      const result = validator.validateQuickQuestions({
         name: "Daniel",
-        occupation: "software engineer",
+        city: "Lagos",
+        monthlyIncome: 500_000,
+        spendingRegret: "food delivery",
       });
       expect(result).toEqual({
         accepted: true,
-        cleanedValue: { name: "Daniel", occupation: "software engineer" },
+        cleanedValue: {
+          name: "Daniel",
+          city: "Lagos",
+          monthlyIncome: 500_000,
+          spendingRegret: "food delivery",
+        },
       });
     });
 
     it("trims whitespace", () => {
-      const result = validator.validateIdentity({
+      const result = validator.validateQuickQuestions({
         name: "  Daniel  ",
-        occupation: "  engineer  ",
+        city: "  Lagos  ",
+        monthlyIncome: 500_000,
+        spendingRegret: "  food delivery  ",
       });
       expect(result.cleanedValue).toEqual({
         name: "Daniel",
-        occupation: "engineer",
+        city: "Lagos",
+        monthlyIncome: 500_000,
+        spendingRegret: "food delivery",
       });
     });
 
     it.each([
-      [{ name: "", occupation: "engineer" }],
-      [{ name: "Daniel", occupation: "" }],
-      [{ name: "   ", occupation: "engineer" }],
-      [{ occupation: "engineer" }],
-      [{ name: 123, occupation: "engineer" }],
+      [{ city: "Lagos", monthlyIncome: 500_000, spendingRegret: "x" }], // missing name
+      [{ name: "Daniel", monthlyIncome: 500_000, spendingRegret: "x" }], // missing city
+      [{ name: "Daniel", city: "Lagos", spendingRegret: "x" }], // missing income
+      [{ name: "Daniel", city: "Lagos", monthlyIncome: 500_000 }], // missing regret
+      [
+        {
+          name: "",
+          city: "Lagos",
+          monthlyIncome: 500_000,
+          spendingRegret: "x",
+        },
+      ],
+      [
+        {
+          name: "Daniel",
+          city: "Lagos",
+          monthlyIncome: 0,
+          spendingRegret: "x",
+        },
+      ],
+      [
+        {
+          name: "Daniel",
+          city: "Lagos",
+          monthlyIncome: 999_999_999,
+          spendingRegret: "x",
+        },
+      ],
+      [
+        {
+          name: "Daniel",
+          city: "Lagos",
+          monthlyIncome: "not a number",
+          spendingRegret: "x",
+        },
+      ],
       [null],
       ["not an object"],
     ])("rejects malformed input: %p", (args) => {
-      expect(validator.validateIdentity(args).accepted).toBe(false);
+      expect(validator.validateQuickQuestions(args).accepted).toBe(false);
     });
 
     it("rejects an implausibly long name", () => {
-      const result = validator.validateIdentity({
+      const result = validator.validateQuickQuestions({
         name: "a".repeat(101),
-        occupation: "engineer",
+        city: "Lagos",
+        monthlyIncome: 500_000,
+        spendingRegret: "food delivery",
       });
       expect(result.accepted).toBe(false);
     });
   });
 
   describe("validateMoneyStory", () => {
-    it("accepts a well-formed record with all fields", () => {
+    it("accepts a well-formed record with all three fields", () => {
       const result = validator.validateMoneyStory({
-        monthlyIncome: 1_500_000,
         statedGoal: "save for a car",
-        spendingRegret: "food delivery",
-        spendingTrigger: "stress",
+        difficulty: "impulse spending on weekends",
+        priorAttempts: "tried a budgeting app, didn't stick",
       });
-      expect(result.accepted).toBe(true);
-      expect(result.cleanedValue?.monthlyIncome).toBe(1_500_000);
-      expect(result.cleanedValue?.statedGoal).toBe("save for a car");
-      expect(result.cleanedValue?.spendingRegret).toBe("food delivery");
-    });
-
-    it("accepts with only the two required fields", () => {
-      const result = validator.validateMoneyStory({
-        monthlyIncome: 200_000,
-        statedGoal: "save for rent",
+      expect(result).toEqual({
+        accepted: true,
+        cleanedValue: {
+          statedGoal: "save for a car",
+          difficulty: "impulse spending on weekends",
+          priorAttempts: "tried a budgeting app, didn't stick",
+        },
       });
-      expect(result.accepted).toBe(true);
-      expect(result.cleanedValue?.spendingRegret).toBeUndefined();
     });
 
     it.each([
-      [{ monthlyIncome: 0, statedGoal: "x" }], // zero
-      [{ monthlyIncome: -500, statedGoal: "x" }], // negative
-      [{ monthlyIncome: 999_999_999, statedGoal: "x" }], // absurdly high
-      [{ monthlyIncome: "not a number", statedGoal: "x" }],
-      [{ monthlyIncome: 100_000, statedGoal: "" }], // missing goal
-      [{ statedGoal: "x" }], // missing income
+      [{ difficulty: "x", priorAttempts: "y" }], // missing statedGoal
+      [{ statedGoal: "x", priorAttempts: "y" }], // missing difficulty
+      [{ statedGoal: "x", difficulty: "y" }], // missing priorAttempts
+      [{ statedGoal: "", difficulty: "y", priorAttempts: "z" }],
+      [null],
+      ["not an object"],
     ])("rejects: %p", (args) => {
       expect(validator.validateMoneyStory(args).accepted).toBe(false);
     });
-  });
-
-  describe("validateReflectionContext", () => {
-    it("accepts city alone (age optional)", () => {
-      const result = validator.validateReflectionContext({ city: "Abuja" });
-      expect(result).toEqual({
-        accepted: true,
-        cleanedValue: { city: "Abuja", age: undefined },
-      });
-    });
-
-    it("accepts city with a plausible age", () => {
-      const result = validator.validateReflectionContext({
-        city: "Lagos",
-        age: 26,
-      });
-      expect(result.cleanedValue).toEqual({ city: "Lagos", age: 26 });
-    });
-
-    it("rejects a missing city", () => {
-      expect(validator.validateReflectionContext({ age: 26 }).accepted).toBe(
-        false,
-      );
-    });
-
-    it.each([[5], [150], ["not a number"]])(
-      "rejects an implausible age: %p",
-      (age) => {
-        expect(
-          validator.validateReflectionContext({ city: "Lagos", age }).accepted,
-        ).toBe(false);
-      },
-    );
   });
 });

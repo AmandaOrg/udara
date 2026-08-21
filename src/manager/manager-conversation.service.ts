@@ -75,7 +75,7 @@ export class ManagerConversationService {
 
     await this.whatsapp.sendText(
       user.whatsappNumber,
-      "The managers have received your request. We'll get back to you shortly — and note that any change still can't take effect for at least a few days from today, regardless of how it's framed.",
+      "The managers have received your request. We'll get back to you shortly, and note that any change still can't take effect for at least a few days from today, regardless of how it's framed.",
       user.id,
     );
 
@@ -117,8 +117,8 @@ export class ManagerConversationService {
   ): Promise<string> {
     const eligibleAtText = request.eligibleAt.toDateString();
     const goalContext = user.statedGoal
-      ? `On ${user.statedGoalSetAt ? user.statedGoalSetAt.toDateString() : "an earlier date"}, this user told Kedu their goal was: "${user.statedGoal}".`
-      : "This user has not stated a goal yet — don't invent one.";
+      ? `On ${user.statedGoalSetAt ? user.statedGoalSetAt.toDateString() : "an earlier date"}, this user told Udara their goal was: "${user.statedGoal}".`
+      : "This user has not stated a goal yet, so don't invent one.";
 
     const contextMessage: LlmMessage = {
       role: "system",
@@ -129,7 +129,7 @@ export class ManagerConversationService {
           ? `Reason given: "${request.reason}"`
           : "No reason given.",
         goalContext,
-        `This request becomes eligible for a decision on ${eligibleAtText}, not before — this date is fixed and non-negotiable, state it plainly.`,
+        `This request becomes eligible for a decision on ${eligibleAtText}, not before. This date is fixed and non-negotiable, state it plainly.`,
         "Write the initial reply now: acknowledge the request, reference their stated goal if one was given, and state the eligibility date plainly.",
       ].join("\n"),
     };
@@ -221,7 +221,7 @@ export class ManagerConversationService {
       updated.type === SettingsChangeType.EXIT_RESTRICTIONS
     ) {
       lines.push(
-        "Your account has returned to normal — no window or override-fee restrictions apply anymore.",
+        "Your account has returned to normal, no window or override-fee restrictions apply anymore.",
       );
     }
     await this.whatsapp.sendText(user.whatsappNumber, lines.join(" "), user.id);
