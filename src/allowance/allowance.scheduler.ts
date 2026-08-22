@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AllowanceService } from "./allowance.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { NudgeType, User } from "@prisma/client";
+import { getWatHour, startOfWatDayInstant } from "../common/wat-time.util";
 
 const FREE_FORM_WINDOW_MS = 24 * 60 * 60 * 1000; // Meta blocks free-form sends past 24h since the user's last inbound message
 
@@ -52,16 +53,17 @@ export class AllowanceScheduler {
   }
 
   /**
-   * Fires once per user per calendar day, at their own windowStartHour
-   * (per-user overridable, defaults to 11 per DAILY_WINDOW_START_HOUR).
-   * NudgeLog is the dedup key so a scheduler restart or overlapping tick
-   * can't double-send.
+   * Fires once per user per calendar day, at their own windowStartHour (a
+   * WAT wall-clock hour, per-user overridable, defaults to 11 per
+   * DAILY_WINDOW_START_HOUR — see wat-time.util for why this is read via
+   * getWatHour rather than Date's local getters). NudgeLog is the dedup key
+   * so a scheduler restart or overlapping tick can't double-send.
    */
   @Cron(CronExpression.EVERY_HOUR)
   async sendWindowOpenNudges() {
     const now = new Date();
-    const hour = now.getHours();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const hour = getWatHour(now);
+    const today = startOfWatDayInstant(now);
 
     const dueUsers = await this.findActiveUsers({ windowStartHour: hour });
     if (dueUsers.length === 0) return;

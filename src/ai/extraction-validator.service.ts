@@ -19,6 +19,17 @@ export interface MoneyStoryFields {
   priorAttempts: string;
 }
 
+export type MenuIntent =
+  "BALANCE" | "LIMITS" | "ACCOUNT_DETAILS" | "TRANSFER" | "NONE";
+
+const MENU_INTENT_VALUES: ReadonlySet<string> = new Set([
+  "BALANCE",
+  "LIMITS",
+  "ACCOUNT_DETAILS",
+  "TRANSFER",
+  "NONE",
+]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -110,5 +121,24 @@ export class ExtractionValidatorService {
       accepted: true,
       cleanedValue: { statedGoal, difficulty, priorAttempts },
     };
+  }
+
+  /**
+   * Not extraction — a closed-set classification result (see
+   * IntentRouterService/menu-intent.prompts.ts). Same boundary role though:
+   * IntentRouterService never trusts a tool call's shape without this
+   * passing first, same as onboarding's writes never trust a tool call
+   * without validateQuickQuestions/validateMoneyStory passing first.
+   */
+  validateMenuIntent(args: unknown): ValidationOutcome<MenuIntent> {
+    if (!isRecord(args))
+      return { accepted: false, reason: "malformed tool call" };
+
+    const intent = args.intent;
+    if (typeof intent !== "string" || !MENU_INTENT_VALUES.has(intent)) {
+      return { accepted: false, reason: "intent is missing or unrecognized" };
+    }
+
+    return { accepted: true, cleanedValue: intent as MenuIntent };
   }
 }

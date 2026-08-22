@@ -18,6 +18,17 @@ export interface LlmCompleteParams {
   messages: LlmMessage[];
   /** Set to request structured output via this tool. Unset means "free-text persona reply." */
   tool?: JsonSchemaToolDef;
+  /**
+   * When true (only meaningful alongside `tool`), the provider must request
+   * a genuine forced tool call — not "auto," where the model is free to
+   * reply in text instead. Use this for closed-set classification (e.g.
+   * IntentRouterService) where "the model decided to just talk instead of
+   * calling the tool" is exactly the failure mode being guarded against, not
+   * a plausible valid outcome. Extraction call sites (onboarding) should
+   * keep this unset — "auto" is correct there, since free text IS a valid
+   * outcome (the model pushing back on a vague answer).
+   */
+  forceTool?: boolean;
   temperature?: number;
   maxTokens?: number;
   purpose: LlmCallPurpose;

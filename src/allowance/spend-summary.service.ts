@@ -1,6 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RecipientLabel, TransactionStatus } from "@prisma/client";
+import {
+  getWatDateParts,
+  startOfWatIsoWeekInstant,
+} from "../common/wat-time.util";
 
 export interface WeeklySpendSummary {
   weekStartDate: Date;
@@ -10,27 +14,14 @@ export interface WeeklySpendSummary {
   transactionCount: number;
 }
 
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
-// Deliberately NOT startOfDay(d).toISOString().slice(0, 10) — that round-trips a
-// local-midnight Date through UTC serialization and is off by one day in any
-// positive-UTC-offset timezone (see the flagged AllowanceService/WindowService
-// timezone bug). This formats the local calendar date directly instead.
-function formatLocalDate(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function startOfIsoWeek(d: Date): Date {
-  const date = startOfDay(d);
-  const day = date.getDay();
-  const diff = (day === 0 ? -6 : 1) - day;
-  date.setDate(date.getDate() + diff);
-  return date;
+// The WAT calendar date a transaction falls on, as a "YYYY-MM-DD" grouping
+// key. WAT-anchored (not the process's local timezone, not a UTC round-trip
+// of a local Date) — the root fix for what used to be worked around here as
+// "the flagged AllowanceService/WindowService timezone bug"; see
+// wat-time.util.ts for why that ambient-timezone dependency was wrong.
+function formatWatDate(d: Date): string {
+  const { year, month, day } = getWatDateParts(d);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 /**
@@ -47,7 +38,7 @@ export class SpendSummaryService {
     userId: string,
     now: Date = new Date(),
   ): Promise<WeeklySpendSummary> {
-    const weekStartDate = startOfIsoWeek(now);
+    const weekStartDate = startOfWatIsoWeekInstant(now);
 
     const transactions = await this.prisma.transaction.findMany({
       where: {
@@ -66,7 +57,7 @@ export class SpendSummaryService {
       const amount = Number(txn.amount);
       totalSpent += amount;
 
-      const dayKey = formatLocalDate(txn.createdAt);
+      const dayKey = formatWatDate(txn.createdAt);
       byDayMap.set(dayKey, (byDayMap.get(dayKey) ?? 0) + amount);
 
       const label = txn.recipient.label;

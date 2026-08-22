@@ -39,9 +39,11 @@ interface OpenRouterResponse {
  * Anthropic classifier/conversation API keys can).
  *
  * Structured output uses OpenAI-style function calling: when params.tool is
- * set, it's offered as a single function with tool_choice: 'auto' — same
- * "presence/absence of a tool call is the usable-answer signal" contract as
- * the Anthropic provider (see llm.types.ts).
+ * set, it's offered as a single function with tool_choice: 'auto' by default
+ * — same "presence/absence of a tool call is the usable-answer signal"
+ * contract as the Anthropic provider (see llm.types.ts). When
+ * params.forceTool is also set, tool_choice becomes the forced-function form
+ * instead, for closed-set classification callers (IntentRouterService).
  */
 export class OpenRouterLlmService implements LlmService {
   private readonly logger = new Logger(`OpenRouterLlmService(${this.role})`);
@@ -109,7 +111,9 @@ export class OpenRouterLlmService implements LlmService {
           },
         },
       ];
-      body.tool_choice = "auto";
+      body.tool_choice = params.forceTool
+        ? { type: "function", function: { name: params.tool.name } }
+        : "auto";
     }
 
     const start = Date.now();

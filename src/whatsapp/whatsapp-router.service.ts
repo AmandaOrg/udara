@@ -13,6 +13,7 @@ import {
 } from "./transfer-confirmation.service";
 import { ManagerConversationService } from "../manager/manager-conversation.service";
 import { KeduChatService } from "./kedu-chat.service";
+import { IntentRouterService } from "./intent-router.service";
 import {
   AccountActionsService,
   BANK_BUTTON_PREFIX,
@@ -62,6 +63,7 @@ export class WhatsappRouterService {
     private readonly managerConversation: ManagerConversationService,
     private readonly keduChat: KeduChatService,
     private readonly accountActions: AccountActionsService,
+    private readonly intentRouter: IntentRouterService,
   ) {}
 
   async route(message: WhatsappMessage): Promise<void> {
@@ -236,9 +238,17 @@ export class WhatsappRouterService {
    * For everyone else: an in-progress send-money wizard step takes priority
    * over everything (the next message IS that step's answer, not a new
    * command); then the structured stopgap commands/keyword shortcuts
-   * (interactive, deterministic — never the AI); free-text falls through to
-   * real Kedu-persona chat last, which is also where "increase my limit"
-   * and similar judgment calls stay (via the manager command/chat path).
+   * (interactive, deterministic, zero-latency — never the AI). Anything that
+   * still doesn't match goes through IntentRouterService as a last check
+   * before Kedu-persona chat: if the message's intent is clearly one of the
+   * four menu actions (just phrased differently than the exact keyword
+   * shortcuts above — "what's my balance", "send my landlord some money"),
+   * it's routed to the real deterministic handler instead of letting
+   * ungrounded chat guess at it. That classifier is deliberately narrow —
+   * see menu-intent.prompts.ts — anything about *changing* something
+   * (limits, window hours, restrictions) is NOT a match and falls through to
+   * chat exactly as before, which is also where "increase my limit" and
+   * similar judgment calls stay (via the manager command/chat path).
    */
   private async handleText(
     user: User,
@@ -305,6 +315,28 @@ export class WhatsappRouterService {
     if (/^help$|^menu$|^commands$/i.test(text.trim())) {
       await this.accountActions.sendMainMenu(user);
       return;
+    }
+
+    const intent = await this.intentRouter.classify(text, user.id);
+    switch (intent) {
+      case "BALANCE":
+        await this.accountActions.sendBalance(user);
+        return;
+      case "LIMITS":
+        await this.accountActions.sendLimitsStatus(user);
+        return;
+      case "ACCOUNT_DETAILS":
+        await this.accountActions.sendAccountDetails(user);
+        return;
+      case "TRANSFER":
+        // Always the guided wizard, never an attempt to also parse
+        // amount/recipient out of the free text — see the module docblock
+        // above and IntentRouterService's own docs for why.
+        await this.accountActions.startTransferWizard(user);
+        return;
+      case "NONE":
+      default:
+        break;
     }
 
     await this.keduChat.handleMessage(user, text);

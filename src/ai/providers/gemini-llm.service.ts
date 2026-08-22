@@ -89,6 +89,12 @@ interface GeminiResponse {
  * Gemini has no "system" role in `contents` — system messages are collected
  * into the separate top-level `systemInstruction` field instead, and
  * assistant turns use role "model" rather than "assistant".
+ *
+ * Structured output uses Gemini's function calling: when params.tool is set,
+ * toolConfig defaults to `mode: "AUTO"` — the model may call it or just
+ * reply in text. When params.forceTool is also set, mode becomes "ANY"
+ * (restricted to this one function via allowedFunctionNames) — a genuinely
+ * forced call, for closed-set classification callers (IntentRouterService).
  */
 export class GeminiLlmService implements LlmService {
   private readonly logger = new Logger(`GeminiLlmService(${this.role})`);
@@ -156,7 +162,14 @@ export class GeminiLlmService implements LlmService {
           ],
         },
       ];
-      body.toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+      body.toolConfig = params.forceTool
+        ? {
+            functionCallingConfig: {
+              mode: "ANY",
+              allowedFunctionNames: [params.tool.name],
+            },
+          }
+        : { functionCallingConfig: { mode: "AUTO" } };
     }
 
     const start = Date.now();

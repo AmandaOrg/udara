@@ -14,11 +14,14 @@ import {
  * see ai.module.ts for why this isn't a plain @Injectable() class.
  *
  * Structured output uses Anthropic's tool-use: when params.tool is set, the
- * tool is offered with tool_choice: 'auto' — the model calls it only when it
- * has enough to fill the schema confidently, and replies in free text
- * otherwise. That presence/absence of a tool_use block on the response *is*
- * the "is this answer usable" signal (see llm.types.ts) — not an extra
- * self-reported field the model could get wrong.
+ * tool is offered with tool_choice: 'auto' by default — the model calls it
+ * only when it has enough to fill the schema confidently, and replies in
+ * free text otherwise. That presence/absence of a tool_use block on the
+ * response *is* the "is this answer usable" signal (see llm.types.ts) — not
+ * an extra self-reported field the model could get wrong. When
+ * params.forceTool is also set, tool_choice becomes `{ type: "tool", name }`
+ * instead — a genuinely forced call, for closed-set classification callers
+ * (IntentRouterService) where "replied in text instead" isn't a valid outcome.
  */
 export class AnthropicLlmService implements LlmService {
   private readonly logger = new Logger(`AnthropicLlmService(${this.role})`);
@@ -77,7 +80,11 @@ export class AnthropicLlmService implements LlmService {
             },
           ]
         : undefined,
-      tool_choice: params.tool ? { type: "auto" } : undefined,
+      tool_choice: params.tool
+        ? params.forceTool
+          ? { type: "tool", name: params.tool.name }
+          : { type: "auto" }
+        : undefined,
     });
     const latencyMs = Date.now() - start;
 

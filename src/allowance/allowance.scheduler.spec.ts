@@ -24,7 +24,10 @@ describe("AllowanceScheduler", () => {
   }
 
   beforeEach(() => {
-    jest.useFakeTimers().setSystemTime(new Date(2026, 0, 8, 11, 0, 0)); // 11 AM local
+    // An explicit UTC instant (never the local Date constructor) that is
+    // 11 AM WAT — this is what actually exercises getWatHour's WAT-anchoring
+    // (see wat-time.util.ts) regardless of the machine/CI's own timezone.
+    jest.useFakeTimers().setSystemTime(new Date("2026-01-08T10:00:00Z"));
     prisma = {
       user: { findMany: jest.fn() },
       nudgeLog: {

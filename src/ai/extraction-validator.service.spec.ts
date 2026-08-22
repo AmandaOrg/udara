@@ -119,4 +119,25 @@ describe("ExtractionValidatorService", () => {
       expect(validator.validateMoneyStory(args).accepted).toBe(false);
     });
   });
+
+  describe("validateMenuIntent", () => {
+    it.each(["BALANCE", "LIMITS", "ACCOUNT_DETAILS", "TRANSFER", "NONE"])(
+      "accepts %s",
+      (intent) => {
+        const result = validator.validateMenuIntent({ intent });
+        expect(result).toEqual({ accepted: true, cleanedValue: intent });
+      },
+    );
+
+    it.each([
+      [{ intent: "DEFINITELY_NOT_REAL" }],
+      [{ intent: "balance" }], // wrong case — the enum is uppercase only
+      [{ intent: 123 }],
+      [{}],
+      [null],
+      ["not an object"],
+    ])("rejects: %p", (args) => {
+      expect(validator.validateMenuIntent(args).accepted).toBe(false);
+    });
+  });
 });

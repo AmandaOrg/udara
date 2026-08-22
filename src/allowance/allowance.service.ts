@@ -8,18 +8,10 @@ import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
 import { TransactionStatus, User } from "@prisma/client";
-
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
-function startOfIsoWeek(d: Date): Date {
-  const date = startOfDay(d);
-  const day = date.getDay(); // 0 = Sunday
-  const diff = (day === 0 ? -6 : 1) - day; // shift to Monday
-  date.setDate(date.getDate() + diff);
-  return date;
-}
+import {
+  watDateBucketKey,
+  startOfWatIsoWeekBucketKey,
+} from "../common/wat-time.util";
 
 @Injectable()
 export class AllowanceService {
@@ -53,7 +45,7 @@ export class AllowanceService {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
     });
-    const today = startOfDay(new Date());
+    const today = watDateBucketKey(new Date());
 
     const existing = await this.prisma.dailyAllowance.findUnique({
       where: { userId_date: { userId, date: today } },
@@ -62,16 +54,19 @@ export class AllowanceService {
 
     const dailyAmount = this.computeDailyAmount(user);
 
+    // today is a UTC-midnight bucket key (see watDateBucketKey) — step it
+    // back a calendar day via the UTC setter, not the local one, or this
+    // would silently reintroduce a process-timezone dependency.
     const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
     const yesterdayAllowance = await this.prisma.dailyAllowance.findUnique({
       where: { userId_date: { userId, date: yesterday } },
     });
 
     const sameWeek =
       yesterdayAllowance &&
-      startOfIsoWeek(yesterdayAllowance.date).getTime() ===
-        startOfIsoWeek(today).getTime();
+      startOfWatIsoWeekBucketKey(yesterdayAllowance.date).getTime() ===
+        startOfWatIsoWeekBucketKey(today).getTime();
 
     const surplus =
       sameWeek && yesterdayAllowance
@@ -84,7 +79,7 @@ export class AllowanceService {
       data: {
         userId,
         date: today,
-        weekStartDate: startOfIsoWeek(today),
+        weekStartDate: startOfWatIsoWeekBucketKey(today),
         amountAllocated: dailyAmount,
         surplusCarriedIn: Math.max(surplus, 0),
       },
@@ -185,7 +180,7 @@ export class AllowanceService {
     // Attribute the spend to the day the transaction was created, not "now" —
     // the caller (a Rubies webhook or the TSQ reconciliation job) may run well
     // after midnight relative to when the user actually confirmed the spend.
-    const spendDay = startOfDay(transaction.createdAt);
+    const spendDay = watDateBucketKey(transaction.createdAt);
     const allowance = await this.prisma.dailyAllowance.findUnique({
       where: { userId_date: { userId: transaction.userId, date: spendDay } },
     });

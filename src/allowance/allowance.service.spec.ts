@@ -28,9 +28,15 @@ describe("AllowanceService", () => {
   };
 
   const userId = "user-1";
-  const today = new Date(2026, 0, 8); // a Thursday
-  const withinWindowNow = new Date(2026, 0, 8, 15, 0); // 3 PM, inside 11-20
-  const outsideWindowNow = new Date(2026, 0, 8, 21, 0); // 9 PM, outside 11-20
+  // Explicit UTC instants (never the local Date constructor) with the WAT
+  // wall-clock equivalent noted — this is what actually exercises
+  // WindowService's WAT-anchoring (see wat-time.util.ts) and keeps the suite
+  // deterministic regardless of the machine/CI's own timezone. A
+  // local-constructor fixture would coincidentally pass here even with the
+  // shipped production bug reintroduced, on a WAT-timezone dev machine.
+  const today = new Date("2026-01-08T00:00:00Z"); // a Thursday, a @db.Date-style bucket key
+  const withinWindowNow = new Date("2026-01-08T14:00:00Z"); // 3 PM WAT, inside 11-20
+  const outsideWindowNow = new Date("2026-01-08T20:00:00Z"); // 9 PM WAT, outside 11-20
 
   function makeUser(
     overrides: Partial<{
@@ -187,7 +193,7 @@ describe("AllowanceService", () => {
         makeUser({ windowStartHour: 6, windowEndHour: 9 }),
       );
       prisma.dailyAllowance.findUnique.mockResolvedValue(makeAllowance());
-      const sevenAm = new Date(2026, 0, 8, 7, 0);
+      const sevenAm = new Date("2026-01-08T06:00:00Z"); // 7 AM WAT
 
       const result = await service.evaluateSpend(userId, 1_000, sevenAm);
 
@@ -249,7 +255,7 @@ describe("AllowanceService", () => {
       prisma.dailyAllowance.findUnique.mockResolvedValueOnce(
         // yesterday: overspent relative to allocation+surplus
         makeAllowance({
-          date: new Date(2026, 0, 7),
+          date: new Date("2026-01-07T00:00:00Z"),
           weekStartDate: today,
           amountAllocated: 1_000,
           surplusCarriedIn: 0,
