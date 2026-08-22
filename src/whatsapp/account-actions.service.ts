@@ -111,23 +111,8 @@ export class AccountActionsService {
   }
 
   async sendLimitsStatus(user: User): Promise<void> {
-    const allowance = await this.allowance.getOrCreateTodayAllowance(user.id);
-    const remainingToday =
-      Number(allowance.amountAllocated) +
-      Number(allowance.surplusCarriedIn) -
-      Number(allowance.amountSpent);
-
-    const weekRows = await this.prisma.dailyAllowance.findMany({
-      where: { userId: user.id, weekStartDate: allowance.weekStartDate },
-    });
-    const remainingWeek = weekRows.reduce(
-      (sum, row) =>
-        sum +
-        Number(row.amountAllocated) +
-        Number(row.surplusCarriedIn) -
-        Number(row.amountSpent),
-      0,
-    );
+    const { remainingToday, remainingWeek } =
+      await this.allowance.getRemainingSummary(user.id);
 
     const lines = [
       `today's remaining allowance: ₦${remainingToday.toLocaleString("en-NG")}`,

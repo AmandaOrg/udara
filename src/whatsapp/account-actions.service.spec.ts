@@ -76,7 +76,10 @@ function createFakeDraftStore() {
 
 describe("AccountActionsService", () => {
   let prisma: ReturnType<typeof createFakeDraftStore>;
-  let allowance: { getOrCreateTodayAllowance: jest.Mock };
+  let allowance: {
+    getOrCreateTodayAllowance: jest.Mock;
+    getRemainingSummary: jest.Mock;
+  };
   let windowService: {
     isWithinWindow: jest.Mock;
     hoursUntilWindowOpens: jest.Mock;
@@ -113,7 +116,10 @@ describe("AccountActionsService", () => {
 
   beforeEach(() => {
     prisma = createFakeDraftStore();
-    allowance = { getOrCreateTodayAllowance: jest.fn() };
+    allowance = {
+      getOrCreateTodayAllowance: jest.fn(),
+      getRemainingSummary: jest.fn(),
+    };
     windowService = {
       isWithinWindow: jest.fn().mockReturnValue(true),
       hoursUntilWindowOpens: jest.fn().mockReturnValue(3),
@@ -193,11 +199,10 @@ describe("AccountActionsService", () => {
 
   describe("sendLimitsStatus", () => {
     it("shows remaining today/week and window-open status", async () => {
-      allowance.getOrCreateTodayAllowance.mockResolvedValue({
-        amountAllocated: 10_000,
-        surplusCarriedIn: 0,
-        amountSpent: 2_000,
-        weekStartDate: new Date("2026-01-05"),
+      allowance.getRemainingSummary.mockResolvedValue({
+        allowance: {},
+        remainingToday: 8_000,
+        remainingWeek: 30_000,
       });
       windowService.isWithinWindow.mockReturnValue(true);
 
@@ -209,11 +214,10 @@ describe("AccountActionsService", () => {
     });
 
     it("shows time until reopen when the window is closed", async () => {
-      allowance.getOrCreateTodayAllowance.mockResolvedValue({
-        amountAllocated: 10_000,
-        surplusCarriedIn: 0,
-        amountSpent: 0,
-        weekStartDate: new Date("2026-01-05"),
+      allowance.getRemainingSummary.mockResolvedValue({
+        allowance: {},
+        remainingToday: 10_000,
+        remainingWeek: 40_000,
       });
       windowService.isWithinWindow.mockReturnValue(false);
       windowService.hoursUntilWindowOpens.mockReturnValue(5);
@@ -226,11 +230,10 @@ describe("AccountActionsService", () => {
     });
 
     it("says restrictions are off when disciplineExitedAt is set, without checking the window", async () => {
-      allowance.getOrCreateTodayAllowance.mockResolvedValue({
-        amountAllocated: 10_000,
-        surplusCarriedIn: 0,
-        amountSpent: 0,
-        weekStartDate: new Date("2026-01-05"),
+      allowance.getRemainingSummary.mockResolvedValue({
+        allowance: {},
+        remainingToday: 10_000,
+        remainingWeek: 40_000,
       });
 
       await service.sendLimitsStatus(

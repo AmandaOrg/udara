@@ -6,6 +6,7 @@ import {
   startOfWatIsoWeekBucketKey,
   startOfWatIsoWeekInstant,
   hoursUntilWatHour,
+  formatWatClockTime,
 } from "./wat-time.util";
 
 /**
@@ -102,6 +103,28 @@ describe("wat-time.util", () => {
     it("returns hours until tomorrow once the target hour has passed today", () => {
       // 20:00 UTC = 21:00 WAT -> 24 - 21 + 11 = 14
       expect(hoursUntilWatHour(11, new Date("2026-01-08T20:00:00Z"))).toBe(14);
+    });
+  });
+  describe("formatWatClockTime", () => {
+    it("formats an evening instant as a WAT 12-hour label", () => {
+      // 21:20 UTC = 22:20 WAT. This is the exact scenario from the reported
+      // bug: the model was told nothing and claimed 11am was 40 minutes away.
+      expect(formatWatClockTime(new Date("2026-01-08T21:20:00Z"))).toBe(
+        "10:20pm",
+      );
+    });
+
+    it("formats a morning instant", () => {
+      expect(formatWatClockTime(new Date("2026-01-08T10:05:00Z"))).toBe(
+        "11:05am",
+      );
+    });
+
+    it("is WAT-anchored, not UTC (the two differ by an hour)", () => {
+      // 23:30 UTC is already 00:30 the *next* day in WAT.
+      expect(formatWatClockTime(new Date("2026-01-08T23:30:00Z"))).toBe(
+        "12:30am",
+      );
     });
   });
 });

@@ -17,6 +17,7 @@ describe("AllowanceService", () => {
     dailyAllowance: {
       findUnique: jest.Mock;
       findUniqueOrThrow: jest.Mock;
+      findMany: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
     };
@@ -88,6 +89,7 @@ describe("AllowanceService", () => {
       dailyAllowance: {
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn(),
         update: jest.fn(),
       },
@@ -374,6 +376,44 @@ describe("AllowanceService", () => {
       prisma.dailyAllowance.findUnique.mockResolvedValue(null);
 
       await expect(service.recordSpend("txn-1")).rejects.toThrow();
+    });
+  });
+  describe("getRemainingSummary", () => {
+    it("nets allocation + carried surplus - spent for today, and sums the week", async () => {
+      prisma.dailyAllowance.findUnique.mockResolvedValue(
+        makeAllowance({
+          amountAllocated: 10_000,
+          surplusCarriedIn: 1_000,
+          amountSpent: 3_000,
+        }),
+      );
+      prisma.dailyAllowance.findMany.mockResolvedValue([
+        {
+          amountAllocated: 10_000,
+          surplusCarriedIn: 1_000,
+          amountSpent: 3_000,
+        },
+        { amountAllocated: 10_000, surplusCarriedIn: 0, amountSpent: 10_000 },
+        { amountAllocated: 10_000, surplusCarriedIn: 0, amountSpent: 0 },
+      ]);
+
+      const result = await service.getRemainingSummary(userId);
+
+      expect(result.remainingToday).toBe(8_000);
+      expect(result.remainingWeek).toBe(18_000);
+    });
+
+    it("scopes the week query to the current row's weekStartDate", async () => {
+      const weekStartDate = new Date("2026-01-05T00:00:00Z");
+      prisma.dailyAllowance.findUnique.mockResolvedValue(
+        makeAllowance({ weekStartDate }),
+      );
+
+      await service.getRemainingSummary(userId);
+
+      expect(prisma.dailyAllowance.findMany).toHaveBeenCalledWith({
+        where: { userId, weekStartDate },
+      });
     });
   });
 });

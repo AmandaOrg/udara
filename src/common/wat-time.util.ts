@@ -122,6 +122,23 @@ export function startOfWatIsoWeekInstant(date: Date): Date {
 }
 
 /**
+ * The current WAT wall-clock time as a short human label ("10:20pm"), for
+ * putting in front of the conversational model so it never has to guess what
+ * time it is. Lowercased and space-stripped to match Udara's texting voice.
+ */
+export function formatWatClockTime(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: WAT_TIME_ZONE,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  })
+    .format(date)
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
+/**
  * Hours remaining until the next WAT wall-clock occurrence of targetHour.
  * `<=`, not `<`: at the target hour itself, 0 hours remain (already open),
  * matching WindowService.isWithinWindow's `hour >= startHour`.

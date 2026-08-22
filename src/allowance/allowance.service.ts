@@ -87,6 +87,34 @@ export class AllowanceService {
   }
 
   /**
+   * Today's and this week's remaining spendable figures. Extracted so the
+   * two surfaces that report them — the deterministic "Limits" menu action
+   * and the conversational persona's grounding context — compute them from
+   * one place and can never quote different numbers for the same moment.
+   */
+  async getRemainingSummary(userId: string) {
+    const allowance = await this.getOrCreateTodayAllowance(userId);
+    const remainingToday =
+      Number(allowance.amountAllocated) +
+      Number(allowance.surplusCarriedIn) -
+      Number(allowance.amountSpent);
+
+    const weekRows = await this.prisma.dailyAllowance.findMany({
+      where: { userId, weekStartDate: allowance.weekStartDate },
+    });
+    const remainingWeek = weekRows.reduce(
+      (sum, row) =>
+        sum +
+        Number(row.amountAllocated) +
+        Number(row.surplusCarriedIn) -
+        Number(row.amountSpent),
+      0,
+    );
+
+    return { allowance, remainingToday, remainingWeek };
+  }
+
+  /**
    * Determines whether a requested spend is NORMAL / EARLY_ACCESS / BORROWED,
    * and what it would cost. Does not move money — callers execute via Rubies
    * only after the user confirms (pre-transfer confirmation, PRD section 4a/5).
