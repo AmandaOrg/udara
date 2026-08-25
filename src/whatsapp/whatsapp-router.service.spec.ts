@@ -2,13 +2,10 @@ import { WhatsappRouterService } from "./whatsapp-router.service";
 import { OnboardingStage, WhatsappMessageType } from "@prisma/client";
 
 /**
- * Focused on the classify-before-chat step (IntentRouterService): free text
- * that doesn't match one of the fast keyword/regex shortcuts but whose
- * intent is one of the four menu actions must reach the real deterministic
- * handler, not KeduChatService's ungrounded persona chat. A NONE
- * classification must still fall through to chat exactly as before.
+ * Free-text fallthrough goes through Orchestrator + ActionExecutor.
+ * Exact keyword shortcuts and wizard drafts stay deterministic.
  */
-describe("WhatsappRouterService — intent-classified free text", () => {
+describe("WhatsappRouterService — orchestrator free text", () => {
   let prisma: {
     user: { findUnique: jest.Mock; update: jest.Mock; create: jest.Mock };
   };
@@ -17,16 +14,16 @@ describe("WhatsappRouterService — intent-classified free text", () => {
   let spendSummary: Record<string, jest.Mock>;
   let transferConfirmation: Record<string, jest.Mock>;
   let managerConversation: Record<string, jest.Mock>;
-  let keduChat: { handleMessage: jest.Mock };
   let accountActions: Record<string, jest.Mock>;
-  let intentRouter: { classify: jest.Mock };
   let pinGate: { handlePinFlowReply: jest.Mock };
+  let orchestrator: { handleMessage: jest.Mock };
+  let actionExecutor: { execute: jest.Mock };
   let service: WhatsappRouterService;
 
   const user = {
     id: "user-1",
     whatsappNumber: "234801",
-    onboardingStage: OnboardingStage.ACCOUNT_CREATED, // post-onboarding, so the classify step is reachable
+    onboardingStage: OnboardingStage.ACCOUNT_CREATED,
   };
 
   function makeMessage(textBody: string) {
@@ -60,7 +57,6 @@ describe("WhatsappRouterService — intent-classified free text", () => {
       executeVerifiedTransfer: jest.fn().mockResolvedValue(undefined),
     };
     managerConversation = { fileChangeRequest: jest.fn() };
-    keduChat = { handleMessage: jest.fn().mockResolvedValue(undefined) };
     accountActions = {
       getActiveDraft: jest.fn().mockResolvedValue(null),
       sendBalance: jest.fn().mockResolvedValue(undefined),
@@ -68,9 +64,11 @@ describe("WhatsappRouterService — intent-classified free text", () => {
       sendAccountDetails: jest.fn().mockResolvedValue(undefined),
       startTransferWizard: jest.fn().mockResolvedValue(undefined),
       sendMainMenu: jest.fn().mockResolvedValue(undefined),
+      handleWizardText: jest.fn().mockResolvedValue(undefined),
     };
-    intentRouter = { classify: jest.fn() };
     pinGate = { handlePinFlowReply: jest.fn() };
+    orchestrator = { handleMessage: jest.fn() };
+    actionExecutor = { execute: jest.fn().mockResolvedValue(undefined) };
 
     service = new WhatsappRouterService(
       prisma as any,
@@ -79,77 +77,41 @@ describe("WhatsappRouterService — intent-classified free text", () => {
       spendSummary as any,
       transferConfirmation as any,
       managerConversation as any,
-      keduChat as any,
       accountActions as any,
-      intentRouter as any,
       pinGate as any,
+      orchestrator as any,
+      actionExecutor as any,
     );
   });
 
-  it("routes a naturally-phrased balance question to the real balance handler, not chat", async () => {
-    intentRouter.classify.mockResolvedValue("BALANCE");
+  it("routes free text through orchestrator then action executor", async () => {
+    const orchResult = {
+      message: "pulling that up",
+      surfaceKey: "balance_read",
+      ok: true,
+    };
+    orchestrator.handleMessage.mockResolvedValue(orchResult);
 
     await service.route(makeMessage("hey what's my balance right now?"));
 
-    expect(intentRouter.classify).toHaveBeenCalledWith(
-      "hey what's my balance right now?",
-      "user-1",
-    );
-    expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
-    expect(keduChat.handleMessage).not.toHaveBeenCalled();
-  });
-
-  it("routes a naturally-phrased limits question to the real limits handler, not chat", async () => {
-    intentRouter.classify.mockResolvedValue("LIMITS");
-
-    await service.route(makeMessage("what's my daily limit status right now"));
-
-    expect(accountActions.sendLimitsStatus).toHaveBeenCalledWith(user);
-    expect(keduChat.handleMessage).not.toHaveBeenCalled();
-  });
-
-  it("routes a naturally-phrased account-details question to the real handler, not chat", async () => {
-    intentRouter.classify.mockResolvedValue("ACCOUNT_DETAILS");
-
-    await service.route(makeMessage("what's my account number again"));
-
-    expect(accountActions.sendAccountDetails).toHaveBeenCalledWith(user);
-    expect(keduChat.handleMessage).not.toHaveBeenCalled();
-  });
-
-  it("starts the guided transfer wizard for free-text transfer intent, never attempting to parse the details itself", async () => {
-    intentRouter.classify.mockResolvedValue("TRANSFER");
-
-    await service.route(makeMessage("I want to send my landlord some money"));
-
-    expect(accountActions.startTransferWizard).toHaveBeenCalledWith(user);
-    expect(transferConfirmation.initiateTransfer).not.toHaveBeenCalled();
-    expect(keduChat.handleMessage).not.toHaveBeenCalled();
-  });
-
-  it("still falls through to KeduChatService when the classifier returns NONE", async () => {
-    intentRouter.classify.mockResolvedValue("NONE");
-
-    await service.route(makeMessage("lol you're funny"));
-
-    expect(keduChat.handleMessage).toHaveBeenCalledWith(
+    expect(orchestrator.handleMessage).toHaveBeenCalledWith(
       user,
-      "lol you're funny",
+      "hey what's my balance right now?",
     );
+    expect(actionExecutor.execute).toHaveBeenCalledWith(user, orchResult);
     expect(accountActions.sendBalance).not.toHaveBeenCalled();
-    expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
   });
 
-  it("never reaches the classifier for an exact keyword shortcut (fast path stays fast)", async () => {
+  it("never reaches the orchestrator for an exact keyword shortcut", async () => {
     await service.route(makeMessage("balance"));
 
     expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
-    expect(intentRouter.classify).not.toHaveBeenCalled();
+    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    expect(actionExecutor.execute).not.toHaveBeenCalled();
   });
 
-  it("never reaches the classifier while an in-progress transfer-wizard draft owns the next message", async () => {
+  it("never reaches the orchestrator while an active transfer draft owns the turn", async () => {
     accountActions.getActiveDraft.mockResolvedValue({ id: "draft-1" });
-    accountActions.handleWizardText = jest.fn().mockResolvedValue(undefined);
 
     await service.route(makeMessage("50000"));
 
@@ -158,10 +120,10 @@ describe("WhatsappRouterService — intent-classified free text", () => {
       "draft-1",
       "50000",
     );
-    expect(intentRouter.classify).not.toHaveBeenCalled();
+    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
   });
 
-  it("never reaches the classifier for a pre-account (onboarding) user — onboarding is unaffected", async () => {
+  it("never reaches the orchestrator for a pre-account onboarding user", async () => {
     const onboardingUser = {
       ...user,
       onboardingStage: OnboardingStage.MONEY_STORY,
@@ -175,22 +137,23 @@ describe("WhatsappRouterService — intent-classified free text", () => {
       onboardingUser,
       "I'm trying to save for a car",
     );
-    expect(intentRouter.classify).not.toHaveBeenCalled();
-    expect(keduChat.handleMessage).not.toHaveBeenCalled();
+    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
   });
 
-  it("a settings-change request that isn't the exact manager command falls through to chat, same as before — the classifier must not intercept it", async () => {
-    intentRouter.classify.mockResolvedValue("NONE");
+  it("passes casual chat through orchestrator (settings talk is not intercepted by shortcuts)", async () => {
+    orchestrator.handleMessage.mockResolvedValue({
+      message: "I hear you — managers can look at that",
+      ok: true,
+    });
 
     await service.route(makeMessage("can you loosen my limits please"));
 
     expect(managerConversation.fileChangeRequest).not.toHaveBeenCalled();
     expect(accountActions.sendLimitsStatus).not.toHaveBeenCalled();
-    expect(keduChat.handleMessage).toHaveBeenCalledWith(
-      user,
-      "can you loosen my limits please",
-    );
+    expect(orchestrator.handleMessage).toHaveBeenCalled();
+    expect(actionExecutor.execute).toHaveBeenCalled();
   });
+
   describe("PIN flow replies", () => {
     function flowMessage() {
       return {
@@ -238,8 +201,6 @@ describe("WhatsappRouterService — intent-classified free text", () => {
     });
 
     it("routes a KYC submission to onboarding, not the PIN gate", async () => {
-      // findOrCreateUser returns the *update* result (it stamps
-      // lastInboundMessageAt), so the stage has to come from there.
       const kycUser = { ...user, onboardingStage: "PLAN_PROPOSED" };
       prisma.user.findUnique.mockResolvedValue(kycUser);
       prisma.user.update.mockResolvedValue(kycUser);

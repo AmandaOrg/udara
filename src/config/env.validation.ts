@@ -99,6 +99,34 @@ class EnvironmentVariables {
   @IsString()
   CONVERSATION_MODEL_NAME?: string;
 
+  @IsOptional()
+  @IsString()
+  BEDROCK_BASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  BEDROCK_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  AWS_BEARER_TOKEN_BEDROCK?: string;
+
+  @IsOptional()
+  @IsString()
+  OPENAI_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  OPENAI_BASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  BEDROCK_FAST_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  BEDROCK_MODEL?: string;
+
   @IsInt()
   @Min(0)
   @Max(23)

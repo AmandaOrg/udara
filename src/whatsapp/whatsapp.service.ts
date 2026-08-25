@@ -46,6 +46,12 @@ export class WhatsappService {
   }
 
   private async post(body: Record<string, unknown>): Promise<MetaSendResponse> {
+    // Local/e2e escape hatch — same philosophy as RUBIES_DRY_RUN: exercise the
+    // full inbound→route→send path without calling Meta Graph API.
+    if (this.config.get<string>("WHATSAPP_DRY_RUN") === "true") {
+      return { messages: [{ id: `wamid.dryrun.${Date.now()}` }] };
+    }
+
     const response = await firstValueFrom(
       this.http.post<MetaSendResponse>(
         `https://graph.facebook.com/v19.0/${this.phoneNumberId}/messages`,

@@ -4,6 +4,7 @@ import { CLASSIFIER_LLM, CONVERSATION_LLM } from "./llm.types";
 import { AnthropicLlmService } from "./providers/anthropic-llm.service";
 import { OpenRouterLlmService } from "./providers/openrouter-llm.service";
 import { GeminiLlmService } from "./providers/gemini-llm.service";
+import { BedrockLlmService } from "./providers/bedrock-llm.service";
 import { StubLlmService } from "./providers/stub-llm.service";
 import { ExtractionValidatorService } from "./extraction-validator.service";
 import { LlmCallLoggerService } from "./llm-call-logger.service";
@@ -15,10 +16,9 @@ import { LlmCallLoggerService } from "./llm-call-logger.service";
  * present in .env.example (the CLASSIFIER_MODEL_ and CONVERSATION_MODEL_ prefixed var pairs).
  * useFactory (not a plain @Injectable class) because AnthropicLlmService
  * needs two differently-configured instances, not one shared singleton.
- * "gemini" is a fourth provider option (see gemini-llm.service.ts) — same
- * shared-key/fast-model-vs-model split as "openrouter", using GOOGLE_API_KEY/
- * GEMINI_FAST_MODEL/GEMINI_MODEL instead of the generic CLASSIFIER_MODEL_/
- * CONVERSATION_MODEL_ var pair (which stays Anthropic-shaped).
+ * "gemini" / "bedrock" use the same shared-key/fast-vs-model split as
+ * "openrouter" (provider-specific env vars), not the Anthropic-shaped
+ * CLASSIFIER_MODEL_/CONVERSATION_MODEL_ pair.
  */
 function llmProvider(role: "classifier" | "conversation"): Provider {
   const token = role === "classifier" ? CLASSIFIER_LLM : CONVERSATION_LLM;
@@ -41,6 +41,9 @@ function llmProvider(role: "classifier" | "conversation"): Provider {
       }
       if (provider === "gemini") {
         return new GeminiLlmService(config, role);
+      }
+      if (provider === "bedrock") {
+        return new BedrockLlmService(config, role);
       }
       return new StubLlmService();
     },

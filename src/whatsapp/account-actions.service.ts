@@ -181,7 +181,10 @@ export class AccountActionsService {
     });
   }
 
-  async startTransferWizard(user: User): Promise<void> {
+  async startTransferWizard(
+    user: User,
+    hints?: { amount?: number },
+  ): Promise<void> {
     if (!user.rubiesAccountNumber) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
@@ -196,6 +199,29 @@ export class AccountActionsService {
       where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
       data: { status: TransferDraftStatus.CANCELLED },
     });
+
+    const amount =
+      typeof hints?.amount === "number" &&
+      Number.isFinite(hints.amount) &&
+      hints.amount > 0
+        ? hints.amount
+        : undefined;
+
+    if (amount !== undefined) {
+      await this.prisma.transferDraft.create({
+        data: {
+          userId: user.id,
+          amount,
+          step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
+        },
+      });
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        `got it, ₦${amount.toLocaleString("en-NG")}. what's the recipient's 10-digit account number?`,
+        user.id,
+      );
+      return;
+    }
 
     await this.prisma.transferDraft.create({
       data: { userId: user.id, step: TransferDraftStep.AWAITING_AMOUNT },

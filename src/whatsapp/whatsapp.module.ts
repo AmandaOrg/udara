@@ -12,6 +12,8 @@ import { KeduChatService } from "./kedu-chat.service";
 import { AccountActionsService } from "./account-actions.service";
 import { IntentRouterService } from "./intent-router.service";
 import { PinGateService } from "./pin-gate.service";
+import { ActionExecutorService } from "../orchestrator/action-executor.service";
+import { OrchestratorModule } from "../orchestrator/orchestrator.module";
 import { PinModule } from "../pin/pin.module";
 import { AllowanceModule } from "../allowance/allowance.module";
 import { RubiesModule } from "../rubies/rubies.module";
@@ -24,6 +26,7 @@ import { AiModule } from "../ai/ai.module";
   imports: [
     HttpModule,
     AiModule,
+    OrchestratorModule,
     PinModule,
     // forwardRef: AllowanceModule's AllowanceScheduler needs WhatsappService back
     // (window-open nudge, Phase 9) — see allowance.module.ts for the other half.
@@ -48,10 +51,13 @@ import { AiModule } from "../ai/ai.module";
     TransferConfirmationService,
     TransferReconciliationScheduler,
     ChunkedMessengerService,
+    // Kept registered for existing unit specs; live router path no longer uses them.
     KeduChatService,
     AccountActionsService,
     IntentRouterService,
     PinGateService,
+    // Needs WhatsApp/account deps — provided here, not in OrchestratorModule.
+    ActionExecutorService,
   ],
   exports: [
     WhatsappService,

@@ -1,0 +1,10 @@
+{
+  "message": "Got it — I'll pull up the transfer form.",
+  "action": {
+    "type": "show_surface",
+    "surface_key": "transfer_wizard",
+    "confidence": "high",
+    "extracted_hints": { "amount": 5000, "label_hint": "RENT" },
+    "reasoning": "CLI sample fixture"
+  }
+}

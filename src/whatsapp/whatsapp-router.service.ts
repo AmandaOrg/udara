@@ -12,8 +12,8 @@ import {
   CANCEL_BUTTON_PREFIX,
 } from "./transfer-confirmation.service";
 import { ManagerConversationService } from "../manager/manager-conversation.service";
-import { KeduChatService } from "./kedu-chat.service";
-import { IntentRouterService } from "./intent-router.service";
+import { OrchestratorService } from "../orchestrator/orchestrator.service";
+import { ActionExecutorService } from "../orchestrator/action-executor.service";
 import {
   AccountActionsService,
   BANK_BUTTON_PREFIX,
@@ -49,8 +49,8 @@ const TRANSFER_START_RE = /^(send money|transfer)$/i;
  * Free-text transfer/settings-change/summary intent is still a small set of
  * structured stopgap commands (parsers/text-command.parser.ts), not real NLP
  * classification — deliberately honest about that; nothing downstream
- * depends on it changing. Everything else (general conversation, and the
- * full onboarding script) now goes through the real AI layer.
+ * depends on it changing. Post-onboarding free text that doesn't match a
+ * shortcut goes through the AI Orchestrator + ActionExecutor.
  */
 @Injectable()
 export class WhatsappRouterService {
@@ -63,10 +63,10 @@ export class WhatsappRouterService {
     private readonly spendSummary: SpendSummaryService,
     private readonly transferConfirmation: TransferConfirmationService,
     private readonly managerConversation: ManagerConversationService,
-    private readonly keduChat: KeduChatService,
     private readonly accountActions: AccountActionsService,
-    private readonly intentRouter: IntentRouterService,
     private readonly pinGate: PinGateService,
+    private readonly orchestrator: OrchestratorService,
+    private readonly actionExecutor: ActionExecutorService,
   ) {}
 
   /**
@@ -267,19 +267,9 @@ export class WhatsappRouterService {
    * so it's only reachable past that point.
    *
    * For everyone else: an in-progress send-money wizard step takes priority
-   * over everything (the next message IS that step's answer, not a new
-   * command); then the structured stopgap commands/keyword shortcuts
-   * (interactive, deterministic, zero-latency — never the AI). Anything that
-   * still doesn't match goes through IntentRouterService as a last check
-   * before Kedu-persona chat: if the message's intent is clearly one of the
-   * four menu actions (just phrased differently than the exact keyword
-   * shortcuts above — "what's my balance", "send my landlord some money"),
-   * it's routed to the real deterministic handler instead of letting
-   * ungrounded chat guess at it. That classifier is deliberately narrow —
-   * see menu-intent.prompts.ts — anything about *changing* something
-   * (limits, window hours, restrictions) is NOT a match and falls through to
-   * chat exactly as before, which is also where "increase my limit" and
-   * similar judgment calls stay (via the manager command/chat path).
+   * over everything; then structured stopgap commands/keyword shortcuts
+   * (deterministic, zero-latency). Anything that still doesn't match goes
+   * through OrchestratorService + ActionExecutorService.
    */
   private async handleText(
     user: User,
@@ -348,29 +338,9 @@ export class WhatsappRouterService {
       return;
     }
 
-    const intent = await this.intentRouter.classify(text, user.id);
-    switch (intent) {
-      case "BALANCE":
-        await this.accountActions.sendBalance(user);
-        return;
-      case "LIMITS":
-        await this.accountActions.sendLimitsStatus(user);
-        return;
-      case "ACCOUNT_DETAILS":
-        await this.accountActions.sendAccountDetails(user);
-        return;
-      case "TRANSFER":
-        // Always the guided wizard, never an attempt to also parse
-        // amount/recipient out of the free text — see the module docblock
-        // above and IntentRouterService's own docs for why.
-        await this.accountActions.startTransferWizard(user);
-        return;
-      case "NONE":
-      default:
-        break;
-    }
-
-    await this.keduChat.handleMessage(user, text);
+    // ── AI Orchestrator + Action Executor ───────────────────────────
+    const result = await this.orchestrator.handleMessage(user, text);
+    await this.actionExecutor.execute(user, result);
   }
 
   private async handleUnsupportedMedia(

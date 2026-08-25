@@ -1,0 +1,378 @@
+[
+  {
+    "test_case_id": "tx_intent_01",
+    "history": [{ "role": "user", "content": "send 5k to my landlord" }],
+    "mock_proposal": {
+      "message": "Got it — I'll pull up the transfer form.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 5000, "label_hint": "RENT" }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read", "limits_read", "spending_menu", "account_details", "spend_summary"],
+    "expected_surface": "transfer_wizard",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read", "limits_read"]
+  },
+  {
+    "test_case_id": "tx_intent_02_medium",
+    "history": [{ "role": "user", "content": "maybe I should send money later?" }],
+    "mock_proposal": {
+      "message": "Want me to open the send-money form when you're ready?",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "medium"
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read", "spending_menu"],
+    "expected_surface": null,
+    "expected_confidence": "medium",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "tx_intent_03_missing_confidence",
+    "history": [{ "role": "user", "content": "transfer something" }],
+    "mock_proposal": {
+      "message": "I can open transfers for you.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard"
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read"],
+    "expected_surface": null,
+    "expected_confidence": "medium",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "balance_01",
+    "history": [{ "role": "user", "content": "what's my balance" }],
+    "mock_proposal": {
+      "message": "pulling that up now",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "balance_read",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["balance_read", "limits_read", "transfer_wizard", "spending_menu"],
+    "expected_surface": "balance_read",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard", "limits_read"]
+  },
+  {
+    "test_case_id": "limits_01",
+    "history": [{ "role": "user", "content": "how much can I spend today" }],
+    "mock_proposal": {
+      "message": "checking your limits",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "limits_read",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["limits_read", "balance_read", "spending_menu"],
+    "expected_surface": "limits_read",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read"]
+  },
+  {
+    "test_case_id": "account_01",
+    "history": [{ "role": "user", "content": "what's my account number" }],
+    "mock_proposal": {
+      "message": "here's your account",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "account_details",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["account_details", "balance_read", "spending_menu"],
+    "expected_surface": "account_details",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "menu_01",
+    "history": [{ "role": "user", "content": "what can I do here" }],
+    "mock_proposal": {
+      "message": "here's what you can do",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "spending_menu",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["spending_menu", "balance_read", "transfer_wizard"],
+    "expected_surface": "spending_menu",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "summary_01",
+    "history": [{ "role": "user", "content": "where did my money go this week" }],
+    "mock_proposal": {
+      "message": "pulling your weekly spend",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "spend_summary",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["spend_summary", "limits_read", "spending_menu"],
+    "expected_surface": "spend_summary",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "chat_01_no_surface",
+    "history": [{ "role": "user", "content": "I'm stressed about money this week" }],
+    "mock_proposal": {
+      "message": "I hear you. Want to look at what's left, or just talk?",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read", "limits_read", "spending_menu"],
+    "expected_surface": null,
+    "expected_confidence": null,
+    "forbidden_surfaces": ["transfer_wizard", "balance_read", "limits_read"]
+  },
+  {
+    "test_case_id": "chat_02_funny",
+    "history": [{ "role": "user", "content": "lol you're funny" }],
+    "mock_proposal": {
+      "message": "ha — glad I can help lighten it a bit",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["spending_menu", "balance_read"],
+    "expected_surface": null,
+    "expected_confidence": null,
+    "forbidden_surfaces": ["transfer_wizard", "balance_read"]
+  },
+  {
+    "test_case_id": "settings_01_not_limits_read",
+    "history": [{ "role": "user", "content": "can you raise my limit" }],
+    "mock_proposal": {
+      "message": "limits changes go through managers — I can help you file that",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["limits_read", "spending_menu", "transfer_wizard"],
+    "expected_surface": null,
+    "expected_confidence": null,
+    "forbidden_surfaces": ["limits_read", "transfer_wizard"]
+  },
+  {
+    "test_case_id": "ineligible_01_hallucinated_kyc",
+    "history": [{ "role": "user", "content": "open my account form" }],
+    "mock_proposal": {
+      "message": "lets do KYC",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "kyc_verification",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["balance_read", "spending_menu"],
+    "expected_surface": null,
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["kyc_verification"]
+  },
+  {
+    "test_case_id": "tx_casual_mention_medium",
+    "history": [{ "role": "user", "content": "I sent money to my landlord last week" }],
+    "mock_proposal": {
+      "message": "sounds like that one cleared — anything you need now?",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "medium"
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "spend_summary"],
+    "expected_surface": null,
+    "expected_confidence": "medium",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "balance_no_account_ineligible",
+    "history": [{ "role": "user", "content": "balance please" }],
+    "mock_proposal": {
+      "message": "checking balance",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "balance_read",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["spending_menu"],
+    "expected_surface": null,
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read"]
+  },
+  {
+    "test_case_id": "help_menu",
+    "history": [{ "role": "user", "content": "help" }],
+    "mock_proposal": {
+      "message": "here's the menu",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "spending_menu",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["spending_menu", "balance_read"],
+    "expected_surface": "spending_menu",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "tx_amount_only_high",
+    "history": [{ "role": "user", "content": "I need to send 20000 naira" }],
+    "mock_proposal": {
+      "message": "I'll open the transfer form for ₦20,000.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 20000 }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read"],
+    "expected_surface": "transfer_wizard",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read"]
+  },
+  {
+    "test_case_id": "reply_only_malformed_show_no_key",
+    "history": [{ "role": "user", "content": "do something" }],
+    "mock_proposal": {
+      "message": "hmm can you say that another way?",
+      "action": {
+        "type": "show_surface",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["spending_menu", "balance_read"],
+    "expected_surface": null,
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["spending_menu", "balance_read"]
+  },
+  {
+    "test_case_id": "limits_vs_settings_chat",
+    "history": [{ "role": "user", "content": "let me out of restrictions" }],
+    "mock_proposal": {
+      "message": "exiting restrictions is a managers request — I can walk you through filing it",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["limits_read", "spending_menu"],
+    "expected_surface": null,
+    "expected_confidence": null,
+    "forbidden_surfaces": ["limits_read"]
+  },
+  {
+    "test_case_id": "spend_summary_vs_balance",
+    "history": [{ "role": "user", "content": "show my spending breakdown" }],
+    "mock_proposal": {
+      "message": "here's your spend summary coming up",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "spend_summary",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["spend_summary", "balance_read", "limits_read"],
+    "expected_surface": "spend_summary",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read"]
+  },
+  {
+    "test_case_id": "transfer_clear_high",
+    "history": [{ "role": "user", "content": "I want to send money now" }],
+    "mock_proposal": {
+      "message": "opening send money",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "spending_menu"],
+    "expected_surface": "transfer_wizard",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["spending_menu"]
+  },
+  {
+    "test_case_id": "window_closed_chat_not_transfer",
+    "history": [{ "role": "user", "content": "can I send money while the window is closed?" }],
+    "mock_proposal": {
+      "message": "window is closed right now — transfers wait until it reopens",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["transfer_wizard", "limits_read"],
+    "expected_surface": null,
+    "expected_confidence": null,
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "account_details_high",
+    "history": [{ "role": "user", "content": "give me my bank details" }],
+    "mock_proposal": {
+      "message": "pulling your account details",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "account_details",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["account_details", "balance_read"],
+    "expected_surface": "account_details",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read"]
+  },
+  {
+    "test_case_id": "ambiguous_money_medium",
+    "history": [{ "role": "user", "content": "money stuff" }],
+    "mock_proposal": {
+      "message": "want balance, limits, or to send money?",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "spending_menu",
+        "confidence": "medium"
+      }
+    },
+    "eligible_surfaces": ["spending_menu", "balance_read", "transfer_wizard"],
+    "expected_surface": null,
+    "expected_confidence": "medium",
+    "forbidden_surfaces": ["spending_menu", "transfer_wizard"]
+  },
+  {
+    "test_case_id": "balance_lead_in_high",
+    "history": [{ "role": "user", "content": "how much do I have left in the account" }],
+    "mock_proposal": {
+      "message": "one sec",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "balance_read",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["balance_read", "limits_read"],
+    "expected_surface": "balance_read",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["limits_read"]
+  },
+  {
+    "test_case_id": "false_positive_transfer_from_chat",
+    "history": [{ "role": "user", "content": "saving money is hard" }],
+    "mock_proposal": {
+      "message": "it is — that's why the window and allowance exist",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["transfer_wizard", "limits_read", "spending_menu"],
+    "expected_surface": null,
+    "expected_confidence": null,
+    "forbidden_surfaces": ["transfer_wizard"]
+  }
+]

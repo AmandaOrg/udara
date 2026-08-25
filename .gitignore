@@ -1,5 +1,7 @@
 node_modules
 dist
 .env
+.env.e2e
 *.log
 .DS_Store
+ai-orchestrator-architecture-plan.md

@@ -257,6 +257,19 @@ describe("AccountActionsService", () => {
   });
 
   describe("send-money wizard", () => {
+    it("startTransferWizard with amount hint skips to account-number step", async () => {
+      await service.startTransferWizard(makeUser() as any, { amount: 15000 });
+
+      const draft = await service.getActiveDraft("user-1");
+      expect(draft?.step).toBe(TransferDraftStep.AWAITING_ACCOUNT_NUMBER);
+      expect(Number(draft?.amount)).toBe(15000);
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("₦15,000"),
+        "user-1",
+      );
+    });
+
     it("startTransferWizard creates a draft and asks for an amount", async () => {
       await service.startTransferWizard(makeUser() as any);
       expect(whatsapp.sendText).toHaveBeenCalledWith(
