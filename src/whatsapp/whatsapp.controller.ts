@@ -74,10 +74,8 @@ export class WhatsappController {
 
     for (const parsed of parsedMessages) {
       try {
-        const { isNew, record } = await this.messages.recordInboundIfNew(
-          parsed,
-          payload,
-        );
+        const { isNew, record, sensitive } =
+          await this.messages.recordInboundIfNew(parsed, payload);
         // Duplicate redelivery, or a STATUS (delivery/read receipt) callback — nothing to route.
         if (!isNew || !record) continue;
 
@@ -102,7 +100,7 @@ export class WhatsappController {
         }, TYPING_HEARTBEAT_INTERVAL_MS);
 
         try {
-          await this.router.route(record);
+          await this.router.route(record, sensitive);
           await this.messages.markProcessed(
             record.id,
             WhatsappMessageStatus.PROCESSED,

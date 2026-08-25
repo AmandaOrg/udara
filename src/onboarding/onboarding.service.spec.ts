@@ -463,6 +463,29 @@ describe("OnboardingService", () => {
       };
     }
 
+    /**
+     * Submits a KYC form the way the real pipeline does: id_number and
+     * date_of_birth are stripped from the persisted responseJson (they'd read
+     * "[redacted]") and delivered separately in memory. Splitting them here
+     * is what keeps these tests honest about where the handler reads them
+     * from.
+     */
+    async function submitFlow(
+      target: unknown,
+      overrides: Record<string, unknown> = {},
+    ) {
+      const full = flowSubmission(overrides) as Record<string, unknown>;
+      const sensitive: Record<string, string> = {};
+      for (const key of ["id_number", "date_of_birth"]) {
+        const value = full[key];
+        if (typeof value === "string" && value.length > 0) {
+          sensitive[key] = value;
+        }
+        full[key] = "[redacted]";
+      }
+      return service.handleInboundFlowReply(target as any, full, sensitive);
+    }
+
     it("provisions the Rubies account from a valid BVN submission, advances to MONEY_STORY (not ACCOUNT_CREATED), and sends the money-story questions", async () => {
       const user = build(
         makeUser({
@@ -478,7 +501,7 @@ describe("OnboardingService", () => {
         bankCode: "090175",
       });
 
-      await service.handleInboundFlowReply(user as any, flowSubmission());
+      await submitFlow(user);
 
       expect(rubies.provisionAccount).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -522,10 +545,7 @@ describe("OnboardingService", () => {
         bankCode: "090175",
       });
 
-      await service.handleInboundFlowReply(
-        user as any,
-        flowSubmission({ middle_name: "Chinedu" }),
-      );
+      await submitFlow(user, { middle_name: "Chinedu" });
 
       expect(rubies.provisionAccount).toHaveBeenCalledWith(
         expect.not.objectContaining({ middleName: expect.anything() }),
@@ -544,10 +564,7 @@ describe("OnboardingService", () => {
         bankCode: "090175",
       });
 
-      await service.handleInboundFlowReply(
-        user as any,
-        flowSubmission({ middle_name: "" }),
-      );
+      await submitFlow(user, { middle_name: "" });
 
       expect(prisma._users.get("user-1")?.legalMiddleName).toBeUndefined();
     });
@@ -563,10 +580,7 @@ describe("OnboardingService", () => {
         bankCode: "090175",
       });
 
-      await service.handleInboundFlowReply(
-        user as any,
-        flowSubmission({ id_type: "NIN", id_number: "98765432109" }),
-      );
+      await submitFlow(user, { id_type: "NIN", id_number: "98765432109" });
 
       expect(rubies.provisionAccount).toHaveBeenCalledWith(
         expect.objectContaining({ bvn: undefined, nin: "98765432109" }),
@@ -585,10 +599,7 @@ describe("OnboardingService", () => {
       });
 
       const epochMs = Date.UTC(1998, 3, 12); // 1998-04-12
-      await service.handleInboundFlowReply(
-        user as any,
-        flowSubmission({ date_of_birth: String(epochMs) }),
-      );
+      await submitFlow(user, { date_of_birth: String(epochMs) });
 
       expect(rubies.provisionAccount).toHaveBeenCalledWith(
         expect.objectContaining({ dob: "1998-04-12" }),
@@ -600,10 +611,7 @@ describe("OnboardingService", () => {
         makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
       );
 
-      await service.handleInboundFlowReply(
-        user as any,
-        flowSubmission({ first_name: "", last_name: "" }),
-      );
+      await submitFlow(user, { first_name: "", last_name: "" });
 
       expect(rubies.provisionAccount).not.toHaveBeenCalled();
       expect(whatsapp.sendText).toHaveBeenCalledWith(
@@ -624,10 +632,7 @@ describe("OnboardingService", () => {
         makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
       );
 
-      await service.handleInboundFlowReply(
-        user as any,
-        flowSubmission({ id_number: "123", email: "not-an-email" }),
-      );
+      await submitFlow(user, { id_number: "123", email: "not-an-email" });
 
       expect(rubies.provisionAccount).not.toHaveBeenCalled();
       expect(whatsapp.sendText).toHaveBeenCalledWith(
@@ -646,7 +651,7 @@ describe("OnboardingService", () => {
         new Error("First name does not match"),
       );
 
-      await service.handleInboundFlowReply(user as any, flowSubmission());
+      await submitFlow(user);
 
       expect(prisma._users.get("user-1")?.onboardingStage).toBe(
         OnboardingStage.PLAN_PROPOSED,
@@ -664,7 +669,7 @@ describe("OnboardingService", () => {
         accountName: "Daniel",
         bankCode: "090175",
       });
-      await service.handleInboundFlowReply(user as any, flowSubmission());
+      await submitFlow(user);
       expect(rubies.provisionAccount).toHaveBeenCalledTimes(2);
     });
 
@@ -689,7 +694,7 @@ describe("OnboardingService", () => {
         );
       });
 
-      await service.handleInboundFlowReply(user as any, flowSubmission());
+      await submitFlow(user);
 
       expect(prisma._users.get("user-1")?.onboardingStage).toBe(
         OnboardingStage.PLAN_PROPOSED,
@@ -718,7 +723,7 @@ describe("OnboardingService", () => {
         });
       });
 
-      await service.handleInboundFlowReply(user as any, flowSubmission());
+      await submitFlow(user);
 
       const [, sentText] = whatsapp.sendText.mock.calls[0];
       expect(sentText).not.toContain("Some other DB error");
@@ -729,7 +734,7 @@ describe("OnboardingService", () => {
       const user = build(
         makeUser({ onboardingStage: OnboardingStage.ACCOUNT_CREATED }),
       );
-      await service.handleInboundFlowReply(user as any, flowSubmission());
+      await submitFlow(user);
       expect(rubies.provisionAccount).not.toHaveBeenCalled();
     });
   });

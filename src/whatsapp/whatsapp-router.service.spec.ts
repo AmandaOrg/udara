@@ -20,6 +20,7 @@ describe("WhatsappRouterService — intent-classified free text", () => {
   let keduChat: { handleMessage: jest.Mock };
   let accountActions: Record<string, jest.Mock>;
   let intentRouter: { classify: jest.Mock };
+  let pinGate: { handlePinFlowReply: jest.Mock };
   let service: WhatsappRouterService;
 
   const user = {
@@ -48,12 +49,16 @@ describe("WhatsappRouterService — intent-classified free text", () => {
     onboarding = {
       handleInboundText: jest.fn(),
       handleInboundButton: jest.fn(),
+      handleInboundFlowReply: jest.fn().mockResolvedValue(undefined),
     };
     spendSummary = {
       getWeeklySummary: jest.fn(),
       formatAsText: jest.fn(),
     };
-    transferConfirmation = { initiateTransfer: jest.fn() };
+    transferConfirmation = {
+      initiateTransfer: jest.fn(),
+      executeVerifiedTransfer: jest.fn().mockResolvedValue(undefined),
+    };
     managerConversation = { fileChangeRequest: jest.fn() };
     keduChat = { handleMessage: jest.fn().mockResolvedValue(undefined) };
     accountActions = {
@@ -65,6 +70,7 @@ describe("WhatsappRouterService — intent-classified free text", () => {
       sendMainMenu: jest.fn().mockResolvedValue(undefined),
     };
     intentRouter = { classify: jest.fn() };
+    pinGate = { handlePinFlowReply: jest.fn() };
 
     service = new WhatsappRouterService(
       prisma as any,
@@ -76,6 +82,7 @@ describe("WhatsappRouterService — intent-classified free text", () => {
       keduChat as any,
       accountActions as any,
       intentRouter as any,
+      pinGate as any,
     );
   });
 
@@ -183,5 +190,72 @@ describe("WhatsappRouterService — intent-classified free text", () => {
       user,
       "can you loosen my limits please",
     );
+  });
+  describe("PIN flow replies", () => {
+    function flowMessage() {
+      return {
+        id: "m1",
+        type: WhatsappMessageType.FLOW_REPLY,
+        fromNumber: "234801",
+        flowResponseJson: { flow_token: "tok-1", pin: "[redacted]" },
+      } as any;
+    }
+
+    it("executes the transfer only when the gate authorizes it", async () => {
+      pinGate.handlePinFlowReply.mockResolvedValue({
+        action: "execute_transfer",
+        transactionId: "txn-1",
+      });
+
+      await service.route(flowMessage(), { pin: "8317" });
+
+      expect(transferConfirmation.executeVerifiedTransfer).toHaveBeenCalledWith(
+        "txn-1",
+      );
+      expect(onboarding.handleInboundFlowReply).not.toHaveBeenCalled();
+    });
+
+    it("does not execute anything when the gate declines", async () => {
+      pinGate.handlePinFlowReply.mockResolvedValue({ action: "none" });
+
+      await service.route(flowMessage(), { pin: "0000" });
+
+      expect(
+        transferConfirmation.executeVerifiedTransfer,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("passes the in-memory PIN to the gate, not the redacted persisted value", async () => {
+      pinGate.handlePinFlowReply.mockResolvedValue({ action: "none" });
+
+      await service.route(flowMessage(), { pin: "8317" });
+
+      expect(pinGate.handlePinFlowReply).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ flow_token: "tok-1" }),
+        { pin: "8317" },
+      );
+    });
+
+    it("routes a KYC submission to onboarding, not the PIN gate", async () => {
+      // findOrCreateUser returns the *update* result (it stamps
+      // lastInboundMessageAt), so the stage has to come from there.
+      const kycUser = { ...user, onboardingStage: "PLAN_PROPOSED" };
+      prisma.user.findUnique.mockResolvedValue(kycUser);
+      prisma.user.update.mockResolvedValue(kycUser);
+
+      await service.route(
+        {
+          id: "m2",
+          type: WhatsappMessageType.FLOW_REPLY,
+          fromNumber: "234801",
+          flowResponseJson: { flow_token: "tok-2", first_name: "Daniel" },
+        } as any,
+        { id_number: "12345678901" },
+      );
+
+      expect(pinGate.handlePinFlowReply).not.toHaveBeenCalled();
+      expect(onboarding.handleInboundFlowReply).toHaveBeenCalled();
+    });
   });
 });

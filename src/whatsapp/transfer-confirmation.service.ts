@@ -6,6 +6,7 @@ import { AllowanceService } from "../allowance/allowance.service";
 import { RubiesService, RUBIES_MFB_BANK_CODE } from "../rubies/rubies.service";
 import { TaggingService } from "../tagging/tagging.service";
 import { WhatsappService } from "./whatsapp.service";
+import { PinGateService } from "./pin-gate.service";
 import {
   OnboardingStage,
   RecipientLabel,
@@ -46,6 +47,7 @@ export class TransferConfirmationService {
     private readonly rubies: RubiesService,
     private readonly tagging: TaggingService,
     private readonly whatsapp: WhatsappService,
+    private readonly pinGate: PinGateService,
   ) {}
 
   async initiateTransfer(params: {
@@ -172,7 +174,9 @@ export class TransferConfirmationService {
       return;
     }
 
-    const { user, recipient } = transaction;
+    // Only `user` here: the recipient is needed when the transfer actually
+    // executes, which now happens in executeVerifiedTransfer after the PIN.
+    const { user } = transaction;
     if (!user.rubiesAccountNumber || !user.rubiesAccountName) {
       throw new BadRequestException(
         `User ${user.id} has no Rubies account to send from`,
@@ -196,8 +200,78 @@ export class TransferConfirmationService {
       return;
     }
 
-    // Marks the button-tap as acted-on before calling Rubies — a second concurrent
-    // tap of the same button hits the PENDING_CONFIRMATION guard above, not this path.
+    // First transfer ever, no PIN on file: set one before anything moves.
+    // The transaction stays PENDING_CONFIRMATION so the user can tap Confirm
+    // again once their PIN exists, rather than silently losing the transfer.
+    if (!user.pinHash) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "before your first transfer, you need to set a 4-digit pin. you'll use it to approve every transfer from here on.",
+        user.id,
+      );
+      await this.pinGate.requestPinSetup(user);
+      return;
+    }
+
+    // Locked out from earlier wrong attempts: refuse now rather than opening
+    // a challenge that cannot succeed.
+    if (this.pinGate.isLocked(user)) {
+      await this.prisma.transaction.update({
+        where: { id: transaction.id },
+        data: { status: TransactionStatus.CANCELLED },
+      });
+      await this.pinGate.notifyLocked(user);
+      return;
+    }
+
+    // All pre-flight guards have passed, but money does NOT move here. The
+    // transfer now needs a PIN: moving to PENDING_PIN also closes the
+    // PENDING_CONFIRMATION guard above, so a second tap of the confirm button
+    // can't open a second challenge for the same transaction.
+    await this.prisma.transaction.update({
+      where: { id: transaction.id },
+      data: { status: TransactionStatus.PENDING_PIN },
+    });
+    await this.pinGate.requestTransferPin(user, transaction.id);
+  }
+
+  /**
+   * Executes a transfer whose PIN has already been verified. Private and
+   * called from exactly one place (PinGateService, after consuming a valid
+   * single-use challenge bound to this transaction id) — that is what makes
+   * "no PIN, no Rubies call" a structural property rather than a convention.
+   *
+   * The body below is unchanged from what confirmTransfer used to do inline;
+   * only the entry condition is new.
+   */
+  async executeVerifiedTransfer(transactionId: string): Promise<void> {
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { id: transactionId },
+      include: { recipient: true, user: true },
+    });
+    if (!transaction) {
+      this.logger.warn(
+        `executeVerifiedTransfer: no such transaction ${transactionId}`,
+      );
+      return;
+    }
+    if (transaction.status !== TransactionStatus.PENDING_PIN) {
+      // Already actioned, or reached without going through the PIN gate.
+      this.logger.warn(
+        `executeVerifiedTransfer: transaction ${transactionId} is ${transaction.status}, not PENDING_PIN — refusing`,
+      );
+      return;
+    }
+
+    const { user, recipient } = transaction;
+    if (!user.rubiesAccountNumber || !user.rubiesAccountName) {
+      throw new BadRequestException(
+        `User ${user.id} has no Rubies account to send from`,
+      );
+    }
+
+    // Marks the transaction as acted-on before calling Rubies — a second
+    // concurrent execution hits the PENDING_PIN guard above, not this path.
     await this.prisma.transaction.update({
       where: { id: transaction.id },
       data: { status: TransactionStatus.CONFIRMED, confirmedAt: new Date() },

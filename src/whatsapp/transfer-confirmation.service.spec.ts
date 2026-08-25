@@ -35,6 +35,12 @@ describe("TransferConfirmationService", () => {
   let tagging: { findRecipient: jest.Mock; tagRecipient: jest.Mock };
   let whatsapp: { sendText: jest.Mock; sendInteractiveButtons: jest.Mock };
   let config: { get: jest.Mock };
+  let pinGate: {
+    requestTransferPin: jest.Mock;
+    requestPinSetup: jest.Mock;
+    isLocked: jest.Mock;
+    notifyLocked: jest.Mock;
+  };
   let service: TransferConfirmationService;
 
   const user = {
@@ -42,6 +48,11 @@ describe("TransferConfirmationService", () => {
     whatsappNumber: "234801",
     rubiesAccountNumber: "7712345678",
     rubiesAccountName: "Test Sender",
+    // A PIN is on file by default; the "first transfer, no PIN yet" branch
+    // is exercised explicitly where it matters.
+    pinHash: "scrypt$16384$8$1$c2FsdA==$aGFzaA==",
+    pinFailedAttempts: 0,
+    pinLockedUntil: null,
   };
   const recipient = {
     id: "recipient-1",
@@ -109,6 +120,13 @@ describe("TransferConfirmationService", () => {
     // dev-mode behavior. Individual tests override this to exercise the sweep.
     config = { get: jest.fn((_key: string, fallback?: unknown) => fallback) };
 
+    pinGate = {
+      requestTransferPin: jest.fn().mockResolvedValue(undefined),
+      requestPinSetup: jest.fn().mockResolvedValue(undefined),
+      isLocked: jest.fn().mockReturnValue(false),
+      notifyLocked: jest.fn().mockResolvedValue(undefined),
+    };
+
     service = new TransferConfirmationService(
       prisma as any,
       config as any,
@@ -116,6 +134,7 @@ describe("TransferConfirmationService", () => {
       rubies as any,
       tagging as any,
       whatsapp as any,
+      pinGate as any,
     );
   });
 
@@ -308,8 +327,127 @@ describe("TransferConfirmationService", () => {
       );
     });
 
-    it("marks CONFIRMED before calling Rubies, then EXECUTED on SUCCESS, and records the spend", async () => {
+    it("does NOT create an OverrideHistory row for a NORMAL transfer", async () => {
       prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
+      prisma.transaction.findUniqueOrThrow.mockResolvedValue(
+        pendingTransaction({ status: TransactionStatus.CONFIRMED }),
+      );
+
+      await service.confirmTransfer("txn-1");
+
+      expect(prisma.overrideHistory.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("PIN gate — confirmTransfer must never move money on its own", () => {
+    function pendingTransaction(
+      overrides: Partial<Record<string, unknown>> = {},
+    ) {
+      return {
+        id: "txn-1",
+        status: TransactionStatus.PENDING_CONFIRMATION,
+        amount: 5000,
+        feeAmount: 0,
+        type: TransactionType.NORMAL,
+        idempotencyKey: "idem-1",
+        user,
+        recipient,
+        ...overrides,
+      };
+    }
+
+    it("asks for a PIN instead of transferring, once all other guards pass", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
+
+      await service.confirmTransfer("txn-1");
+
+      expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+      expect(pinGate.requestTransferPin).toHaveBeenCalledWith(user, "txn-1");
+      expect(prisma.transaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: TransactionStatus.PENDING_PIN,
+          }),
+        }),
+      );
+    });
+
+    it("sends the setup form, and does not transfer, when the user has no PIN yet", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(
+        pendingTransaction({ user: { ...user, pinHash: null } }),
+      );
+
+      await service.confirmTransfer("txn-1");
+
+      expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+      expect(pinGate.requestPinSetup).toHaveBeenCalled();
+      expect(pinGate.requestTransferPin).not.toHaveBeenCalled();
+    });
+
+    it("refuses and cancels, without transferring, when the PIN is locked", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
+      pinGate.isLocked.mockReturnValue(true);
+
+      await service.confirmTransfer("txn-1");
+
+      expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+      expect(pinGate.notifyLocked).toHaveBeenCalled();
+      expect(prisma.transaction.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: TransactionStatus.CANCELLED,
+          }),
+        }),
+      );
+    });
+
+    it("refuses to execute a transaction that never passed through the PIN gate", async () => {
+      // Still PENDING_CONFIRMATION: someone reached the execute path directly.
+      prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
+
+      await service.executeVerifiedTransfer("txn-1");
+
+      expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+    });
+
+    it("refuses to execute an already-executed transaction (no double spend on replay)", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(
+        pendingTransaction({ status: TransactionStatus.EXECUTED }),
+      );
+
+      await service.executeVerifiedTransfer("txn-1");
+
+      expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op for an unknown transaction id", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(null);
+      await service.executeVerifiedTransfer("nope");
+      expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("executeVerifiedTransfer (PIN already verified)", () => {
+    function pendingTransaction(
+      overrides: Partial<Record<string, unknown>> = {},
+    ) {
+      return {
+        id: "txn-1",
+        status: TransactionStatus.PENDING_PIN,
+        amount: 5000,
+        feeAmount: 0,
+        type: TransactionType.NORMAL,
+        idempotencyKey: "idem-1",
+        user,
+        recipient,
+        ...overrides,
+      };
+    }
+
+    it("marks CONFIRMED before calling Rubies, then EXECUTED on SUCCESS, and records the spend", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(
+        pendingTransaction({ status: TransactionStatus.PENDING_PIN }),
+      );
       prisma.transaction.findUniqueOrThrow.mockResolvedValue(
         pendingTransaction({ status: TransactionStatus.CONFIRMED }),
       );
@@ -319,7 +457,7 @@ describe("TransferConfirmationService", () => {
         responseCode: "00",
       });
 
-      await service.confirmTransfer("txn-1");
+      await service.executeVerifiedTransfer("txn-1");
 
       expect(prisma.transaction.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -351,6 +489,7 @@ describe("TransferConfirmationService", () => {
     it("creates an OverrideHistory row for a non-NORMAL EXECUTED transfer", async () => {
       prisma.transaction.findUnique.mockResolvedValue(
         pendingTransaction({
+          status: TransactionStatus.PENDING_PIN,
           type: TransactionType.EARLY_ACCESS,
           feeAmount: 1020,
         }),
@@ -363,7 +502,7 @@ describe("TransferConfirmationService", () => {
         }),
       );
 
-      await service.confirmTransfer("txn-1");
+      await service.executeVerifiedTransfer("txn-1");
 
       expect(prisma.overrideHistory.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -375,19 +514,10 @@ describe("TransferConfirmationService", () => {
       );
     });
 
-    it("does NOT create an OverrideHistory row for a NORMAL transfer", async () => {
-      prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
-      prisma.transaction.findUniqueOrThrow.mockResolvedValue(
-        pendingTransaction({ status: TransactionStatus.CONFIRMED }),
-      );
-
-      await service.confirmTransfer("txn-1");
-
-      expect(prisma.overrideHistory.create).not.toHaveBeenCalled();
-    });
-
     it("marks FAILED and does not record spend when Rubies reports FAILED", async () => {
-      prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
+      prisma.transaction.findUnique.mockResolvedValue(
+        pendingTransaction({ status: TransactionStatus.PENDING_PIN }),
+      );
       prisma.transaction.findUniqueOrThrow.mockResolvedValue(
         pendingTransaction({ status: TransactionStatus.CONFIRMED }),
       );
@@ -397,7 +527,7 @@ describe("TransferConfirmationService", () => {
         responseCode: "25",
       });
 
-      await service.confirmTransfer("txn-1");
+      await service.executeVerifiedTransfer("txn-1");
 
       expect(prisma.transaction.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -408,14 +538,16 @@ describe("TransferConfirmationService", () => {
     });
 
     it("leaves the transaction CONFIRMED (not EXECUTED/FAILED) when Rubies reports PENDING, for the reconciliation job to resolve later", async () => {
-      prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
+      prisma.transaction.findUnique.mockResolvedValue(
+        pendingTransaction({ status: TransactionStatus.PENDING_PIN }),
+      );
       rubies.initiateTransfer.mockResolvedValue({
         reference: "REF-1",
         status: "PENDING",
         responseCode: "09",
       });
 
-      await service.confirmTransfer("txn-1");
+      await service.executeVerifiedTransfer("txn-1");
 
       // Only the one CONFIRMED update — no second update pushing it to EXECUTED/FAILED.
       expect(prisma.transaction.update).toHaveBeenCalledTimes(1);

@@ -8,6 +8,19 @@ import {
   WhatsappMessageType,
 } from "@prisma/client";
 import { ParsedInboundMessage } from "./parsers/whatsapp-payload.parser";
+import {
+  extractSensitive,
+  redactRawPayload,
+  redactSensitive,
+} from "./sensitive-fields.util";
+
+/**
+ * Plaintext values for sensitive Flow fields (PIN, BVN/NIN, DOB), carried in
+ * memory only. Deliberately NOT part of the persisted WhatsappMessage row —
+ * see sensitive-fields.util.ts. Handlers that need a real value (PinService
+ * verifying a submission) read it from here; everything else ignores it.
+ */
+export type SensitiveFields = Record<string, string>;
 
 @Injectable()
 export class WhatsappMessageService {
@@ -21,22 +34,37 @@ export class WhatsappMessageService {
    * webhooks on timeout/retry. Returns isNew: false (no crash) for a
    * duplicate, and for STATUS entries, which aren't inbound messages in our
    * domain model — they're delivery/read receipts for outbound sends.
+   *
+   * Sensitive Flow fields are stripped from BOTH persisted columns before the
+   * write and returned separately as `sensitive`, in memory only. This is the
+   * only place that can enforce it: the controller persists here and only then
+   * routes, so a handler downstream is already too late to keep a secret out
+   * of the database.
    */
   async recordInboundIfNew(
     parsed: ParsedInboundMessage,
     rawPayload: unknown,
-  ): Promise<{ isNew: boolean; record: WhatsappMessage | null }> {
+  ): Promise<{
+    isNew: boolean;
+    record: WhatsappMessage | null;
+    sensitive: SensitiveFields;
+  }> {
     if (parsed.type === WhatsappMessageType.STATUS) {
       this.logger.debug(
         `Status callback for ${parsed.waMessageId}: ${parsed.status}`,
       );
-      return { isNew: false, record: null };
+      return { isNew: false, record: null, sensitive: {} };
     }
+
+    const sensitive =
+      parsed.type === WhatsappMessageType.FLOW_REPLY
+        ? extractSensitive(parsed.responseJson)
+        : {};
 
     const existing = await this.prisma.whatsappMessage.findUnique({
       where: { waMessageId: parsed.waMessageId },
     });
-    if (existing) return { isNew: false, record: existing };
+    if (existing) return { isNew: false, record: existing, sensitive };
 
     try {
       const record = await this.prisma.whatsappMessage.create({
@@ -57,13 +85,13 @@ export class WhatsappMessageService {
           mediaMimeType: "mimeType" in parsed ? parsed.mimeType : undefined,
           flowResponseJson:
             parsed.type === WhatsappMessageType.FLOW_REPLY
-              ? (parsed.responseJson as Prisma.InputJsonValue)
+              ? (redactSensitive(parsed.responseJson) as Prisma.InputJsonValue)
               : undefined,
-          rawPayload: rawPayload as Prisma.InputJsonValue,
+          rawPayload: redactRawPayload(rawPayload) as Prisma.InputJsonValue,
           status: WhatsappMessageStatus.RECEIVED,
         },
       });
-      return { isNew: true, record };
+      return { isNew: true, record, sensitive };
     } catch (err) {
       // Unique-constraint race — two overlapping redeliveries of the same
       // message both reached `create` before either committed. Treat as
@@ -77,7 +105,7 @@ export class WhatsappMessageService {
             where: { waMessageId: parsed.waMessageId },
           },
         );
-        return { isNew: false, record: existingRow };
+        return { isNew: false, record: existingRow, sensitive };
       }
       throw err;
     }

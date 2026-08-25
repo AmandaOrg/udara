@@ -219,6 +219,7 @@ export class OnboardingService {
   async handleInboundFlowReply(
     user: User,
     responseJson: Record<string, unknown>,
+    sensitive: Record<string, string> = {},
   ): Promise<void> {
     if (user.onboardingStage !== OnboardingStage.PLAN_PROPOSED) {
       this.logger.warn(
@@ -233,9 +234,13 @@ export class OnboardingService {
     const middleName = String(responseJson.middle_name ?? "").trim();
     const lastName = String(responseJson.last_name ?? "").trim();
     const idType = String(responseJson.id_type ?? "").toUpperCase();
-    const idNumber = String(responseJson.id_number ?? "").replace(/\D/g, "");
+    // id_number and date_of_birth are stripped from the persisted
+    // WhatsappMessage row before it reaches here (see
+    // whatsapp/sensitive-fields.util.ts), so they arrive via `sensitive`,
+    // in memory only. responseJson would hold "[redacted]" for both.
+    const idNumber = String(sensitive.id_number ?? "").replace(/\D/g, "");
     const email = String(responseJson.email ?? "").trim();
-    const dateOfBirth = parseFlowDate(responseJson.date_of_birth);
+    const dateOfBirth = parseFlowDate(sensitive.date_of_birth);
 
     const problems: string[] = [];
     if (!firstName) {

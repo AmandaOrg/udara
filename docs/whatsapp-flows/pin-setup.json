@@ -1,0 +1,58 @@
+{
+  "version": "7.2",
+  "screens": [
+    {
+      "id": "PIN_SETUP",
+      "title": "Set your transfer PIN",
+      "terminal": true,
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "pin_setup_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Choose a 4-digit PIN"
+              },
+              {
+                "type": "TextBody",
+                "text": "You'll enter this PIN to approve every transfer. Pick something you'll remember but nobody else would guess. Avoid your birth year, repeated digits, or digits in a row. Udara never stores your PIN itself, only a scrambled version it can check against."
+              },
+              {
+                "type": "TextInput",
+                "name": "pin",
+                "label": "New PIN",
+                "input-type": "passcode",
+                "min-chars": 4,
+                "max-chars": 4,
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "pin_confirm",
+                "label": "Confirm PIN",
+                "input-type": "passcode",
+                "min-chars": 4,
+                "max-chars": 4,
+                "required": true
+              },
+              {
+                "type": "Footer",
+                "label": "Set PIN",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "pin": "${form.pin}",
+                    "pin_confirm": "${form.pin_confirm}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

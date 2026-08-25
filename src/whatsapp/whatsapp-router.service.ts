@@ -30,6 +30,8 @@ import {
   isSpendSummaryQuery,
 } from "./parsers/text-command.parser";
 import { User, WhatsappMessage, WhatsappMessageType } from "@prisma/client";
+import { PinGateService } from "./pin-gate.service";
+import { SensitiveFields } from "./whatsapp-message.service";
 
 // Quick-access keyword shortcuts — same actions the "menu" list offers,
 // reachable without opening the menu first. Deliberately not a fuzzy/AI
@@ -64,9 +66,18 @@ export class WhatsappRouterService {
     private readonly keduChat: KeduChatService,
     private readonly accountActions: AccountActionsService,
     private readonly intentRouter: IntentRouterService,
+    private readonly pinGate: PinGateService,
   ) {}
 
-  async route(message: WhatsappMessage): Promise<void> {
+  /**
+   * `sensitive` carries plaintext values (PIN, BVN/NIN) that were stripped
+   * from the persisted `message` row — see whatsapp-message.service.ts. Only
+   * the Flow-reply handlers read it; it is never logged or re-persisted.
+   */
+  async route(
+    message: WhatsappMessage,
+    sensitive: SensitiveFields = {},
+  ): Promise<void> {
     const user = await this.findOrCreateUser(message.fromNumber);
 
     switch (message.type) {
@@ -76,7 +87,7 @@ export class WhatsappRouterService {
       case WhatsappMessageType.LIST_REPLY:
         return this.handleButtonReply(user, message);
       case WhatsappMessageType.FLOW_REPLY:
-        return this.handleFlowReply(user, message);
+        return this.handleFlowReply(user, message, sensitive);
       case WhatsappMessageType.TEXT:
         return this.handleText(user, message);
       case WhatsappMessageType.IMAGE:
@@ -216,17 +227,37 @@ export class WhatsappRouterService {
   private async handleFlowReply(
     user: User,
     message: WhatsappMessage,
+    sensitive: SensitiveFields,
   ): Promise<void> {
+    const responseJson =
+      (message.flowResponseJson as Record<string, unknown> | null) ?? {};
+
+    // A PIN submission is identified by its challenge, not by the stage the
+    // user happens to be in — PIN entry is post-onboarding, so the
+    // pre-account gate below would otherwise reject it. handlePinFlowReply
+    // returns "none" for any token that isn't a live PIN challenge, so a KYC
+    // submission falls through to the onboarding handler untouched.
+    if (sensitive.pin !== undefined || sensitive.pin_confirm !== undefined) {
+      const outcome = await this.pinGate.handlePinFlowReply(
+        user,
+        responseJson,
+        sensitive,
+      );
+      if (outcome.action === "execute_transfer") {
+        await this.transferConfirmation.executeVerifiedTransfer(
+          outcome.transactionId,
+        );
+      }
+      return;
+    }
+
     if (!isPreAccountStage(user.onboardingStage)) {
       this.logger.warn(
         `FLOW_REPLY from ${message.fromNumber} at post-account stage ${user.onboardingStage} — nothing to route it to`,
       );
       return;
     }
-    await this.onboarding.handleInboundFlowReply(
-      user,
-      (message.flowResponseJson as Record<string, unknown> | null) ?? {},
-    );
+    await this.onboarding.handleInboundFlowReply(user, responseJson, sensitive);
   }
 
   /**

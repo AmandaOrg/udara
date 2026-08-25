@@ -24,7 +24,7 @@ enum BudgetMethod {
 
 enum IncomePosture {
   RESTRICT // normal path: enforce tighter spending discipline
-  GROW     // income-tier branch: not enough room to restrict further
+  GROW // income-tier branch: not enough room to restrict further
 }
 
 // Ordered to match the canonical Udara onboarding script's actual stage
@@ -53,13 +53,17 @@ enum OnboardingStage {
 }
 
 enum TransactionType {
-  NORMAL        // inside window, within today's allowance
-  EARLY_ACCESS  // outside 11am-8pm window
-  BORROWED      // against future allowance
+  NORMAL // inside window, within today's allowance
+  EARLY_ACCESS // outside 11am-8pm window
+  BORROWED // against future allowance
 }
 
 enum TransactionStatus {
   PENDING_CONFIRMATION
+  // Confirm button tapped and all pre-flight guards passed, now waiting on
+  // the user's PIN. Money has not moved and will not until the matching
+  // PinChallenge is verified and consumed.
+  PENDING_PIN
   CONFIRMED
   EXECUTED
   FAILED
@@ -170,15 +174,15 @@ enum NudgeType {
 // ---------------------------------------------------------------------------
 
 model User {
-  id                String   @id @default(uuid())
-  whatsappNumber    String   @unique
-  rubiesAccountId   String?  @unique
+  id              String  @id @default(uuid())
+  whatsappNumber  String  @unique
+  rubiesAccountId String? @unique
 
   // Identity captured during onboarding (Identity/AI Reflection stages, onboarding script)
-  name              String?
-  occupation        String?
-  city              String?
-  dateOfBirth       DateTime? // collected at the Trust Moment specifically — Rubies KYC needs a real DOB, not just age
+  name        String?
+  occupation  String?
+  city        String?
+  dateOfBirth DateTime? // collected at the Trust Moment specifically — Rubies KYC needs a real DOB, not just age
 
   // Legal name as entered on the Trust Moment KYC form (WhatsApp Flow) — kept
   // separate from `name` above, which is the friendly name from onboarding
@@ -186,27 +190,27 @@ model User {
   // name-similarity KYC match is against firstName/lastName only — it has no
   // middle-name field — so legalMiddleName is stored for our own records but
   // never sent to Rubies.
-  legalFirstName    String?
-  legalMiddleName   String?
-  legalLastName     String?
-  email             String?
+  legalFirstName  String?
+  legalMiddleName String?
+  legalLastName   String?
+  email           String?
 
   // Financial profile (captured at onboarding — section 7 / 7a of PRD)
-  monthlyIncome     Decimal? @db.Decimal(14, 2)
-  incomeType        IncomeType?
-  incomePosture     IncomePosture @default(RESTRICT)
-  budgetMethod      BudgetMethod  @default(FLAT)
-  budgetPercentage  Decimal?      @db.Decimal(5, 4) // used when budgetMethod = PERCENTAGE
-  flatDailyAmount   Decimal?      @db.Decimal(14, 2) // used when budgetMethod = FLAT, set at PLAN_PROPOSED
-  strictnessLevel   Int?          // user-chosen strictness, 1-5 or similar scale
+  monthlyIncome    Decimal?      @db.Decimal(14, 2)
+  incomeType       IncomeType?
+  incomePosture    IncomePosture @default(RESTRICT)
+  budgetMethod     BudgetMethod  @default(FLAT)
+  budgetPercentage Decimal?      @db.Decimal(5, 4) // used when budgetMethod = PERCENTAGE
+  flatDailyAmount  Decimal?      @db.Decimal(14, 2) // used when budgetMethod = FLAT, set at PLAN_PROPOSED
+  strictnessLevel  Int? // user-chosen strictness, 1-5 or similar scale
 
   // The stated goal captured at onboarding — quoted back by the Manager persona (section 7)
-  statedGoal        String?
-  statedGoalSetAt   DateTime?
+  statedGoal      String?
+  statedGoalSetAt DateTime?
 
   // Discipline window (defaults from env, overridable per-user)
-  windowStartHour   Int      @default(11)
-  windowEndHour     Int      @default(20)
+  windowStartHour Int @default(11)
+  windowEndHour   Int @default(20)
 
   // Deliberate exit (PRD 4.1) — set only by ManagerConversationService once an
   // EXIT_RESTRICTIONS SettingsChangeRequest is APPROVED. While set, AllowanceService
@@ -215,8 +219,8 @@ model User {
   disciplineExitedAt DateTime?
 
   // KYC fields required by Rubies wallet provisioning — exactly one of bvn/nin is used.
-  bvn               String?
-  nin               String?
+  bvn String?
+  nin String?
 
   // Rubies wallet details returned by create-wallet — distinct from rubiesAccountId
   // (=customerId): accountNumber/accountName are what fund-transfer actually debits.
@@ -227,119 +231,131 @@ model User {
   // Drives the WhatsApp 24h free-form-vs-template send decision.
   lastInboundMessageAt DateTime?
 
-  onboardingStage   OnboardingStage @default(DISCOVERY)
+  onboardingStage       OnboardingStage @default(DISCOVERY)
   onboardingCompletedAt DateTime?
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  // Transfer-authentication PIN. pinHash is a scrypt digest with its
+  // parameters and per-user salt encoded inline (see PinService) — the PIN
+  // itself is never stored, never logged, and never persisted on the
+  // WhatsappMessage row that delivered it (see sensitive-fields.util.ts).
+  // A 4-digit PIN is only a 10,000-key space, so pinFailedAttempts/
+  // pinLockedUntil are the real defense, not the KDF.
+  pinHash           String?
+  pinSetAt          DateTime?
+  pinFailedAttempts Int       @default(0)
+  pinLockedUntil    DateTime?
 
-  dailyAllowances   DailyAllowance[]
-  transactions      Transaction[]
-  recipients        Recipient[]
-  transferDrafts    TransferDraft[]
-  overrides         OverrideHistory[]
-  settingsRequests  SettingsChangeRequest[]
-  onboardingSessions OnboardingSession[]
-  whatsappMessages  WhatsappMessage[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dailyAllowances      DailyAllowance[]
+  transactions         Transaction[]
+  recipients           Recipient[]
+  transferDrafts       TransferDraft[]
+  overrides            OverrideHistory[]
+  settingsRequests     SettingsChangeRequest[]
+  onboardingSessions   OnboardingSession[]
+  whatsappMessages     WhatsappMessage[]
   conversationSessions ConversationSession[]
-  llmCallLogs       LlmCallLog[]
-  incomingCredits   IncomingCredit[]
-  nudgeLogs         NudgeLog[]
+  llmCallLogs          LlmCallLog[]
+  incomingCredits      IncomingCredit[]
+  nudgeLogs            NudgeLog[]
+  pinChallenges        PinChallenge[]
 }
 
 // One row per user per calendar day — the heart of the discipline engine.
 model DailyAllowance {
-  id              String   @id @default(uuid())
-  userId          String
-  user            User     @relation(fields: [userId], references: [id])
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
-  date            DateTime @db.Date
-  weekStartDate   DateTime @db.Date // Monday of the ISO week this allowance belongs to
+  date          DateTime @db.Date
+  weekStartDate DateTime @db.Date // Monday of the ISO week this allowance belongs to
 
-  amountAllocated Decimal  @db.Decimal(14, 2)
+  amountAllocated  Decimal @db.Decimal(14, 2)
   surplusCarriedIn Decimal @default(0) @db.Decimal(14, 2) // free rollover from prior day, same week only
-  amountSpent     Decimal  @default(0) @db.Decimal(14, 2)
+  amountSpent      Decimal @default(0) @db.Decimal(14, 2)
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  transactions    Transaction[]
+  transactions Transaction[]
 
   @@unique([userId, date])
   @@index([userId, weekStartDate])
 }
 
 model Recipient {
-  id                String   @id @default(uuid())
-  userId            String
-  user              User     @relation(fields: [userId], references: [id])
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
-  accountNumber     String
-  bankCode          String
-  accountName       String?
-  label             RecipientLabel @default(OTHER)
+  accountNumber String
+  bankCode      String
+  accountName   String?
+  label         RecipientLabel @default(OTHER)
 
-  createdAt         DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  transactions      Transaction[]
+  transactions Transaction[]
 
   @@unique([userId, accountNumber, bankCode])
 }
 
 model TransferDraft {
-  id            String   @id @default(uuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id])
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
-  step          TransferDraftStep
-  status        TransferDraftStatus @default(ACTIVE)
+  step   TransferDraftStep
+  status TransferDraftStatus @default(ACTIVE)
 
-  amount        Decimal? @db.Decimal(14, 2)
-  accountNumber String?
-  bankCode      String?
-  bankName      String?
-  resolvedName  String?  // from Rubies name-enquiry, shown back to the user for confirmation
-  isNewRecipient Boolean @default(false)
-  label         RecipientLabel?
+  amount         Decimal?        @db.Decimal(14, 2)
+  accountNumber  String?
+  bankCode       String?
+  bankName       String?
+  resolvedName   String? // from Rubies name-enquiry, shown back to the user for confirmation
+  isNewRecipient Boolean         @default(false)
+  label          RecipientLabel?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId, status])
 }
 
 model Transaction {
-  id              String   @id @default(uuid())
-  userId          String
-  user            User     @relation(fields: [userId], references: [id])
-  recipientId     String
-  recipient       Recipient @relation(fields: [recipientId], references: [id])
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  recipientId String
+  recipient   Recipient @relation(fields: [recipientId], references: [id])
 
-  amount          Decimal  @db.Decimal(14, 2)
-  type            TransactionType @default(NORMAL)
-  status          TransactionStatus @default(PENDING_CONFIRMATION)
+  amount Decimal           @db.Decimal(14, 2)
+  type   TransactionType   @default(NORMAL)
+  status TransactionStatus @default(PENDING_CONFIRMATION)
 
-  feeAmount       Decimal  @default(0) @db.Decimal(14, 2)
+  feeAmount         Decimal   @default(0) @db.Decimal(14, 2)
   // Set once the feeAmount (if any) has actually been moved to
   // RUBIES_FEES_ACCOUNT_NUMBER — separate from feeAmount/type, which are
   // computed at confirm-time regardless of whether the sweep transfer
   // itself later succeeds. See TransferConfirmationService.sweepFeeToFeesAccount.
-  feeSweptAt      DateTime?
+  feeSweptAt        DateTime?
   feeSweepReference String?
 
-  rubiesReference String?  // external reference once executed via Rubies
+  rubiesReference String? // external reference once executed via Rubies
 
   // Idempotency / allowance-application linkage — makes recordSpend safe to call twice
   // and ties a spend to the exact button-confirm that authorized it.
-  dailyAllowanceId String?
-  dailyAllowance   DailyAllowance? @relation(fields: [dailyAllowanceId], references: [id])
+  dailyAllowanceId     String?
+  dailyAllowance       DailyAllowance? @relation(fields: [dailyAllowanceId], references: [id])
   appliedToAllowanceAt DateTime?
-  idempotencyKey  String?  @unique
-  whatsappMessageId String?
+  idempotencyKey       String?         @unique
+  whatsappMessageId    String?
 
-  createdAt       DateTime @default(now())
-  confirmedAt     DateTime?
-  executedAt      DateTime?
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+  executedAt  DateTime?
 
   overrideHistory OverrideHistory?
 }
@@ -347,32 +363,32 @@ model Transaction {
 // Denormalized record of every override applied — separate from Transaction
 // so override behavior can be reported on independently (PRD success criteria).
 model OverrideHistory {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   userId        String
-  user          User     @relation(fields: [userId], references: [id])
-  transactionId String   @unique
+  user          User        @relation(fields: [userId], references: [id])
+  transactionId String      @unique
   transaction   Transaction @relation(fields: [transactionId], references: [id])
 
-  type          TransactionType // EARLY_ACCESS or BORROWED
-  feeAmount     Decimal  @db.Decimal(14, 2)
-  waived        Boolean  @default(false) // true when covered by prior-day surplus
+  type      TransactionType // EARLY_ACCESS or BORROWED
+  feeAmount Decimal         @db.Decimal(14, 2)
+  waived    Boolean         @default(false) // true when covered by prior-day surplus
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 // The "Manager" escalation mechanic (section 7) — every settings-change
 // request is timestamped against the 7-day minimum, regardless of framing.
 model SettingsChangeRequest {
-  id            String   @id @default(uuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id])
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
-  type          SettingsChangeType
-  requestedChange String  // free text / structured payload describing the ask
-  reason        String?  // what the user said when asked why
+  type            SettingsChangeType
+  requestedChange String // free text / structured payload describing the ask
+  reason          String? // what the user said when asked why
 
-  requestedAt   DateTime @default(now())
-  eligibleAt    DateTime // requestedAt + 7 days, computed at creation
+  requestedAt DateTime @default(now())
+  eligibleAt  DateTime // requestedAt + 7 days, computed at creation
 
   // PRD §7: "a real delay is part of the design... not an instant reply — even a few
   // hours... gives the impulse room to pass." Separate from and in addition to the
@@ -382,23 +398,23 @@ model SettingsChangeRequest {
   initialReplyDueAt  DateTime?
   initialReplySentAt DateTime?
 
-  status        SettingsChangeStatus @default(PENDING)
-  managerNotes  String?
-  resolvedAt    DateTime?
+  status       SettingsChangeStatus @default(PENDING)
+  managerNotes String?
+  resolvedAt   DateTime?
 }
 
 // Raw conversation + extracted-field state for the onboarding flow.
 model OnboardingSession {
-  id            String   @id @default(uuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id])
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
   stage         OnboardingStage
-  messages      Json     // [{ role, content, at }]
-  extractedData Json?    // partial structured data as it's confirmed
+  messages      Json // [{ role, content, at }]
+  extractedData Json? // partial structured data as it's confirmed
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -409,23 +425,23 @@ model OnboardingSession {
 // Meta redelivers webhooks, and this unique constraint is what makes processing
 // idempotent.
 model WhatsappMessage {
-  id             String   @id @default(uuid())
-  userId         String?
-  user           User?    @relation(fields: [userId], references: [id])
-  waMessageId    String   @unique
-  direction      WhatsappMessageDirection
-  type           WhatsappMessageType
-  fromNumber     String
-  textBody       String?
-  buttonPayload  String?  // button/list id picked
-  mediaId        String?  // Meta media id for audio/image/doc — plumbing only, no download in v0
-  mediaMimeType  String?
-  transcript     String?  // filled in by the transcription fast-follow, not v0
-  flowResponseJson Json?  // parsed interactive.nfm_reply.response_json for FLOW_REPLY rows
-  rawPayload     Json
-  status         WhatsappMessageStatus @default(RECEIVED)
-  createdAt      DateTime @default(now())
-  processedAt    DateTime?
+  id               String                   @id @default(uuid())
+  userId           String?
+  user             User?                    @relation(fields: [userId], references: [id])
+  waMessageId      String                   @unique
+  direction        WhatsappMessageDirection
+  type             WhatsappMessageType
+  fromNumber       String
+  textBody         String?
+  buttonPayload    String? // button/list id picked
+  mediaId          String? // Meta media id for audio/image/doc — plumbing only, no download in v0
+  mediaMimeType    String?
+  transcript       String? // filled in by the transcription fast-follow, not v0
+  flowResponseJson Json? // parsed interactive.nfm_reply.response_json for FLOW_REPLY rows
+  rawPayload       Json
+  status           WhatsappMessageStatus    @default(RECEIVED)
+  createdAt        DateTime                 @default(now())
+  processedAt      DateTime?
 
   @@index([userId, createdAt])
 }
@@ -433,15 +449,15 @@ model WhatsappMessage {
 // Post-onboarding conversation state. OnboardingSession stays dedicated to the
 // stage machine; everything after COMPLETE uses this instead.
 model ConversationSession {
-  id          String   @id @default(uuid())
+  id          String                    @id @default(uuid())
   userId      String
-  user        User     @relation(fields: [userId], references: [id])
-  persona     ConversationPersona @default(KEDU)
+  user        User                      @relation(fields: [userId], references: [id])
+  persona     ConversationPersona       @default(KEDU)
   status      ConversationSessionStatus @default(ACTIVE)
-  messages    Json     // rolling window, same {role,content,at} shape as OnboardingSession
-  contextData Json?    // pending transfer draft, last classified intent, etc.
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  messages    Json // rolling window, same {role,content,at} shape as OnboardingSession
+  contextData Json? // pending transfer draft, last classified intent, etc.
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
 
   @@index([userId, status])
 }
@@ -450,19 +466,19 @@ model ConversationSession {
 // LlmService.complete() call is logged here, raw proposal separate from
 // whatever validation/write actually happened as a result.
 model LlmCallLog {
-  id               String   @id @default(uuid())
+  id               String         @id @default(uuid())
   userId           String?
-  user             User?    @relation(fields: [userId], references: [id])
+  user             User?          @relation(fields: [userId], references: [id])
   purpose          LlmCallPurpose
   provider         String
   model            String
   promptTokens     Int?
   completionTokens Int?
   latencyMs        Int?
-  rawResponse      Json     // the model's raw proposal — distinct from what was actually written
-  validationResult Json?    // ExtractionValidatorService verdict
-  appliedToUser    Boolean  @default(false)
-  createdAt        DateTime @default(now())
+  rawResponse      Json // the model's raw proposal — distinct from what was actually written
+  validationResult Json? // ExtractionValidatorService verdict
+  appliedToUser    Boolean        @default(false)
+  createdAt        DateTime       @default(now())
 
   @@index([userId, purpose, createdAt])
 }
@@ -471,13 +487,13 @@ model LlmCallLog {
 // included so a bad/unverifiable event is still auditable rather than silently
 // dropped.
 model RubiesWebhookEvent {
-  id              String   @id @default(uuid())
+  id              String                 @id @default(uuid())
   eventType       RubiesWebhookEventType
   rubiesReference String?
   rawPayload      Json
-  signatureValid  Boolean  @default(false)
+  signatureValid  Boolean                @default(false)
   processedAt     DateTime?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime               @default(now())
 
   @@index([rubiesReference])
 }
@@ -496,13 +512,42 @@ model IncomingCredit {
 
 // Proactive nudge dedup (PRD #13 — post-v0, see plan Phase 9).
 model NudgeLog {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id])
+  user         User      @relation(fields: [userId], references: [id])
   type         NudgeType
-  sentAt       DateTime @default(now())
-  channel      String   // "template" | "freeform"
+  sentAt       DateTime  @default(now())
+  channel      String // "template" | "freeform"
   templateName String?
 
   @@index([userId, type, sentAt])
+}
+
+// ---------------------------------------------------------------------------
+// PIN authentication
+// ---------------------------------------------------------------------------
+
+enum PinChallengePurpose {
+  SETUP
+  TRANSFER_AUTH
+}
+
+// Binds one PIN-entry Flow send to one specific action, single-use. Without
+// this, a replayed Flow reply could authorize a *different* transfer than the
+// one the user actually looked at: flowToken was previously generated on every
+// sendFlow and never checked on the way back in.
+model PinChallenge {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  flowToken     String              @unique
+  purpose       PinChallengePurpose
+  transactionId String? // null for SETUP
+
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, purpose])
 }

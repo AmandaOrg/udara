@@ -11,6 +11,8 @@ import { ChunkedMessengerService } from "./chunked-messenger.service";
 import { KeduChatService } from "./kedu-chat.service";
 import { AccountActionsService } from "./account-actions.service";
 import { IntentRouterService } from "./intent-router.service";
+import { PinGateService } from "./pin-gate.service";
+import { PinModule } from "../pin/pin.module";
 import { AllowanceModule } from "../allowance/allowance.module";
 import { RubiesModule } from "../rubies/rubies.module";
 import { TaggingModule } from "../tagging/tagging.module";
@@ -22,6 +24,7 @@ import { AiModule } from "../ai/ai.module";
   imports: [
     HttpModule,
     AiModule,
+    PinModule,
     // forwardRef: AllowanceModule's AllowanceScheduler needs WhatsappService back
     // (window-open nudge, Phase 9) — see allowance.module.ts for the other half.
     forwardRef(() => AllowanceModule),
@@ -48,6 +51,7 @@ import { AiModule } from "../ai/ai.module";
     KeduChatService,
     AccountActionsService,
     IntentRouterService,
+    PinGateService,
   ],
   exports: [
     WhatsappService,

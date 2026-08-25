@@ -1,0 +1,48 @@
+{
+  "version": "7.2",
+  "screens": [
+    {
+      "id": "PIN_ENTRY",
+      "title": "Enter your PIN",
+      "terminal": true,
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "pin_entry_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Authorize this transfer"
+              },
+              {
+                "type": "TextBody",
+                "text": "Enter your 4-digit PIN to approve this transfer. Three wrong attempts will lock your PIN for 15 minutes."
+              },
+              {
+                "type": "TextInput",
+                "name": "pin",
+                "label": "PIN",
+                "input-type": "passcode",
+                "min-chars": 4,
+                "max-chars": 4,
+                "required": true
+              },
+              {
+                "type": "Footer",
+                "label": "Authorize",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "pin": "${form.pin}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
