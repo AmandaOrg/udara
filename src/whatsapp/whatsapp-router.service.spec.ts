@@ -110,6 +110,20 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     expect(actionExecutor.execute).not.toHaveBeenCalled();
   });
 
+  it("never reaches the orchestrator for a common balance paraphrase", async () => {
+    await service.route(makeMessage("how much do I have"));
+
+    expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
+    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+  });
+
+  it("never reaches the orchestrator for a common limits paraphrase", async () => {
+    await service.route(makeMessage("how much can I spend today"));
+
+    expect(accountActions.sendLimitsStatus).toHaveBeenCalledWith(user);
+    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+  });
+
   it("never reaches the orchestrator while an active transfer draft owns the turn", async () => {
     accountActions.getActiveDraft.mockResolvedValue({ id: "draft-1" });
 

@@ -374,5 +374,110 @@
     "expected_surface": null,
     "expected_confidence": null,
     "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "limits_paraphrase_01",
+    "history": [{ "role": "user", "content": "what can I spend today" }],
+    "mock_proposal": {
+      "message": "checking your limits",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "limits_read",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["limits_read", "balance_read", "spending_menu"],
+    "expected_surface": "limits_read",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read", "transfer_wizard"]
+  },
+  {
+    "test_case_id": "borrow_semantics_reply_only",
+    "history": [{ "role": "user", "content": "I spent today's allowance already, can I still take 3k more?" }],
+    "mock_proposal": {
+      "message": "yeah, that's borrowing from tomorrow's allowance. there may be a fee — want me to pull up your exact limits?",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["limits_read", "transfer_wizard", "spending_menu"],
+    "expected_surface": null,
+    "expected_confidence": null,
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "borrow_from_tomorrow_limits",
+    "history": [{ "role": "user", "content": "can I borrow from tomorrow" }],
+    "mock_proposal": {
+      "message": "let me show you what's left and how borrowing works",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "limits_read",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["limits_read", "spending_menu"],
+    "expected_surface": "limits_read",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "past_transfer_no_wizard",
+    "history": [{ "role": "user", "content": "I sent 10k to my sister yesterday" }],
+    "mock_proposal": {
+      "message": "got it — anything you need to do now?",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["transfer_wizard", "spend_summary", "spending_menu"],
+    "expected_surface": null,
+    "expected_confidence": null,
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "menu_paraphrase_options",
+    "history": [{ "role": "user", "content": "what are my options" }],
+    "mock_proposal": {
+      "message": "here's what you can do",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "spending_menu",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["spending_menu", "balance_read", "transfer_wizard"],
+    "expected_surface": "spending_menu",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "balance_paraphrase_check_money",
+    "history": [{ "role": "user", "content": "check my money" }],
+    "mock_proposal": {
+      "message": "one sec",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "balance_read",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["balance_read", "limits_read"],
+    "expected_surface": "balance_read",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["limits_read"]
+  },
+  {
+    "test_case_id": "overspend_send_intent_wizard",
+    "history": [{ "role": "user", "content": "I blew today's allowance but I need to send 5k to my landlord now" }],
+    "mock_proposal": {
+      "message": "that's borrowing from future allowance — I'll open the send form",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 5000, "label_hint": "RENT" }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "limits_read"],
+    "expected_surface": "transfer_wizard",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["limits_read"]
   }
 ]

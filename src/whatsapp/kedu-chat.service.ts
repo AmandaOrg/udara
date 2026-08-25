@@ -6,7 +6,10 @@ import { LlmCallLoggerService } from "../ai/llm-call-logger.service";
 import { buildKeduSystemMessage } from "../ai/prompts/kedu-persona.prompts";
 import { AllowanceService } from "../allowance/allowance.service";
 import { WindowService } from "../allowance/window.service";
-import { formatWatClockTime } from "../common/wat-time.util";
+import {
+  formatWatCalendarDate,
+  formatWatClockTime,
+} from "../common/wat-time.util";
 import {
   ConversationPersona,
   ConversationSession,
@@ -84,6 +87,7 @@ export class KeduChatService {
     const now = new Date();
     const lines = [
       "Live facts, computed just now. These are real values, not estimates. Use these exact numbers and never guess or substitute your own:",
+      `- Current date: ${formatWatCalendarDate(now)} (WAT)`,
       `- Current time: ${formatWatClockTime(now)} WAT (Udara operates in WAT only, there is no other timezone)`,
       `- The spending window is ${user.windowStartHour}:00 to ${user.windowEndHour}:00 WAT`,
     ];

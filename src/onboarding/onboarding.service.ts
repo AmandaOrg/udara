@@ -19,6 +19,7 @@ import { buildOnboardingPrompt } from "../ai/prompts/onboarding.prompts";
 import { ChunkedMessengerService } from "../whatsapp/chunked-messenger.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { RubiesService } from "../rubies/rubies.service";
+import { displayFirstNameOrThere } from "../common/display-name.util";
 import {
   STRUCTURED_QUESTIONS,
   STRICTNESS_LEVEL_BY_SQ2_ID,
@@ -575,7 +576,7 @@ export class OnboardingService {
     const freshUser = await this.prisma.user.findUniqueOrThrow({
       where: { id: user.id },
     });
-    const firstName = (freshUser.name ?? "there").split(" ")[0];
+    const firstName = displayFirstNameOrThere(freshUser.name);
     const text = [
       `now that your account is set up, ${firstName}, i want to actually understand your money situation deeply, so that the plan i build for you fits your real life, not a guess.`,
       "tell me:\n\nwhat financial goal are you currently trying to achieve this year?\nwhat do you think makes it difficult for you to achieve that goal?\nhave you tried anything before to control your spending, and what made it hard to stay consistent?",
@@ -633,7 +634,7 @@ export class OnboardingService {
     const freshUser = await this.prisma.user.findUniqueOrThrow({
       where: { id: user.id },
     });
-    const firstName = (freshUser.name ?? "there").split(" ")[0];
+    const firstName = displayFirstNameOrThere(freshUser.name);
     const ack = `got it, ${firstName}.`;
     await this.appendMessage(session.id, "assistant", ack);
     await this.whatsapp.sendText(user.whatsappNumber, ack, user.id);
@@ -653,7 +654,7 @@ export class OnboardingService {
     user: User,
     sessionId: string,
   ): Promise<void> {
-    const firstName = (user.name ?? "there").split(" ")[0];
+    const firstName = displayFirstNameOrThere(user.name);
     const text = [
       `${firstName}, this is exactly where i help the most, turning what you just told me into a real plan that actually protects your money, not just tracking it after the fact.`,
       "for me to help you, i need to set you up with a secure bank account. to create it, i need your email address, your date of birth, and your bvn or nin.",
@@ -861,7 +862,7 @@ export class OnboardingService {
       ? extractedData.moneyStory
       : {};
 
-    const firstName = (freshUser.name ?? "there").split(" ")[0];
+    const firstName = displayFirstNameOrThere(freshUser.name);
     const regret =
       typeof quickQuestions.spendingRegret === "string"
         ? quickQuestions.spendingRegret
@@ -1001,7 +1002,7 @@ export class OnboardingService {
     });
     await this.advanceStage(sessionId, OnboardingStage.PLAN_REVIEW);
 
-    const firstName = (freshUser.name ?? "there").split(" ")[0];
+    const firstName = displayFirstNameOrThere(freshUser.name);
     const planText = [
       `${firstName}, i have enough to build your first udara plan.`,
       `here's how i'm splitting your ₦${monthlyIncome.toLocaleString("en-NG")}. the 50/30/20 principle means 50% goes to needs like rent and bills, 30% goes to wants like food, shopping, and going out, and 20% goes to savings.`,

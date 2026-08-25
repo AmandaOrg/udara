@@ -2,6 +2,7 @@ import {
   TransferConfirmationService,
   CONFIRM_BUTTON_PREFIX,
   CANCEL_BUTTON_PREFIX,
+  formatSpendFeeLine,
 } from "./transfer-confirmation.service";
 import {
   OnboardingStage,
@@ -9,6 +10,24 @@ import {
   TransactionStatus,
 } from "@prisma/client";
 import { TransactionType } from "../common/enums/transaction-type.enum";
+
+describe("formatSpendFeeLine", () => {
+  it("uses plain language instead of enum names", () => {
+    expect(
+      formatSpendFeeLine(TransactionType.BORROWED, 1020, false),
+    ).toContain("borrowing from future allowance");
+    expect(formatSpendFeeLine(TransactionType.BORROWED, 1020, false)).not.toContain(
+      "BORROWED",
+    );
+    expect(
+      formatSpendFeeLine(TransactionType.EARLY_ACCESS, 1020, false),
+    ).toContain("outside spending window");
+  });
+
+  it("returns null for NORMAL spends", () => {
+    expect(formatSpendFeeLine(TransactionType.NORMAL, 0, false)).toBeNull();
+  });
+});
 
 describe("TransferConfirmationService", () => {
   let prisma: {
@@ -154,7 +173,7 @@ describe("TransferConfirmationService", () => {
 
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
-        expect.stringContaining("don't have a Udara account"),
+        expect.stringContaining("don't have a udara account"),
         "user-1",
       );
       expect(allowance.evaluateSpend).not.toHaveBeenCalled();

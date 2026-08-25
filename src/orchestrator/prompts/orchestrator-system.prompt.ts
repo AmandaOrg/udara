@@ -2,14 +2,15 @@
  * Builds the orchestrator's system prompt on every turn. Token-budgeted:
  *
  *   Persona identity + voice    ~600 tok
- *   Orchestrator role            ~300 tok
- *   Eligible surfaces (pruned)   ~200 tok  ← not the full registry
- *   Live facts                   ~100 tok
+ *   Orchestrator role            ~350 tok
+ *   Intent recognition           ~200 tok
+ *   Eligible surfaces (pruned)   ~250 tok
+ *   Live facts + allowance sem.  ~150 tok
  *   User state snapshot           ~80 tok
  *   Guardrails                   ~150 tok
- *   History (dynamic, last 10)   ~800 tok
+ *   History (dynamic, last 30)  ~1200 tok
  *   ─────────────────────────────────────
- *   Total system + context      ~2300 tok
+ *   Total system + context      ~3000 tok
  */
 
 import { JsonSchemaToolDef, LlmMessage } from '../../ai/llm.types';
@@ -17,6 +18,7 @@ import {
   KEDU_IDENTITY_ANCHOR,
   KEDU_VOICE_RULES,
 } from '../../ai/prompts/kedu-persona.prompts';
+import { formatDisplayFirstName } from '../../common/display-name.util';
 import {
   SurfaceDefinition,
   formatSurfacesForPrompt,
@@ -35,11 +37,21 @@ Your job each turn:
 
 Decision rules:
 - Only propose surfaces listed in "Available surfaces" below. Never invent surface keys.
+- Treat paraphrases as the same intent (see Intent recognition below).
 - For money questions (balance, limits, spending), ALWAYS use the matching surface so the user sees real data — never guess or remember numbers from earlier turns.
 - For read surfaces (balance_read, limits_read, account_details, spend_summary): your message must be a short lead-in ONLY (e.g. "pulling that up now"). Do NOT restate balances, allowance figures, or account numbers in the message — the surface sends the real figures next.
 - For transfers, use transfer_wizard — you cannot process transfers yourself.
 - When type is show_surface, you MUST set confidence. Use "high" only when the intent is clear. Use "medium" when plausible but ambiguous — the system will send your text without launching the surface.
-- If the user is chatting, venting, asking general questions, or the intent is ambiguous, use reply_only.`;
+- If the user is chatting, venting, asking general questions, or the intent is ambiguous, use reply_only.
+- Keep message text to ~2–3 short sentences max unless the user explicitly asked for a breakdown.`;
+
+const INTENT_RECOGNITION = `Intent recognition:
+- Paraphrases count. "how much do I have left", "check my money", and "what's in my account" all mean balance_read. "what can I spend today", "daily limit", and "allowance left" mean limits_read. "help", "options", "what can you do" mean spending_menu.
+- Past-tense money talk is NOT an active transfer. "I sent money yesterday" or "that transfer cleared" → reply_only or spend_summary, not transfer_wizard.
+- Active send intent → transfer_wizard: "send 5k", "pay my landlord", "I need to transfer now", "can I send money today".
+- When the user has used today's allowance and wants more (or asks to borrow from tomorrow / future days): explain plainly that extra spending borrows from future allowance and may include a fee — use the Allowance semantics in live facts. Offer limits_read for exact figures, or transfer_wizard only if they clearly want to send money now. Do NOT invent fee amounts.
+- Settings changes (raise limit, change window, exit restrictions) → reply_only, not limits_read.
+- Date/time questions ("what day is it", "today's date") → reply_only using Current date and Current time from live facts. Never say you don't have a calendar.`;
 
 // ─── Guardrails ─────────────────────────────────────────────────────
 
@@ -64,7 +76,7 @@ export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
       message: {
         type: 'string',
         description:
-          "Your reply in Udara's voice. Always required. Keep it natural and conversational. For read surfaces, short lead-in only — no numbers.",
+          "Your reply in Udara's voice. Always required. Max ~2–3 short sentences. Warm and firm, not rude. For read surfaces, short lead-in only — no numbers. Capitalize the user's name if you use it.",
       },
       action: {
         type: 'object',
@@ -122,10 +134,13 @@ export function buildOrchestratorSystemMessage(
   eligibleSurfaces: SurfaceDefinition[],
   user: User,
 ): LlmMessage {
+  const displayName = formatDisplayFirstName(user.name);
   const userState = [
     `Onboarding: ${user.onboardingStage}`,
     user.rubiesAccountNumber ? 'Account: active' : 'Account: none',
-    user.name ? `Name: ${user.name}` : null,
+    displayName
+      ? `Preferred name: ${displayName} (capitalize exactly when addressing them)`
+      : null,
     user.disciplineExitedAt
       ? 'Restrictions: exited'
       : 'Restrictions: active',
@@ -139,10 +154,11 @@ export function buildOrchestratorSystemMessage(
       KEDU_IDENTITY_ANCHOR,
       KEDU_VOICE_RULES,
       ORCHESTRATOR_ROLE,
+      INTENT_RECOGNITION,
       formatSurfacesForPrompt(eligibleSurfaces),
       liveFacts,
       `User state: ${userState}`,
       GUARDRAILS,
     ].join('\n\n---\n\n'),
   };
-}
+};

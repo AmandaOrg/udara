@@ -38,7 +38,11 @@ import { SensitiveFields } from "./whatsapp-message.service";
 // match: exact keywords only, consistent with the rest of the stopgap
 // command parsing.
 const BALANCE_RE = /^balance$/i;
+const BALANCE_PARAPHRASE_RE =
+  /^(check\s+)?balance\b|^how much do i have\b|^what(?:'s| is) in my account\b/i;
 const LIMITS_RE = /^limits?$/i;
+const LIMITS_PARAPHRASE_RE =
+  /^how much can i (still )?spend\b|^what(?:'s| is) left (for )?today\b|^daily limit\b/i;
 const ACCOUNT_DETAILS_RE = /^account( details)?$/i;
 const TRANSFER_START_RE = /^(send money|transfer)$/i;
 
@@ -297,11 +301,11 @@ export class WhatsappRouterService {
       return;
     }
 
-    if (BALANCE_RE.test(text.trim())) {
+    if (BALANCE_RE.test(text.trim()) || BALANCE_PARAPHRASE_RE.test(text.trim())) {
       await this.accountActions.sendBalance(user);
       return;
     }
-    if (LIMITS_RE.test(text.trim())) {
+    if (LIMITS_RE.test(text.trim()) || LIMITS_PARAPHRASE_RE.test(text.trim())) {
       await this.accountActions.sendLimitsStatus(user);
       return;
     }

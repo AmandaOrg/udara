@@ -29,7 +29,10 @@ import {
   OrchestratorResult,
   ORCHESTRATOR_LLM_TIMEOUT_MS,
 } from './orchestrator.types';
-import { formatWatClockTime } from '../common/wat-time.util';
+import {
+  formatWatCalendarDate,
+  formatWatClockTime,
+} from '../common/wat-time.util';
 import {
   ConversationPersona,
   ConversationSession,
@@ -238,6 +241,7 @@ export class OrchestratorService {
     const now = new Date();
     const lines = [
       'Live facts, computed just now. These are real values, not estimates. Use these exact numbers and never guess or substitute your own:',
+      `- Current date: ${formatWatCalendarDate(now)} (WAT)`,
       `- Current time: ${formatWatClockTime(now)} WAT`,
       `- Spending window: ${user.windowStartHour}:00 to ${user.windowEndHour}:00 WAT`,
     ];
@@ -273,6 +277,28 @@ export class OrchestratorService {
         `- Remaining allowance today: ₦${remainingToday.toLocaleString('en-NG')}`,
         `- Remaining allowance this week: ₦${remainingWeek.toLocaleString('en-NG')}`,
       );
+
+      if (!user.disciplineExitedAt) {
+        lines.push('Allowance semantics (for explaining to the user):');
+        const withinWindow = this.windowService.isWithinWindow(
+          user.windowStartHour,
+          user.windowEndHour,
+          now,
+        );
+        if (!withinWindow) {
+          lines.push(
+            '- Transfers outside the spending window are early access (fee applies), not borrowing from future days.',
+          );
+        } else if (remainingToday <= 0) {
+          lines.push(
+            "- Today's allowance is used up. Further spending inside the window borrows from future days' allowance (tomorrow / rest of week) and may include a fee unless yesterday's surplus covers it.",
+          );
+        } else {
+          lines.push(
+            `- Any spend above today's remaining (₦${remainingToday.toLocaleString('en-NG')}) borrows from future allowance and may include a fee.`,
+          );
+        }
+      }
     } catch (err) {
       this.logger.warn(
         `Could not load allowance for user ${user.id}: ${String(err)}`,
@@ -336,8 +362,8 @@ export class OrchestratorService {
     const messages = Array.isArray(updated.messages)
       ? updated.messages
       : [];
-    // Last 10 messages (not 20) — smaller context = more accurate tool calls.
-    return messages.slice(-10).map((raw) => {
+    // increased to 30, because the agent do forget the previous messages
+    return messages.slice(-30).map((raw) => {
       const m = raw as { role?: string; content?: string };
       return {
         role: m.role === 'assistant' ? 'assistant' : 'user',

@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { TransferConfirmationService } from "../whatsapp/transfer-confirmation.service";
 import { AllowanceService } from "../allowance/allowance.service";
+import { displayFirstNameOrThere } from "../common/display-name.util";
 import { RubiesSignatureGuard } from "./rubies-signature.guard";
 import { mapRubiesResponseCode } from "./rubies.service";
 import {
@@ -141,7 +142,7 @@ export class RubiesWebhookController {
       );
       const daily = Number(dailyAllowance.amountAllocated);
       const weekly = daily * 7;
-      const firstName = (user.name ?? "there").split(" ")[0];
+      const firstName = displayFirstNameOrThere(user.name);
       const message = [
         `₦${amount.toLocaleString("en-NG")} received, ${firstName} 🎉 your udara account is now active.`,
         `daily spending limit: ₦${daily.toLocaleString("en-NG")}\nweekly spending limit: ₦${weekly.toLocaleString("en-NG")}`,

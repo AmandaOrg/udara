@@ -122,6 +122,21 @@ export function startOfWatIsoWeekInstant(date: Date): Date {
 }
 
 /**
+ * The WAT calendar date as a human label ("Tuesday, 25 August 2026"), for
+ * putting in front of the conversational model so it never has to guess what
+ * day it is.
+ */
+export function formatWatCalendarDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: WAT_TIME_ZONE,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
+/**
  * The current WAT wall-clock time as a short human label ("10:20pm"), for
  * putting in front of the conversational model so it never has to guess what
  * time it is. Lowercased and space-stripped to match Udara's texting voice.

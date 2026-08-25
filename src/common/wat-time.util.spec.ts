@@ -6,6 +6,7 @@ import {
   startOfWatIsoWeekBucketKey,
   startOfWatIsoWeekInstant,
   hoursUntilWatHour,
+  formatWatCalendarDate,
   formatWatClockTime,
 } from "./wat-time.util";
 
@@ -105,6 +106,20 @@ describe("wat-time.util", () => {
       expect(hoursUntilWatHour(11, new Date("2026-01-08T20:00:00Z"))).toBe(14);
     });
   });
+  describe("formatWatCalendarDate", () => {
+    it("formats the WAT calendar date for a daytime instant", () => {
+      expect(formatWatCalendarDate(new Date("2026-01-08T10:00:00Z"))).toBe(
+        "Thursday, 8 January 2026",
+      );
+    });
+
+    it("rolls the calendar date forward for a late-UTC instant that's tomorrow in WAT", () => {
+      expect(formatWatCalendarDate(new Date("2026-01-08T23:30:00Z"))).toBe(
+        "Friday, 9 January 2026",
+      );
+    });
+  });
+
   describe("formatWatClockTime", () => {
     it("formats an evening instant as a WAT 12-hour label", () => {
       // 21:20 UTC = 22:20 WAT. This is the exact scenario from the reported

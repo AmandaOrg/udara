@@ -20,6 +20,43 @@ import { TransactionType as LocalTransactionType } from "../common/enums/transac
 export const CONFIRM_BUTTON_PREFIX = "confirm_transfer:";
 export const CANCEL_BUTTON_PREFIX = "cancel_transfer:";
 
+/** User-facing label for spend classification on confirm buttons. */
+export function formatSpendTypeLabel(
+  type: LocalTransactionType,
+  feeAmount: number,
+  waived: boolean,
+): string | null {
+  if (type === LocalTransactionType.NORMAL) return null;
+  if (type === LocalTransactionType.EARLY_ACCESS) {
+    return waived
+      ? "outside spending window (fee waived)"
+      : "outside spending window";
+  }
+  if (type === LocalTransactionType.BORROWED) {
+    return waived
+      ? "borrowing from future allowance (fee waived)"
+      : "borrowing from future allowance";
+  }
+  return null;
+}
+
+/** Fee line for confirm UI — omits raw enum names. */
+export function formatSpendFeeLine(
+  type: LocalTransactionType,
+  feeAmount: number,
+  waived: boolean,
+): string | null {
+  const label = formatSpendTypeLabel(type, feeAmount, waived);
+  if (!label) return null;
+  if (feeAmount > 0) {
+    return `${label} fee: ₦${feeAmount.toLocaleString("en-NG")}${waived ? " (waived)" : ""}`;
+  }
+  if (waived && type === LocalTransactionType.BORROWED) {
+    return `${label}: fee waived by yesterday's surplus`;
+  }
+  return label;
+}
+
 /**
  * The confirm-before-transfer flow (PRD §5's pre-transfer confirmation, §4a):
  * evaluateSpend -> tag/confirm recipient -> confirm buttons -> initiateTransfer
@@ -72,7 +109,7 @@ export class TransferConfirmationService {
     if (!user.rubiesAccountNumber || !user.rubiesAccountName) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "You don't have a Udara account set up yet, so there's nothing to send from.",
+        "you don't have a udara account set up yet, so there's nothing to send from.",
         user.id,
       );
       return;
@@ -138,12 +175,13 @@ export class TransferConfirmationService {
         : `Send to ${recipient.accountName ?? recipient.accountNumber}?`,
       `Amount: ₦${params.amount.toLocaleString("en-NG")}`,
     ];
-    if (evaluation.feeAmount > 0) {
-      bodyLines.push(
-        `${evaluation.type} fee: ₦${evaluation.feeAmount.toLocaleString("en-NG")}${evaluation.waived ? " (waived)" : ""}`,
-      );
-    } else if (evaluation.type !== LocalTransactionType.NORMAL) {
-      bodyLines.push(`${evaluation.type}: fee waived by yesterday's surplus`);
+    const feeLine = formatSpendFeeLine(
+      evaluation.type as LocalTransactionType,
+      evaluation.feeAmount,
+      evaluation.waived,
+    );
+    if (feeLine) {
+      bodyLines.push(feeLine);
     }
     bodyLines.push(
       `Remaining today after this: ₦${(evaluation.remainingToday - params.amount).toLocaleString("en-NG")}`,
