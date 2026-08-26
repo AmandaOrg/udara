@@ -92,6 +92,7 @@ describe("AccountActionsService", () => {
   let tagging: { findRecipient: jest.Mock };
   let whatsapp: { sendText: jest.Mock; sendListMessage: jest.Mock };
   let transferConfirmation: { initiateTransfer: jest.Mock };
+  let hintsRecovery: { recoverForUser: jest.Mock };
   let service: AccountActionsService;
 
   function makeUser(overrides: Record<string, unknown> = {}) {
@@ -135,6 +136,7 @@ describe("AccountActionsService", () => {
       sendListMessage: jest.fn().mockResolvedValue({ waMessageId: "wamid.2" }),
     };
     transferConfirmation = { initiateTransfer: jest.fn() };
+    hintsRecovery = { recoverForUser: jest.fn().mockResolvedValue({}) };
 
     service = new AccountActionsService(
       prisma as any,
@@ -144,6 +146,7 @@ describe("AccountActionsService", () => {
       tagging as any,
       whatsapp as any,
       transferConfirmation as any,
+      hintsRecovery as any,
     );
   });
 

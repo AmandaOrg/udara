@@ -17,7 +17,9 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   let accountActions: Record<string, jest.Mock>;
   let pinGate: { handlePinFlowReply: jest.Mock };
   let orchestrator: { handleMessage: jest.Mock };
-  let actionExecutor: { execute: jest.Mock };
+  let actionExecutor: { execute: jest.Mock; sendSafeFallback: jest.Mock };
+  let chunkedMessenger: { sendChunkedReply: jest.Mock };
+  let hintsRecovery: { recoverForUser: jest.Mock };
   let service: WhatsappRouterService;
 
   const user = {
@@ -68,7 +70,16 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     };
     pinGate = { handlePinFlowReply: jest.fn() };
     orchestrator = { handleMessage: jest.fn() };
-    actionExecutor = { execute: jest.fn().mockResolvedValue(undefined) };
+    actionExecutor = {
+      execute: jest.fn().mockResolvedValue(undefined),
+      sendSafeFallback: jest.fn().mockResolvedValue(undefined),
+    };
+    chunkedMessenger = {
+      sendChunkedReply: jest.fn().mockResolvedValue(undefined),
+    };
+    hintsRecovery = {
+      recoverForUser: jest.fn().mockResolvedValue({}),
+    };
 
     service = new WhatsappRouterService(
       prisma as any,
@@ -81,6 +92,8 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       pinGate as any,
       orchestrator as any,
       actionExecutor as any,
+      chunkedMessenger as any,
+      hintsRecovery as any,
     );
   });
 
@@ -115,6 +128,44 @@ describe("WhatsappRouterService — orchestrator free text", () => {
 
     expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
     expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+  });
+
+  it("fast-paths transfer details without calling the orchestrator", async () => {
+    await service.route(
+      makeMessage(
+        "i want to send money to this account 8100368023, Opay",
+      ),
+    );
+
+    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    expect(accountActions.startTransferWizard).toHaveBeenCalledWith(
+      user,
+      expect.objectContaining({
+        accountNumber: "8100368023",
+        bankName: "opay",
+      }),
+      expect.objectContaining({ recoverFromSession: true }),
+    );
+  });
+
+  it("recovers transfer hints when the orchestrator fails", async () => {
+    orchestrator.handleMessage.mockResolvedValue({ ok: false, message: "" });
+    hintsRecovery.recoverForUser.mockResolvedValue({
+      accountNumber: "8100368023",
+      bankName: "opay",
+    });
+
+    await service.route(makeMessage("I need to transfer now"));
+
+    expect(actionExecutor.sendSafeFallback).not.toHaveBeenCalled();
+    expect(accountActions.startTransferWizard).toHaveBeenCalledWith(
+      user,
+      expect.objectContaining({
+        accountNumber: "8100368023",
+        bankName: "opay",
+      }),
+      expect.objectContaining({ recoverFromSession: false }),
+    );
   });
 
   it("never reaches the orchestrator for a common limits paraphrase", async () => {

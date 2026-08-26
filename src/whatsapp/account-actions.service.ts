@@ -8,6 +8,8 @@ import { WhatsappService } from "./whatsapp.service";
 import { TransferConfirmationService } from "./transfer-confirmation.service";
 import { BankInfo, BankMatchResult, matchBanks } from "../common/bank-match.util";
 import { TransferWizardHints } from "../orchestrator/transfer-hints.util";
+import { TransferHintsRecoveryService } from "./transfer-hints-recovery.service";
+import { mergeTransferHints } from "./transfer-hints-from-text.util";
 import {
   RecipientLabel,
   TransferDraft,
@@ -58,6 +60,7 @@ export class AccountActionsService {
     private readonly tagging: TaggingService,
     private readonly whatsapp: WhatsappService,
     private readonly transferConfirmation: TransferConfirmationService,
+    private readonly hintsRecovery: TransferHintsRecoveryService,
   ) {}
 
   // =========================================================================
@@ -186,6 +189,7 @@ export class AccountActionsService {
   async startTransferWizard(
     user: User,
     hints?: TransferWizardHints,
+    options?: { recoverFromSession?: boolean },
   ): Promise<void> {
     if (!user.rubiesAccountNumber) {
       await this.whatsapp.sendText(
@@ -202,12 +206,18 @@ export class AccountActionsService {
       data: { status: TransferDraftStatus.CANCELLED },
     });
 
-    const amount = hints?.amount;
-    const accountNumber = hints?.accountNumber;
-    const labelHint = hints?.labelHint;
+    const recovered =
+      options?.recoverFromSession !== false
+        ? await this.hintsRecovery.recoverForUser(user.id)
+        : {};
+    const mergedHints = mergeTransferHints(recovered, hints);
 
-    let bankCode = hints?.bankCode;
-    let bankName = hints?.bankName;
+    const amount = mergedHints?.amount;
+    const accountNumber = mergedHints?.accountNumber;
+    const labelHint = mergedHints?.labelHint;
+
+    let bankCode = mergedHints?.bankCode;
+    let bankName = mergedHints?.bankName;
     let bankMatch: BankMatchResult | null = null;
 
     if (!bankCode && bankName) {
@@ -497,7 +507,14 @@ export class AccountActionsService {
     draft: TransferDraft,
     text: string,
   ): Promise<void> {
-    const accountNumber = text.replace(/\D/g, "");
+    let accountNumber = text.replace(/\D/g, "");
+    if (accountNumber.length !== 10) {
+      const recovered = await this.hintsRecovery.recoverForUser(user.id);
+      if (recovered.accountNumber) {
+        accountNumber = recovered.accountNumber;
+      }
+    }
+
     if (accountNumber.length !== 10) {
       await this.whatsapp.sendText(
         user.whatsappNumber,

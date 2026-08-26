@@ -184,7 +184,7 @@ export class TransferConfirmationService {
       bodyLines.push(feeLine);
     }
     bodyLines.push(
-      `Remaining today after this: ₦${(evaluation.remainingToday - params.amount).toLocaleString("en-NG")}`,
+      `Allowance left today after this: ₦${Math.max(0, evaluation.remainingToday - params.amount).toLocaleString("en-NG")}`,
     );
 
     await this.whatsapp.sendInteractiveButtons(

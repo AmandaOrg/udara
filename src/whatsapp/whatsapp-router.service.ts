@@ -32,6 +32,15 @@ import {
 import { User, WhatsappMessage, WhatsappMessageType } from "@prisma/client";
 import { PinGateService } from "./pin-gate.service";
 import { SensitiveFields } from "./whatsapp-message.service";
+import { ChunkedMessengerService } from "./chunked-messenger.service";
+import { TransferHintsRecoveryService } from "./transfer-hints-recovery.service";
+import {
+  extractTransferHintsFromText,
+  hasTransferHints,
+  looksLikeTransferIntent,
+  mergeTransferHints,
+} from "./transfer-hints-from-text.util";
+import { ORCHESTRATOR_FAILURE_MESSAGE } from "../orchestrator/orchestrator.types";
 
 // Quick-access keyword shortcuts — same actions the "menu" list offers,
 // reachable without opening the menu first. Deliberately not a fuzzy/AI
@@ -71,6 +80,8 @@ export class WhatsappRouterService {
     private readonly pinGate: PinGateService,
     private readonly orchestrator: OrchestratorService,
     private readonly actionExecutor: ActionExecutorService,
+    private readonly chunkedMessenger: ChunkedMessengerService,
+    private readonly hintsRecovery: TransferHintsRecoveryService,
   ) {}
 
   /**
@@ -216,8 +227,10 @@ export class WhatsappRouterService {
         return this.accountActions.sendLimitsStatus(user);
       case MENU_ACCOUNT:
         return this.accountActions.sendAccountDetails(user);
-      case MENU_TRANSFER:
-        return this.accountActions.startTransferWizard(user);
+      case MENU_TRANSFER: {
+        const recovered = await this.hintsRecovery.recoverForUser(user.id);
+        return this.accountActions.startTransferWizard(user, recovered);
+      }
       default:
         this.logger.warn(`Unrecognized menu selection "${payload}"`);
     }
@@ -314,7 +327,8 @@ export class WhatsappRouterService {
       return;
     }
     if (TRANSFER_START_RE.test(text.trim())) {
-      await this.accountActions.startTransferWizard(user);
+      const recovered = await this.hintsRecovery.recoverForUser(user.id);
+      await this.accountActions.startTransferWizard(user, recovered);
       return;
     }
 
@@ -342,8 +356,42 @@ export class WhatsappRouterService {
       return;
     }
 
+    // ── Deterministic transfer fast-path (no LLM) ─────────────────────
+    const inlineHints = extractTransferHintsFromText(text);
+    if (looksLikeTransferIntent(text) && hasTransferHints(inlineHints)) {
+      await this.chunkedMessenger.sendChunkedReply(
+        user.whatsappNumber,
+        "got it — I'll set up that transfer.",
+        user.id,
+      );
+      await this.accountActions.startTransferWizard(user, inlineHints, {
+        recoverFromSession: true,
+      });
+      return;
+    }
+
     // ── AI Orchestrator + Action Executor ───────────────────────────
     const result = await this.orchestrator.handleMessage(user, text);
+    if (result.ok === false) {
+      const recovered = await this.hintsRecovery.recoverForUser(user.id);
+      const hints = mergeTransferHints(
+        recovered,
+        extractTransferHintsFromText(text),
+      );
+      if (looksLikeTransferIntent(text) || hasTransferHints(hints)) {
+        await this.chunkedMessenger.sendChunkedReply(
+          user.whatsappNumber,
+          ORCHESTRATOR_FAILURE_MESSAGE,
+          user.id,
+        );
+        await this.accountActions.startTransferWizard(user, hints, {
+          recoverFromSession: false,
+        });
+        return;
+      }
+      await this.actionExecutor.sendSafeFallback(user);
+      return;
+    }
     await this.actionExecutor.execute(user, result);
   }
 

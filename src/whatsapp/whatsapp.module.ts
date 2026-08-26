@@ -56,6 +56,7 @@ import { AiModule } from "../ai/ai.module";
     AccountActionsService,
     IntentRouterService,
     PinGateService,
+    TransferHintsRecoveryService,
     // Needs WhatsApp/account deps — provided here, not in OrchestratorModule.
     ActionExecutorService,
   ],
