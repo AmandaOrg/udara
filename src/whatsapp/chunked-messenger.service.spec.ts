@@ -77,17 +77,16 @@ describe("ChunkedMessengerService", () => {
     expect(sleepSpy).not.toHaveBeenCalled();
   });
 
-  it("inserts a ~4s gap delay between chunks but not before the first one", async () => {
+  it("inserts a short gap delay between chunks but not before the first one", async () => {
     await service.sendChunkedReply("234801", "one\n\ntwo\n\nthree", "user-1");
-    // gap before chunk 2, gap before chunk 3 — none before chunk 1
     expect(sleepSpy).toHaveBeenCalledTimes(2);
     for (const [gap] of sleepSpy.mock.calls) {
-      expect(gap).toBeGreaterThanOrEqual(3500);
-      expect(gap).toBeLessThanOrEqual(4500);
+      expect(gap).toBeGreaterThanOrEqual(400);
+      expect(gap).toBeLessThanOrEqual(700);
     }
   });
 
-  it("keeps the inter-chunk gap ~4s regardless of chunk length", async () => {
+  it("keeps the inter-chunk gap short regardless of chunk length", async () => {
     const longChunk = new Array(50).fill("word").join(" ");
     await service.sendChunkedReply(
       "234801",
@@ -95,8 +94,8 @@ describe("ChunkedMessengerService", () => {
       "user-1",
     );
     const [gap] = sleepSpy.mock.calls[0];
-    expect(gap).toBeGreaterThanOrEqual(3500);
-    expect(gap).toBeLessThanOrEqual(4500);
+    expect(gap).toBeGreaterThanOrEqual(400);
+    expect(gap).toBeLessThanOrEqual(700);
   });
 
   it("re-shows the typing indicator (against the user's last inbound message) before each gap", async () => {

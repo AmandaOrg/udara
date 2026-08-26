@@ -301,22 +301,38 @@ export class OrchestratorService {
       `- Spending window: ${user.windowStartHour}:00 to ${user.windowEndHour}:00 WAT`,
     ];
 
-    const draft = await this.prisma.transferDraft.findFirst({
-      where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
-      orderBy: { createdAt: 'desc' },
-    });
-    const pendingConfirm = await this.prisma.transaction.findFirst({
-      where: {
-        userId: user.id,
-        status: TransactionStatus.PENDING_CONFIRMATION,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const [draft, pending, allowanceSummary] = await Promise.all([
+      this.prisma.transferDraft.findFirst({
+        where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.transaction.findFirst({
+        where: {
+          userId: user.id,
+          status: {
+            in: [
+              TransactionStatus.PENDING_CONFIRMATION,
+              TransactionStatus.PENDING_PIN,
+            ],
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.allowance.getRemainingSummary(user.id).catch((err: unknown) => {
+        this.logger.warn(
+          `Could not load allowance for user ${user.id}: ${String(err)}`,
+        );
+        return null;
+      }),
+    ]);
+    const pendingConfirm = pending;
 
     if (pendingConfirm) {
+      const waitingOnPin =
+        pendingConfirm.status === TransactionStatus.PENDING_PIN;
       lines.push(
-        '- Active mode: awaiting_confirm',
-        `- Pending confirm: amount ₦${Number(pendingConfirm.amount).toLocaleString('en-NG')} (do NOT start transfer_wizard. Remind them to tap Confirm/Cancel or enter PIN. The system can resend those buttons.)`,
+        `- Active mode: awaiting_confirm`,
+        `- Pending ${waitingOnPin ? 'PIN' : 'confirm'}: amount ₦${Number(pendingConfirm.amount).toLocaleString('en-NG')} (do NOT start transfer_wizard. ${waitingOnPin ? 'They must enter PIN.' : 'Remind them to tap Confirm or Cancel.'})`,
       );
     } else if (draft) {
       lines.push(
@@ -355,39 +371,13 @@ export class OrchestratorService {
       );
     }
 
-    try {
-      const { remainingToday, remainingWeek } =
-        await this.allowance.getRemainingSummary(user.id);
+    if (allowanceSummary) {
+      const { remainingToday, remainingWeek } = allowanceSummary;
       lines.push(
-        `- Remaining allowance today: ₦${remainingToday.toLocaleString('en-NG')}`,
+        `- Remaining allowance today: ₦${remainingToday.toLocaleString('en-NG')} (budget cap, not wallet balance)`,
         `- Remaining allowance this week: ₦${remainingWeek.toLocaleString('en-NG')}`,
       );
-
-      if (!user.disciplineExitedAt) {
-        lines.push('Allowance semantics (for explaining to the user):');
-        const withinWindow = this.windowService.isWithinWindow(
-          user.windowStartHour,
-          user.windowEndHour,
-          now,
-        );
-        if (!withinWindow) {
-          lines.push(
-            '- Transfers outside the spending window are early access (fee applies), not borrowing from future days.',
-          );
-        } else if (remainingToday <= 0) {
-          lines.push(
-            "- Today's allowance is used up. Further spending inside the window borrows from future days' allowance (tomorrow / rest of week) and may include a fee unless yesterday's surplus covers it.",
-          );
-        } else {
-          lines.push(
-            `- Any spend above today's remaining (₦${remainingToday.toLocaleString('en-NG')}) borrows from future allowance and may include a fee.`,
-          );
-        }
-      }
-    } catch (err) {
-      this.logger.warn(
-        `Could not load allowance for user ${user.id}: ${String(err)}`,
-      );
+    } else {
       lines.push(
         "- Allowance figures unavailable this turn. If asked, say you can't pull it up right now. Do NOT estimate.",
       );

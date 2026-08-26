@@ -16,6 +16,7 @@ import {
   OrchestratorResult,
 } from './orchestrator.types';
 import { TransferWizardHints } from './transfer-hints.util';
+import { sanitizeSurfaceLeadIn } from './sanitize-lead-in.util';
 
 @Injectable()
 export class ActionExecutorService {
@@ -34,13 +35,29 @@ export class ActionExecutorService {
       return;
     }
 
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      result.message,
-      user.id,
-    );
-
     const actionType = result.actionType ?? 'reply_only';
+    const launchingSurface =
+      actionType === 'show_surface' && !!result.surfaceKey;
+
+    const leadIn = launchingSurface
+      ? sanitizeSurfaceLeadIn(result.message, result.surfaceKey)
+      : result.message;
+
+    if (leadIn) {
+      if (launchingSurface) {
+        await this.whatsapp.sendText(
+          user.whatsappNumber,
+          leadIn,
+          user.id,
+        );
+      } else {
+        await this.chunkedMessenger.sendChunkedReply(
+          user.whatsappNumber,
+          leadIn,
+          user.id,
+        );
+      }
+    }
 
     if (actionType === 'cancel_surface') {
       await this.accountActions.cancelActiveSurfaces(user);

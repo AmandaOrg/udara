@@ -54,9 +54,26 @@ describe('ActionExecutorService', () => {
       ok: true,
     });
 
-    expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
+    expect(whatsapp.sendText).toHaveBeenCalledWith(
       '234801',
       'pulling your balance up',
+      'user-1',
+    );
+    expect(chunkedMessenger.sendChunkedReply).not.toHaveBeenCalled();
+    expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
+  });
+
+  it('does not let the LLM quote a balance in the lead-in', async () => {
+    await executor.execute(user, {
+      message: 'pulling that up for you now, Esammy. account balance: ₦1,000',
+      actionType: 'show_surface',
+      surfaceKey: 'balance_read',
+      ok: true,
+    });
+
+    expect(whatsapp.sendText).toHaveBeenCalledWith(
+      '234801',
+      'pulling that up now.',
       'user-1',
     );
     expect(accountActions.sendBalance).toHaveBeenCalledWith(user);

@@ -28,12 +28,8 @@ export function splitIntoChunks(text: string): string[] {
  * front — for anything longer than a couple sentences that added tens of
  * seconds of pure artificial latency on top of the real LLM/network time,
  * which made replies feel slow. That's gone; what's left is a deliberate
- * ~4s pause between bubbles (product decision: reads as a person typing each
- * message rather than a bot dumping a wall of text), with WhatsApp's native
- * "typing…" indicator re-shown for each pause so the gap doesn't read as
- * dead air. The first bubble sends immediately — WhatsappController already
- * fires the typing indicator the moment the inbound message arrives, so
- * there's nothing to add before the first send.
+ * ~0.5s pause between bubbles so multi-bubble chat still reads as typing
+ * rather than a dump, without adding seconds of fake latency on top of the LLM.
  */
 @Injectable()
 export class ChunkedMessengerService {
@@ -79,7 +75,7 @@ export class ChunkedMessengerService {
     for (let i = 0; i < chunks.length; i++) {
       if (i > 0) {
         await this.showTyping(to);
-        await this.sleep(randomBetween(3500, 4500));
+        await this.sleep(randomBetween(400, 700));
       }
       await this.whatsapp.sendText(to, chunks[i], userId);
     }

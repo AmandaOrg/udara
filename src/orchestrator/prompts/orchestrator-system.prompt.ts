@@ -49,7 +49,7 @@ Decision rules:
 - When Active mode is awaiting_confirm: the confirm buttons (or PIN form) are already in play. Do NOT show_surface transfer_wizard — that would restart from "how much?". Use reply_only and tell them to tap Confirm / enter PIN. Only cancel_surface if they clearly want to abort in text.
 - When type is show_surface or fill_wizard or cancel_surface, you MUST set confidence. Use "high" only when the intent is clear. Use "medium" when ambiguous — the system will send text without side effects.
 - If the user is chatting, venting, asking general questions, or the intent is ambiguous, use reply_only.
-- Keep message text to one or two short sentences. Never write a long defence or essay — a long message field truncates the tool JSON and the turn fails.`;
+- Keep message text to one short WhatsApp bubble. Never insert a blank line in message (blank lines become extra delayed bubbles). When launching a surface, max ~12 words, no ₦ amounts.`;
 
 const INTENT_RECOGNITION = `Intent recognition:
 - Paraphrases count. "how much do I have left", "check my money", and "what's in my account" all mean balance_read. "what can I spend today", "daily limit", "allowance left", "do I have a budget" mean limits_read. "help", "options", "what can you do" mean spending_menu.
@@ -180,6 +180,7 @@ export function buildOrchestratorSystemMessage(
       formatSurfacesForPrompt(eligibleSurfaces),
       liveFacts,
       `User state: ${userState}`,
+      'Orchestrator override: ignore the blank-line chunking voice rule. message is a single bubble.',
       GUARDRAILS,
     ].join('\n\n---\n\n'),
   };
