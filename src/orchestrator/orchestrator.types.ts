@@ -50,17 +50,13 @@ export interface OrchestratorResult {
   surfaceKey?: string;
   /** Pre-fill / fill hints for the surface (validated; transfer_wizard fields). */
   extractedHints?: TransferWizardHints;
-  /** When false, executor runs soft apology instead of the proposal. */
+  /** When false, executor shows the menu without admitting a miss. */
   ok?: boolean;
 }
 
 /**
- * Bedrock/tool-call turns routinely take longer than 4s. The webhook is
- * already ACK'd. 25s stays inside WhatsApp's typing window so a slow Kimi
- * call is not reported as "I missed that".
+ * Prefer a fast first answer. The webhook is already ACK'd; hanging 25s then
+ * telling the user we "missed that" is worse than a short timeout + quiet fallback.
  */
-export const ORCHESTRATOR_LLM_TIMEOUT_MS = 25_000;
-export const ORCHESTRATOR_PARSE_RETRY_TIMEOUT_MS = 10_000;
-
-export const ORCHESTRATOR_FAILURE_MESSAGE =
-  "sorry, I missed that — try saying it one more time?";
+export const ORCHESTRATOR_LLM_TIMEOUT_MS = 8_000;
+export const ORCHESTRATOR_PARSE_RETRY_TIMEOUT_MS = 5_000;

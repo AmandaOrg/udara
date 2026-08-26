@@ -94,12 +94,14 @@ export class OrchestratorService {
         forceTool: true as const,
         purpose: LlmCallPurpose.ORCHESTRATOR_TURN,
         userId: user.id,
-        maxTokens: 1024,
+        maxTokens: 512,
+        temperature: 0,
+        timeoutMs: ORCHESTRATOR_LLM_TIMEOUT_MS,
       };
 
       let result = await this.withTimeout(
         this.llm.complete<ProposedTurn>(llmParams),
-        ORCHESTRATOR_LLM_TIMEOUT_MS,
+        ORCHESTRATOR_LLM_TIMEOUT_MS + 500,
       );
 
       let log = await this.llmLogger.log({
@@ -110,14 +112,17 @@ export class OrchestratorService {
       logId = log.id;
 
       let proposal = this.parseProposal(result);
-      // Retry only malformed tool JSON — not timeouts (already waited).
-      if (!proposal) {
+      // Retry only a fast malformed tool call — don't double-wait after a slow miss.
+      if (!proposal && result.latencyMs < 5_000) {
         this.logger.warn(
           `Orchestrator parse_failed for user ${user.id} — retrying once`,
         );
         result = await this.withTimeout(
-          this.llm.complete<ProposedTurn>(llmParams),
-          ORCHESTRATOR_PARSE_RETRY_TIMEOUT_MS,
+          this.llm.complete<ProposedTurn>({
+            ...llmParams,
+            timeoutMs: ORCHESTRATOR_PARSE_RETRY_TIMEOUT_MS,
+          }),
+          ORCHESTRATOR_PARSE_RETRY_TIMEOUT_MS + 500,
         );
         log = await this.llmLogger.log({
           userId: user.id,
@@ -442,8 +447,7 @@ export class OrchestratorService {
     const messages = Array.isArray(updated.messages)
       ? updated.messages
       : [];
-    // increased to 30, because the agent do forget the previous messages
-    return messages.slice(-30).map((raw) => {
+    return messages.slice(-12).map((raw) => {
       const m = raw as { role?: string; content?: string };
       return {
         role: m.role === 'assistant' ? 'assistant' : 'user',

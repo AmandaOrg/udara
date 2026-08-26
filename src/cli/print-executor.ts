@@ -3,14 +3,13 @@
  */
 
 import { OrchestratorResult } from '../orchestrator/orchestrator.types';
-import { ORCHESTRATOR_FAILURE_MESSAGE } from '../orchestrator/orchestrator.types';
 
 export function formatTurnPretty(result: OrchestratorResult): string {
   if (result.ok === false) {
     return [
       '── turn result ──────────────────────────────',
       'ok:           false (failure SOP)',
-      'would send:   ' + JSON.stringify(ORCHESTRATOR_FAILURE_MESSAGE),
+      'would send:   "here\'s everything you can do with me."',
       'would launch: spending_menu',
       '─────────────────────────────────────────────',
       'Hint: stub LLM emits no tool calls. Use --fixture <json> or set AI_PROVIDER to a real provider.',
@@ -35,7 +34,9 @@ export function formatTurnJson(result: OrchestratorResult): string {
     {
       ok: result.ok !== false,
       message:
-        result.ok === false ? ORCHESTRATOR_FAILURE_MESSAGE : result.message,
+        result.ok === false
+          ? "here's everything you can do with me."
+          : result.message,
       surfaceKey:
         result.ok === false ? 'spending_menu' : result.surfaceKey ?? null,
       extractedHints:

@@ -100,6 +100,18 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     expect(accountActions.sendBalance).not.toHaveBeenCalled();
   });
 
+  it("opens the menu immediately for 'what else can you do?' without the LLM", async () => {
+    await service.route(makeMessage("what else can you do?"));
+
+    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    expect(whatsapp.sendText).toHaveBeenCalledWith(
+      "234801",
+      "here's everything you can do with me.",
+      "user-1",
+    );
+    expect(accountActions.sendMainMenu).toHaveBeenCalledWith(user);
+  });
+
   it("routes balance paraphrases through the orchestrator (no regex shortcut)", async () => {
     orchestrator.handleMessage.mockResolvedValue({
       message: "pulling that up",

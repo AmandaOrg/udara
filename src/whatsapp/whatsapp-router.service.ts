@@ -25,6 +25,7 @@ import {
 import { User, WhatsappMessage, WhatsappMessageType } from "@prisma/client";
 import { PinGateService } from "./pin-gate.service";
 import { SensitiveFields } from "./whatsapp-message.service";
+import { isMenuShortcut } from "./menu-shortcut.util";
 
 /**
  * Top-level inbound router.
@@ -224,6 +225,16 @@ export class WhatsappRouterService {
 
     if (isPreAccountStage(user.onboardingStage)) {
       await this.onboarding.handleInboundText(user, text);
+      return;
+    }
+
+    if (isMenuShortcut(text)) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "here's everything you can do with me.",
+        user.id,
+      );
+      await this.accountActions.sendMainMenu(user);
       return;
     }
 

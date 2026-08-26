@@ -33,6 +33,8 @@ export interface LlmCompleteParams {
   maxTokens?: number;
   purpose: LlmCallPurpose;
   userId?: string;
+  /** Abort the HTTP call after this many ms (Bedrock/OpenRouter). */
+  timeoutMs?: number;
 }
 
 export interface LlmCompleteResult<T = unknown> {

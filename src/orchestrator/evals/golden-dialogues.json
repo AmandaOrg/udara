@@ -633,14 +633,18 @@
     "test_case_id": "soft_failure_not_a_surface",
     "history": [{ "role": "user", "content": "do i have my budget setup?" }],
     "mock_proposal": {
-      "message": "sorry, I missed that — try saying it one more time?",
-      "action": { "type": "reply_only" }
+      "message": "here's everything you can do with me.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "spending_menu",
+        "confidence": "high"
+      }
     },
     "eligible_surfaces": ["transfer_wizard", "limits_read", "spending_menu"],
-    "expected_surface": null,
-    "expected_action_type": "reply_only",
-    "expected_confidence": null,
-    "forbidden_surfaces": ["transfer_wizard", "limits_read", "spending_menu"]
+    "expected_surface": "spending_menu",
+    "expected_action_type": "show_surface",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard", "limits_read"]
   },
   {
     "test_case_id": "hello_is_reply_only",

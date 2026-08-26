@@ -118,17 +118,28 @@ export class OpenRouterLlmService implements LlmService {
     }
 
     const start = Date.now();
-    const res = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        // Optional but recommended by OpenRouter for attributing usage on their dashboard.
-        "HTTP-Referer": "https://github.com/udara",
-        "X-Title": "Udara",
-      },
-      body: JSON.stringify(body),
-    });
+    const controller = new AbortController();
+    const abortTimer =
+      params.timeoutMs != null
+        ? setTimeout(() => controller.abort(), params.timeoutMs)
+        : undefined;
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          // Optional but recommended by OpenRouter for attributing usage on their dashboard.
+          "HTTP-Referer": "https://github.com/udara",
+          "X-Title": "Udara",
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      if (abortTimer) clearTimeout(abortTimer);
+    }
 
     const latencyMs = Date.now() - start;
     const json = (await res.json()) as OpenRouterResponse;

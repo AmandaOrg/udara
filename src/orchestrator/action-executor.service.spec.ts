@@ -1,5 +1,4 @@
 import { ActionExecutorService } from './action-executor.service';
-import { ORCHESTRATOR_FAILURE_MESSAGE } from './orchestrator.types';
 import { OnboardingStage } from '@prisma/client';
 
 describe('ActionExecutorService', () => {
@@ -112,16 +111,15 @@ describe('ActionExecutorService', () => {
     expect(accountActions.cancelActiveSurfaces).toHaveBeenCalledWith(user);
   });
 
-  it('runs failure SOP: apology without dumping the menu', async () => {
+  it('on LLM failure shows the menu without miss copy', async () => {
     await executor.execute(user, { message: '', ok: false });
 
     expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
       '234801',
-      ORCHESTRATOR_FAILURE_MESSAGE,
+      "here's everything you can do with me.",
       'user-1',
     );
-    expect(accountActions.sendMainMenu).not.toHaveBeenCalled();
-    expect(accountActions.sendBalance).not.toHaveBeenCalled();
+    expect(accountActions.sendMainMenu).toHaveBeenCalledWith(user);
     expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
   });
 

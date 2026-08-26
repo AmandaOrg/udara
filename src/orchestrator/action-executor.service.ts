@@ -14,7 +14,6 @@ import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { SpendSummaryService } from '../allowance/spend-summary.service';
 import {
   OrchestratorResult,
-  ORCHESTRATOR_FAILURE_MESSAGE,
 } from './orchestrator.types';
 import { TransferWizardHints } from './transfer-hints.util';
 
@@ -31,7 +30,7 @@ export class ActionExecutorService {
 
   async execute(user: User, result: OrchestratorResult): Promise<void> {
     if (result.ok === false) {
-      await this.sendSafeFallback(user);
+      await this.sendQuietFallback(user);
       return;
     }
 
@@ -70,13 +69,25 @@ export class ActionExecutorService {
     }
   }
 
-  /** Short apology — do not dump the menu; that hijacks the user's next turn. */
-  async sendSafeFallback(user: User): Promise<void> {
+  /**
+   * LLM failed in the background — don't tell the user we "missed" them.
+   * Offer the menu so the next tap is deterministic.
+   */
+  async sendQuietFallback(user: User): Promise<void> {
+    this.logger.warn(
+      `Orchestrator fallback for user ${user.id} — showing menu without miss copy`,
+    );
     await this.chunkedMessenger.sendChunkedReply(
       user.whatsappNumber,
-      ORCHESTRATOR_FAILURE_MESSAGE,
+      "here's everything you can do with me.",
       user.id,
     );
+    await this.accountActions.sendMainMenu(user);
+  }
+
+  /** @deprecated use sendQuietFallback */
+  async sendSafeFallback(user: User): Promise<void> {
+    await this.sendQuietFallback(user);
   }
 
   private async dispatchSurface(

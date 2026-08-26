@@ -105,7 +105,7 @@ describe('OrchestratorService', () => {
       expect.objectContaining({
         purpose: LlmCallPurpose.ORCHESTRATOR_TURN,
         forceTool: true,
-        maxTokens: 1024,
+        maxTokens: 512,
       }),
     );
     expect(llmLogger.markApplied).toHaveBeenCalledWith(
@@ -125,7 +125,7 @@ describe('OrchestratorService', () => {
     llm.complete.mockReturnValue(new Promise(() => undefined));
 
     const pending = service.handleMessage(user, 'hello');
-    await jest.advanceTimersByTimeAsync(ORCHESTRATOR_LLM_TIMEOUT_MS + 1);
+    await jest.advanceTimersByTimeAsync(ORCHESTRATOR_LLM_TIMEOUT_MS + 600);
     await expect(pending).resolves.toEqual({ message: '', ok: false });
 
     jest.useRealTimers();
