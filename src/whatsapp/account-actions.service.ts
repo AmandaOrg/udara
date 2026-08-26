@@ -6,6 +6,8 @@ import { RubiesService } from "../rubies/rubies.service";
 import { TaggingService } from "../tagging/tagging.service";
 import { WhatsappService } from "./whatsapp.service";
 import { TransferConfirmationService } from "./transfer-confirmation.service";
+import { BankInfo, BankMatchResult, matchBanks } from "../common/bank-match.util";
+import { TransferWizardHints } from "../orchestrator/transfer-hints.util";
 import {
   RecipientLabel,
   TransferDraft,
@@ -183,7 +185,7 @@ export class AccountActionsService {
 
   async startTransferWizard(
     user: User,
-    hints?: { amount?: number },
+    hints?: TransferWizardHints,
   ): Promise<void> {
     if (!user.rubiesAccountNumber) {
       await this.whatsapp.sendText(
@@ -200,12 +202,136 @@ export class AccountActionsService {
       data: { status: TransferDraftStatus.CANCELLED },
     });
 
-    const amount =
-      typeof hints?.amount === "number" &&
-      Number.isFinite(hints.amount) &&
-      hints.amount > 0
-        ? hints.amount
-        : undefined;
+    const amount = hints?.amount;
+    const accountNumber = hints?.accountNumber;
+    const labelHint = hints?.labelHint;
+
+    let bankCode = hints?.bankCode;
+    let bankName = hints?.bankName;
+    let bankMatch: BankMatchResult | null = null;
+
+    if (!bankCode && bankName) {
+      const banks = await this.rubies.listBanks();
+      bankMatch = matchBanks(bankName, banks);
+      if (bankMatch.kind === "single") {
+        bankCode = bankMatch.bank.bankCode;
+        bankName = bankMatch.bank.bankName;
+      }
+    } else if (bankCode) {
+      const banks = await this.rubies.listBanks();
+      const bank = banks.find((b) => b.bankCode === bankCode);
+      if (bank) {
+        bankName = bank.bankName;
+      } else {
+        bankCode = undefined;
+      }
+    }
+
+    const draftBase = {
+      userId: user.id,
+      amount,
+      accountNumber,
+      bankCode,
+      bankName,
+      ...(labelHint ? { label: labelHint } : {}),
+    };
+
+    if (amount && accountNumber && bankCode && bankName) {
+      const draft = await this.prisma.transferDraft.create({
+        data: {
+          ...draftBase,
+          step: TransferDraftStep.AWAITING_BANK_SELECTION,
+        },
+      });
+      await this.resolveBank(user, draft, bankCode, bankName, labelHint);
+      return;
+    }
+
+    if (amount && accountNumber && bankMatch?.kind === "multiple") {
+      await this.prisma.transferDraft.create({
+        data: {
+          ...draftBase,
+          step: TransferDraftStep.AWAITING_BANK_SELECTION,
+        },
+      });
+      await this.promptBankList(user, bankMatch.banks);
+      return;
+    }
+
+    if (amount && accountNumber) {
+      await this.prisma.transferDraft.create({
+        data: {
+          ...draftBase,
+          step: TransferDraftStep.AWAITING_BANK_SELECTION,
+        },
+      });
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        `got it, ₦${amount.toLocaleString("en-NG")} to ${accountNumber}. which bank? type the bank name (e.g. gtbank, access, zenith).`,
+        user.id,
+      );
+      return;
+    }
+
+    if (amount && bankCode && bankName) {
+      await this.prisma.transferDraft.create({
+        data: {
+          ...draftBase,
+          step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
+        },
+      });
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        `got it, ₦${amount.toLocaleString("en-NG")} to ${bankName}. what's the recipient's 10-digit account number?`,
+        user.id,
+      );
+      return;
+    }
+
+    if (amount && bankName && bankMatch?.kind === "multiple") {
+      await this.prisma.transferDraft.create({
+        data: {
+          ...draftBase,
+          step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
+        },
+      });
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        `got it, ₦${amount.toLocaleString("en-NG")}. what's the recipient's 10-digit account number?`,
+        user.id,
+      );
+      return;
+    }
+
+    if (accountNumber && bankCode && bankName && !amount) {
+      await this.prisma.transferDraft.create({
+        data: {
+          ...draftBase,
+          step: TransferDraftStep.AWAITING_AMOUNT,
+        },
+      });
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        `how much would you like to send to ${accountNumber} at ${bankName}? (just the number, e.g. 5000)`,
+        user.id,
+      );
+      return;
+    }
+
+    if (accountNumber && !amount) {
+      await this.prisma.transferDraft.create({
+        data: {
+          ...draftBase,
+          step: TransferDraftStep.AWAITING_AMOUNT,
+        },
+      });
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        `how much would you like to send to account ${accountNumber}? (just the number, e.g. 5000)`,
+        user.id,
+      );
+      return;
+    }
 
     if (amount !== undefined) {
       await this.prisma.transferDraft.create({
@@ -213,6 +339,7 @@ export class AccountActionsService {
           userId: user.id,
           amount,
           step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
+          ...(labelHint ? { label: labelHint } : {}),
         },
       });
       await this.whatsapp.sendText(
@@ -327,10 +454,37 @@ export class AccountActionsService {
       return;
     }
 
+    const nextStep = draft.accountNumber
+      ? TransferDraftStep.AWAITING_BANK_SELECTION
+      : TransferDraftStep.AWAITING_ACCOUNT_NUMBER;
+
     await this.prisma.transferDraft.update({
       where: { id: draft.id },
-      data: { amount, step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER },
+      data: { amount, step: nextStep },
     });
+
+    if (draft.accountNumber && draft.bankCode && draft.bankName) {
+      const updated = await this.prisma.transferDraft.findUniqueOrThrow({
+        where: { id: draft.id },
+      });
+      await this.resolveBank(
+        user,
+        updated,
+        draft.bankCode,
+        draft.bankName,
+      );
+      return;
+    }
+
+    if (draft.accountNumber) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        `got it, ₦${amount.toLocaleString("en-NG")} to ${draft.accountNumber}. which bank? type the bank name (e.g. gtbank, access, zenith).`,
+        user.id,
+      );
+      return;
+    }
+
     await this.whatsapp.sendText(
       user.whatsappNumber,
       `got it, ₦${amount.toLocaleString("en-NG")}. what's the recipient's 10-digit account number?`,
@@ -353,9 +507,48 @@ export class AccountActionsService {
       return;
     }
 
+    const updated = await this.prisma.transferDraft.update({
+      where: { id: draft.id },
+      data: { accountNumber },
+    });
+
+    if (updated.bankCode && updated.bankName) {
+      await this.resolveBank(
+        user,
+        updated,
+        updated.bankCode,
+        updated.bankName,
+      );
+      return;
+    }
+
+    if (updated.bankName) {
+      const banks = await this.rubies.listBanks();
+      const result = matchBanks(updated.bankName, banks);
+
+      if (result.kind === "single") {
+        await this.resolveBank(
+          user,
+          updated,
+          result.bank.bankCode,
+          result.bank.bankName,
+        );
+        return;
+      }
+
+      if (result.kind === "multiple") {
+        await this.prisma.transferDraft.update({
+          where: { id: draft.id },
+          data: { step: TransferDraftStep.AWAITING_BANK_SELECTION },
+        });
+        await this.promptBankList(user, result.banks);
+        return;
+      }
+    }
+
     await this.prisma.transferDraft.update({
       where: { id: draft.id },
-      data: { accountNumber, step: TransferDraftStep.AWAITING_BANK_SELECTION },
+      data: { step: TransferDraftStep.AWAITING_BANK_SELECTION },
     });
     await this.whatsapp.sendText(
       user.whatsappNumber,
@@ -370,18 +563,9 @@ export class AccountActionsService {
     text: string,
   ): Promise<void> {
     const banks = await this.rubies.listBanks();
-    const query = text.trim().toLowerCase();
+    const result = matchBanks(text, banks);
 
-    // A 6-digit CBN code is an exact-match shortcut; anything else is a
-    // case-insensitive substring match against the bank name.
-    let matches = /^\d{6}$/.test(query)
-      ? banks.filter((b) => b.bankCode === query)
-      : [];
-    if (matches.length === 0) {
-      matches = banks.filter((b) => b.bankName.toLowerCase().includes(query));
-    }
-
-    if (matches.length === 0) {
+    if (result.kind === "none") {
       await this.whatsapp.sendText(
         user.whatsappNumber,
         "couldn't find that bank, try a different spelling, or the exact bank name.",
@@ -390,30 +574,37 @@ export class AccountActionsService {
       return;
     }
 
-    if (matches.length === 1) {
+    if (result.kind === "single") {
       await this.resolveBank(
         user,
         draft,
-        matches[0].bankCode,
-        matches[0].bankName,
+        result.bank.bankCode,
+        result.bank.bankName,
       );
       return;
     }
 
-    if (matches.length > 10) {
+    if (result.kind === "too_many") {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        `that matches ${matches.length} banks, try typing more of the name.`,
+        `that matches ${result.count} banks, try typing more of the name.`,
         user.id,
       );
       return;
     }
 
+    await this.promptBankList(user, result.banks);
+  }
+
+  private async promptBankList(
+    user: User,
+    banks: BankInfo[],
+  ): Promise<void> {
     await this.whatsapp.sendListMessage(
       user.whatsappNumber,
       "a few banks match, which one?",
       "Pick a bank",
-      matches.map((b) => ({
+      banks.map((b) => ({
         id: `${BANK_BUTTON_PREFIX}${b.bankCode}`,
         title: b.bankName.slice(0, 24),
       })),
@@ -434,6 +625,7 @@ export class AccountActionsService {
     draft: TransferDraft,
     bankCode: string,
     bankName: string,
+    labelHint?: RecipientLabel,
   ): Promise<void> {
     if (!draft.accountNumber) {
       this.logger.error(
@@ -470,6 +662,8 @@ export class AccountActionsService {
       bankCode,
     );
 
+    const effectiveLabel = labelHint ?? draft.label ?? undefined;
+
     if (existingRecipient) {
       const updated = await this.prisma.transferDraft.update({
         where: { id: draft.id },
@@ -481,6 +675,20 @@ export class AccountActionsService {
         },
       });
       await this.finalizeTransfer(user, updated, existingRecipient.label);
+      return;
+    }
+
+    if (effectiveLabel) {
+      const updated = await this.prisma.transferDraft.update({
+        where: { id: draft.id },
+        data: {
+          bankCode,
+          bankName,
+          resolvedName: resolved.accountName,
+          isNewRecipient: true,
+        },
+      });
+      await this.finalizeTransfer(user, updated, effectiveLabel);
       return;
     }
 

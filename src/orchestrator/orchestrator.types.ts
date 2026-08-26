@@ -6,6 +6,8 @@
  * The ActionExecutor dispatches the validated result.
  */
 
+import { TransferWizardHints } from './transfer-hints.util';
+
 export type SurfaceKind =
   | 'text'
   | 'list'
@@ -36,8 +38,8 @@ export interface OrchestratorResult {
   message: string;
   /** If set, the executor dispatches this surface after sending the message. */
   surfaceKey?: string;
-  /** Pre-fill hints for the surface (e.g. { amount: 15000 }). */
-  extractedHints?: Record<string, unknown>;
+  /** Pre-fill hints for the surface (validated; transfer_wizard fields today). */
+  extractedHints?: TransferWizardHints;
   /** When false, executor runs apology + spending_menu instead of the proposal. */
   ok?: boolean;
 }

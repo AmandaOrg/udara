@@ -270,6 +270,104 @@ describe("AccountActionsService", () => {
       );
     });
 
+    it("startTransferWizard with full hints runs name-enquiry and skips label when label_hint is set", async () => {
+      rubies.nameEnquiry.mockResolvedValue({
+        accountName: "Jane Doe",
+        bankName: "GTBank",
+      });
+      tagging.findRecipient.mockResolvedValue(null);
+
+      await service.startTransferWizard(makeUser() as any, {
+        amount: 5000,
+        accountNumber: "0011223344",
+        bankName: "gtbank",
+        labelHint: RecipientLabel.RENT,
+      });
+
+      expect(rubies.nameEnquiry).toHaveBeenCalledWith({
+        accountNumber: "0011223344",
+        bankCode: "000013",
+      });
+      expect(transferConfirmation.initiateTransfer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountNumber: "0011223344",
+          bankCode: "000013",
+          amount: 5000,
+          resolvedName: "Jane Doe",
+          label: RecipientLabel.RENT,
+        }),
+      );
+      expect(whatsapp.sendListMessage).not.toHaveBeenCalled();
+    });
+
+    it("startTransferWizard with amount+account+bank shows bank list when bank name is ambiguous", async () => {
+      await service.startTransferWizard(makeUser() as any, {
+        amount: 5000,
+        accountNumber: "0011223344",
+        bankName: "bank",
+      });
+
+      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
+        "234801",
+        expect.any(String),
+        expect.any(String),
+        expect.arrayContaining([
+          expect.objectContaining({ id: "bank:000004" }),
+          expect.objectContaining({ id: "bank:000013" }),
+        ]),
+        "user-1",
+      );
+      expect(rubies.nameEnquiry).not.toHaveBeenCalled();
+    });
+
+    it("startTransferWizard with account+bank prefilled asks only for amount", async () => {
+      await service.startTransferWizard(makeUser() as any, {
+        accountNumber: "0011223344",
+        bankCode: "000013",
+        bankName: "GTBank",
+      });
+
+      const draft = await service.getActiveDraft("user-1");
+      expect(draft?.step).toBe(TransferDraftStep.AWAITING_AMOUNT);
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("how much"),
+        "user-1",
+      );
+    });
+
+    it("startTransferWizard with amount+bank prefilled asks only for account number", async () => {
+      await service.startTransferWizard(makeUser() as any, {
+        amount: 8000,
+        bankName: "gtbank",
+      });
+
+      const draft = await service.getActiveDraft("user-1");
+      expect(draft?.step).toBe(TransferDraftStep.AWAITING_ACCOUNT_NUMBER);
+      expect(Number(draft?.amount)).toBe(8000);
+      expect(draft?.bankCode).toBe("000013");
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringMatching(/₦8,000.*account number/i),
+        "user-1",
+      );
+    });
+
+    it("startTransferWizard with amount+account prefilled asks only for bank", async () => {
+      await service.startTransferWizard(makeUser() as any, {
+        amount: 3000,
+        accountNumber: "0011223344",
+      });
+
+      const draft = await service.getActiveDraft("user-1");
+      expect(draft?.step).toBe(TransferDraftStep.AWAITING_BANK_SELECTION);
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringMatching(/₦3,000.*0011223344.*which bank/i),
+        "user-1",
+      );
+    });
+
     it("startTransferWizard creates a draft and asks for an amount", async () => {
       await service.startTransferWizard(makeUser() as any);
       expect(whatsapp.sendText).toHaveBeenCalledWith(

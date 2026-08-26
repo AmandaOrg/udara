@@ -14,6 +14,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { User } from '@prisma/client';
 import { ProposedTurn, OrchestratorResult } from './orchestrator.types';
 import { SurfaceDefinition } from './surface-registry';
+import { sanitizeTransferHints } from './transfer-hints.util';
 
 @Injectable()
 export class ActionValidatorService {
@@ -67,11 +68,16 @@ export class ActionValidatorService {
       };
     }
 
+    const extractedHints =
+      surfaceKey === 'transfer_wizard'
+        ? sanitizeTransferHints(proposal.action.extracted_hints)
+        : undefined;
+
     // All checks passed — execute the surface.
     return {
       message: proposal.message,
       surfaceKey,
-      extractedHints: proposal.action.extracted_hints,
+      extractedHints,
       ok: true,
     };
   }

@@ -40,7 +40,7 @@ Decision rules:
 - Treat paraphrases as the same intent (see Intent recognition below).
 - For money questions (balance, limits, spending), ALWAYS use the matching surface so the user sees real data — never guess or remember numbers from earlier turns.
 - For read surfaces (balance_read, limits_read, account_details, spend_summary): your message must be a short lead-in ONLY (e.g. "pulling that up now"). Do NOT restate balances, allowance figures, or account numbers in the message — the surface sends the real figures next.
-- For transfers, use transfer_wizard — you cannot process transfers yourself.
+- For transfers, use transfer_wizard — you cannot process transfers yourself. Extract any amount, account, bank, or label details the user gave into extracted_hints so the wizard opens pre-filled.
 - When type is show_surface, you MUST set confidence. Use "high" only when the intent is clear. Use "medium" when plausible but ambiguous — the system will send your text without launching the surface.
 - If the user is chatting, venting, asking general questions, or the intent is ambiguous, use reply_only.
 - Keep message text to ~2–3 short sentences max unless the user explicitly asked for a breakdown.`;
@@ -49,6 +49,7 @@ const INTENT_RECOGNITION = `Intent recognition:
 - Paraphrases count. "how much do I have left", "check my money", and "what's in my account" all mean balance_read. "what can I spend today", "daily limit", and "allowance left" mean limits_read. "help", "options", "what can you do" mean spending_menu.
 - Past-tense money talk is NOT an active transfer. "I sent money yesterday" or "that transfer cleared" → reply_only or spend_summary, not transfer_wizard.
 - Active send intent → transfer_wizard: "send 5k", "pay my landlord", "I need to transfer now", "can I send money today".
+- When the user includes transfer details in the same message, extract them into extracted_hints so the wizard can skip steps: amount (number in naira), account_number (10 digits), bank_name (e.g. "GTBank", "Access") or bank_code (6 digits), label_hint (RENT/FOOD/VENDOR/OTHER if clearly stated). Examples: "send 5000 to 0123456789 gtbank" → amount 5000, account_number, bank_name; "pay my landlord 20k, 0011223344 access bank for rent" → amount 20000, account_number, bank_name, label_hint RENT. Only include fields you are confident about — partial hints are fine.
 - When the user has used today's allowance and wants more (or asks to borrow from tomorrow / future days): explain plainly that extra spending borrows from future allowance and may include a fee — use the Allowance semantics in live facts. Offer limits_read for exact figures, or transfer_wizard only if they clearly want to send money now. Do NOT invent fee amounts.
 - Settings changes (raise limit, change window, exit restrictions) → reply_only, not limits_read.
 - Date/time questions ("what day is it", "today's date") → reply_only using Current date and Current time from live facts. Never say you don't have a calendar.`;
@@ -96,17 +97,32 @@ export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
           extracted_hints: {
             type: 'object',
             description:
-              'Optional structured data extracted from the message to pre-fill the surface. Only include fields you are confident about.',
+              'Optional structured data extracted from the message to pre-fill the surface. Only include fields you are confident about. For transfer_wizard: include every detail the user gave so the wizard can skip those steps.',
             properties: {
               amount: {
                 type: 'number',
                 description: 'Transfer amount in naira, if user mentioned one',
               },
+              account_number: {
+                type: 'string',
+                description:
+                  'Recipient 10-digit NUBAN account number, if user gave one',
+              },
+              bank_name: {
+                type: 'string',
+                description:
+                  'Recipient bank name if stated (e.g. GTBank, Access, Zenith)',
+              },
+              bank_code: {
+                type: 'string',
+                description:
+                  'Recipient 6-digit CBN bank code, if user pasted one',
+              },
               label_hint: {
                 type: 'string',
                 enum: ['RENT', 'FOOD', 'VENDOR', 'OTHER'],
                 description:
-                  'Recipient category hint if clearly stated. Stored for audit; wizard still confirms label.',
+                  'Recipient category if clearly stated (e.g. landlord → RENT, food vendor → FOOD)',
               },
             },
           },

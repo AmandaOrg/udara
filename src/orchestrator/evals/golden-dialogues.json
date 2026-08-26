@@ -479,5 +479,27 @@
     "expected_surface": "transfer_wizard",
     "expected_confidence": "high",
     "forbidden_surfaces": ["limits_read"]
+  },
+  {
+    "test_case_id": "tx_full_details_high",
+    "history": [{ "role": "user", "content": "send 5000 to 0123456789 gtbank for rent" }],
+    "mock_proposal": {
+      "message": "on it — I'll set up that transfer.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": {
+          "amount": 5000,
+          "account_number": "0123456789",
+          "bank_name": "gtbank",
+          "label_hint": "RENT"
+        }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read"],
+    "expected_surface": "transfer_wizard",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read"]
   }
 ]

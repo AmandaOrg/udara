@@ -16,6 +16,7 @@ import {
   OrchestratorResult,
   ORCHESTRATOR_FAILURE_MESSAGE,
 } from './orchestrator.types';
+import { TransferWizardHints } from './transfer-hints.util';
 
 @Injectable()
 export class ActionExecutorService {
@@ -66,7 +67,7 @@ export class ActionExecutorService {
   private async dispatchSurface(
     user: User,
     surfaceKey: string,
-    hints?: Record<string, unknown>,
+    hints?: TransferWizardHints,
   ): Promise<void> {
     switch (surfaceKey) {
       case 'balance_read':
@@ -78,16 +79,9 @@ export class ActionExecutorService {
       case 'account_details':
         await this.accountActions.sendAccountDetails(user);
         break;
-      case 'transfer_wizard': {
-        const amount =
-          typeof hints?.amount === 'number' &&
-          Number.isFinite(hints.amount) &&
-          hints.amount > 0
-            ? hints.amount
-            : undefined;
-        await this.accountActions.startTransferWizard(user, { amount });
+      case 'transfer_wizard':
+        await this.accountActions.startTransferWizard(user, hints);
         break;
-      }
       case 'spending_menu':
         await this.accountActions.sendMainMenu(user);
         break;

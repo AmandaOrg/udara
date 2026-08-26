@@ -59,16 +59,24 @@ describe('ActionExecutorService', () => {
     expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
   });
 
-  it('passes amount hint into startTransferWizard', async () => {
+  it('passes sanitized transfer hints into startTransferWizard', async () => {
     await executor.execute(user, {
       message: 'lets send that',
       surfaceKey: 'transfer_wizard',
-      extractedHints: { amount: 15000, label_hint: 'RENT' },
+      extractedHints: {
+        amount: 15000,
+        accountNumber: '0123456789',
+        bankName: 'GTBank',
+        labelHint: 'RENT',
+      },
       ok: true,
     });
 
     expect(accountActions.startTransferWizard).toHaveBeenCalledWith(user, {
       amount: 15000,
+      accountNumber: '0123456789',
+      bankName: 'GTBank',
+      labelHint: 'RENT',
     });
   });
 

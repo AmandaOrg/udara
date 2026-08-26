@@ -56,14 +56,44 @@ describe('ActionValidatorService', () => {
       proposal({
         surface_key: 'transfer_wizard',
         confidence: 'high',
-        extracted_hints: { amount: 15000 },
+        extracted_hints: {
+          amount: 15000,
+          account_number: '0123456789',
+          bank_name: 'GTBank',
+          label_hint: 'RENT',
+        },
       }),
       user,
       eligible,
     );
     expect(result.ok).toBe(true);
     expect(result.surfaceKey).toBe('transfer_wizard');
-    expect(result.extractedHints).toEqual({ amount: 15000 });
+    expect(result.extractedHints).toEqual({
+      amount: 15000,
+      accountNumber: '0123456789',
+      bankName: 'GTBank',
+      labelHint: 'RENT',
+    });
+  });
+
+  it('strips invalid transfer hints but keeps valid ones', () => {
+    const result = validator.validate(
+      proposal({
+        surface_key: 'transfer_wizard',
+        confidence: 'high',
+        extracted_hints: {
+          amount: 5000,
+          account_number: '123',
+          bank_name: 'GTBank',
+        },
+      }),
+      user,
+      eligible,
+    );
+    expect(result.extractedHints).toEqual({
+      amount: 5000,
+      bankName: 'GTBank',
+    });
   });
 
   it('downgrades medium confidence to reply_only', () => {
