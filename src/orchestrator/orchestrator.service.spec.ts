@@ -105,6 +105,7 @@ describe('OrchestratorService', () => {
       expect.objectContaining({
         purpose: LlmCallPurpose.ORCHESTRATOR_TURN,
         forceTool: true,
+        maxTokens: 1024,
       }),
     );
     expect(llmLogger.markApplied).toHaveBeenCalledWith(
@@ -189,5 +190,25 @@ describe('OrchestratorService', () => {
         ]),
       }),
     );
+  });
+
+  it('parses propose_turn when the model flattens action.type onto the root', async () => {
+    llm.complete.mockResolvedValue({
+      toolCall: {
+        name: 'propose_turn',
+        arguments: {
+          message: 'hey',
+          type: 'reply_only',
+        },
+      },
+      latencyMs: 40,
+      provider: 'stub',
+      model: 'stub',
+    });
+
+    const result = await service.handleMessage(user, 'Hello Udara');
+    expect(result.ok).toBe(true);
+    expect(result.actionType).toBe('reply_only');
+    expect(result.surfaceKey).toBeUndefined();
   });
 });

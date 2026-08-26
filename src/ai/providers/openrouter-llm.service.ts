@@ -6,6 +6,7 @@ import {
   LlmMessage,
   LlmService,
 } from "../llm.types";
+import { parseToolCallArguments } from "../parse-tool-arguments.util";
 
 interface OpenRouterToolCall {
   id: string;
@@ -139,6 +140,9 @@ export class OpenRouterLlmService implements LlmService {
 
     const choice = json.choices?.[0];
     const toolCall = choice?.message.tool_calls?.[0];
+    const parsedArgs = toolCall
+      ? parseToolCallArguments(toolCall.function.arguments)
+      : undefined;
 
     this.logger.debug(
       `${params.purpose} call completed in ${latencyMs}ms via ${model}` +
@@ -149,12 +153,13 @@ export class OpenRouterLlmService implements LlmService {
 
     return {
       text: choice?.message.content ?? undefined,
-      toolCall: toolCall
-        ? {
-            name: toolCall.function.name,
-            arguments: JSON.parse(toolCall.function.arguments) as T,
-          }
-        : undefined,
+      toolCall:
+        toolCall && parsedArgs
+          ? {
+              name: toolCall.function.name,
+              arguments: parsedArgs as T,
+            }
+          : undefined,
       raw: json,
       usage: json.usage
         ? {

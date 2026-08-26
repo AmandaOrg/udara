@@ -641,5 +641,34 @@
     "expected_action_type": "reply_only",
     "expected_confidence": null,
     "forbidden_surfaces": ["transfer_wizard", "limits_read", "spending_menu"]
+  },
+  {
+    "test_case_id": "hello_is_reply_only",
+    "history": [{ "role": "user", "content": "Hello Udara" }],
+    "mock_proposal": {
+      "message": "hey — good to see you.",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["limits_read", "balance_read", "spending_menu", "transfer_wizard"],
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
+    "expected_confidence": null,
+    "forbidden_surfaces": ["limits_read", "balance_read", "spending_menu", "transfer_wizard"]
+  },
+  {
+    "test_case_id": "allowance_vs_wallet_reply_only",
+    "history": [
+      { "role": "assistant", "content": "today's remaining allowance: ₦1,500" },
+      { "role": "user", "content": "I only have 1000 in my account" }
+    ],
+    "mock_proposal": {
+      "message": "that ₦1,500 is today's allowance, not your wallet. I can pull the account balance if you want.",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["limits_read", "balance_read", "transfer_wizard"],
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
+    "expected_confidence": null,
+    "forbidden_surfaces": ["limits_read", "transfer_wizard"]
   }
 ]

@@ -56,10 +56,11 @@ export interface OrchestratorResult {
 
 /**
  * Bedrock/tool-call turns routinely take longer than 4s. The webhook is
- * already ACK'd, so we can wait — 12s stays inside WhatsApp's typing
- * indicator window (~25s) without dumping the failure SOP on every slow turn.
+ * already ACK'd. 25s stays inside WhatsApp's typing window so a slow Kimi
+ * call is not reported as "I missed that".
  */
-export const ORCHESTRATOR_LLM_TIMEOUT_MS = 12_000;
+export const ORCHESTRATOR_LLM_TIMEOUT_MS = 25_000;
+export const ORCHESTRATOR_PARSE_RETRY_TIMEOUT_MS = 10_000;
 
 export const ORCHESTRATOR_FAILURE_MESSAGE =
   "sorry, I missed that — try saying it one more time?";

@@ -28,8 +28,10 @@ import {
   ProposedTurn,
   OrchestratorResult,
   ORCHESTRATOR_LLM_TIMEOUT_MS,
+  ORCHESTRATOR_PARSE_RETRY_TIMEOUT_MS,
   ProposeActionType,
 } from './orchestrator.types';
+import { parseToolCallArguments } from '../ai/parse-tool-arguments.util';
 import {
   formatWatCalendarDate,
   formatWatClockTime,
@@ -92,6 +94,7 @@ export class OrchestratorService {
         forceTool: true as const,
         purpose: LlmCallPurpose.ORCHESTRATOR_TURN,
         userId: user.id,
+        maxTokens: 1024,
       };
 
       let result = await this.withTimeout(
@@ -107,14 +110,14 @@ export class OrchestratorService {
       logId = log.id;
 
       let proposal = this.parseProposal(result);
-      // One retry on a malformed tool call — not on timeout (already waited).
+      // Retry only malformed tool JSON — not timeouts (already waited).
       if (!proposal) {
         this.logger.warn(
           `Orchestrator parse_failed for user ${user.id} — retrying once`,
         );
         result = await this.withTimeout(
           this.llm.complete<ProposedTurn>(llmParams),
-          ORCHESTRATOR_LLM_TIMEOUT_MS,
+          ORCHESTRATOR_PARSE_RETRY_TIMEOUT_MS,
         );
         log = await this.llmLogger.log({
           userId: user.id,
@@ -237,43 +240,49 @@ export class OrchestratorService {
     toolCall?: { arguments: unknown };
     text?: string;
   }): ProposedTurn | null {
-    if (!result.toolCall) return null;
+    const a =
+      parseToolCallArguments(result.toolCall?.arguments) ??
+      parseToolCallArguments(result.text);
+    if (!a) return null;
 
-    const args = result.toolCall.arguments;
-    if (!args || typeof args !== 'object') return null;
-
-    const a = args as Record<string, unknown>;
-    const action = a.action as Record<string, unknown> | undefined;
-    if (!action || typeof action.type !== 'string') return null;
+    const actionRaw =
+      a.action && typeof a.action === 'object' && !Array.isArray(a.action)
+        ? (a.action as Record<string, unknown>)
+        : typeof a.type === 'string'
+          ? a
+          : undefined;
+    if (!actionRaw || typeof actionRaw.type !== 'string') return null;
 
     const message =
       typeof a.message === 'string' && a.message.trim()
-        ? a.message
+        ? a.message.trim().slice(0, 500)
         : 'on it.';
 
-    if (!ACTION_TYPES.has(action.type)) {
+    if (!ACTION_TYPES.has(actionRaw.type)) {
       return null;
     }
 
     return {
       message,
       action: {
-        type: action.type as ProposeActionType,
+        type: actionRaw.type as ProposeActionType,
         surface_key:
-          typeof action.surface_key === 'string'
-            ? action.surface_key
+          typeof actionRaw.surface_key === 'string'
+            ? actionRaw.surface_key
             : undefined,
         extracted_hints:
-          action.extracted_hints &&
-          typeof action.extracted_hints === 'object'
-            ? (action.extracted_hints as Record<string, unknown>)
+          actionRaw.extracted_hints &&
+          typeof actionRaw.extracted_hints === 'object'
+            ? (actionRaw.extracted_hints as Record<string, unknown>)
             : undefined,
         confidence:
-          action.confidence === 'high' || action.confidence === 'medium'
-            ? action.confidence
+          actionRaw.confidence === 'high' || actionRaw.confidence === 'medium'
+            ? actionRaw.confidence
             : undefined,
         reasoning:
-          typeof action.reasoning === 'string' ? action.reasoning : undefined,
+          typeof actionRaw.reasoning === 'string'
+            ? actionRaw.reasoning
+            : undefined,
       },
     };
   }
