@@ -2,15 +2,13 @@
  * Builds the orchestrator's system prompt on every turn. Token-budgeted:
  *
  *   Persona identity + voice    ~600 tok
- *   Orchestrator role            ~350 tok
- *   Intent recognition           ~200 tok
+ *   Orchestrator role            ~400 tok
+ *   Intent recognition           ~250 tok
  *   Eligible surfaces (pruned)   ~250 tok
- *   Live facts + allowance sem.  ~150 tok
+ *   Live facts + active mode     ~250 tok
  *   User state snapshot           ~80 tok
  *   Guardrails                   ~150 tok
  *   History (dynamic, last 30)  ~1200 tok
- *   ─────────────────────────────────────
- *   Total system + context      ~3000 tok
  */
 
 import { JsonSchemaToolDef, LlmMessage } from '../../ai/llm.types';
@@ -25,51 +23,53 @@ import {
 } from '../surface-registry';
 import { User } from '@prisma/client';
 
-// ─── Orchestrator role ──────────────────────────────────────────────
-
 const ORCHESTRATOR_ROLE = `You are Udara's dialogue orchestrator. On every turn you MUST call the propose_turn tool — never reply in plain text.
 
 Your job each turn:
-1. Read the user's message, conversation history, and live facts below
-2. Decide: just reply with text (reply_only) or reply with text AND launch a UI surface (show_surface)
-3. Write the user-facing message in Udara's voice (see voice rules above)
+1. Read the user's message, conversation history, live facts, and Active mode below
+2. Decide the action type (see Decision rules)
+3. Write the user-facing message in Udara's voice
 4. Call propose_turn with your decision
+
+Action types:
+- reply_only: just chat / clarify. No UI side effects.
+- show_surface: send message then launch a surface (balance, limits, transfer_wizard, menu, etc.).
+- fill_wizard: Active mode is transfer_wizard and the user is answering (or adding) wizard fields. Put facts in extracted_hints. Do NOT restart the wizard.
+- cancel_surface: Active mode is transfer_wizard or awaiting_confirm and the user wants to stop / changed topic away from that flow. Cancels the draft or pending confirm.
 
 Decision rules:
 - Only propose surfaces listed in "Available surfaces" below. Never invent surface keys.
 - Treat paraphrases as the same intent (see Intent recognition below).
 - For money questions (balance, limits, spending), ALWAYS use the matching surface so the user sees real data — never guess or remember numbers from earlier turns.
-- For read surfaces (balance_read, limits_read, account_details, spend_summary): your message must be a short lead-in ONLY (e.g. "pulling that up now"). Do NOT restate balances, allowance figures, or account numbers in the message — the surface sends the real figures next.
-- For transfers, use transfer_wizard — you cannot process transfers yourself. Extract any amount, account, bank, or label details the user gave into extracted_hints so the wizard opens pre-filled.
-- When type is show_surface, you MUST set confidence. Use "high" only when the intent is clear. Use "medium" when plausible but ambiguous — the system will send your text without launching the surface.
+- For read surfaces (balance_read, limits_read, account_details, spend_summary): your message must be a short lead-in ONLY (e.g. "pulling that up now"). Do NOT restate balances, allowance figures, or account numbers in the message — the surface owns them.
+- For transfers, use show_surface + transfer_wizard when starting a send. Extract EVERY detail the user gave into extracted_hints (amount, account_number, bank_name/bank_code, label_hint).
+- When Active mode is transfer_wizard: if the user is providing missing fields (amount, account, bank), use fill_wizard with extracted_hints. If they ask something else (budget, balance, venting), use cancel_surface (if abandoning) or show_surface for the new intent, or reply_only — do NOT treat their question as a bad amount.
+- When Active mode is awaiting_confirm: remind them to tap Confirm or Cancel. Only cancel_surface if they clearly want to abort in text.
+- When type is show_surface or fill_wizard or cancel_surface, you MUST set confidence. Use "high" only when the intent is clear. Use "medium" when ambiguous — the system will send text without side effects.
 - If the user is chatting, venting, asking general questions, or the intent is ambiguous, use reply_only.
 - Keep message text to ~2–3 short sentences max unless the user explicitly asked for a breakdown.`;
 
 const INTENT_RECOGNITION = `Intent recognition:
-- Paraphrases count. "how much do I have left", "check my money", and "what's in my account" all mean balance_read. "what can I spend today", "daily limit", and "allowance left" mean limits_read. "help", "options", "what can you do" mean spending_menu.
+- Paraphrases count. "how much do I have left", "check my money", and "what's in my account" all mean balance_read. "what can I spend today", "daily limit", "allowance left", "do I have a budget" mean limits_read. "help", "options", "what can you do" mean spending_menu.
 - Past-tense money talk is NOT an active transfer. "I sent money yesterday" or "that transfer cleared" → reply_only or spend_summary, not transfer_wizard.
-- Active send intent → transfer_wizard: "send 5k", "pay my landlord", "I need to transfer now", "can I send money today".
-- When the user includes transfer details in the same message, extract them into extracted_hints so the wizard can skip steps: amount (number in naira), account_number (10 digits), bank_name (e.g. "GTBank", "Access") or bank_code (6 digits), label_hint (RENT/FOOD/VENDOR/OTHER if clearly stated). Examples: "send 5000 to 0123456789 gtbank" → amount 5000, account_number, bank_name; "pay my landlord 20k, 0011223344 access bank for rent" → amount 20000, account_number, bank_name, label_hint RENT. Only include fields you are confident about — partial hints are fine.
-- When the user has used today's allowance and wants more (or asks to borrow from tomorrow / future days): explain plainly that extra spending borrows from future allowance and may include a fee — use the Allowance semantics in live facts. Offer limits_read for exact figures, or transfer_wizard only if they clearly want to send money now. Do NOT invent fee amounts.
+- Active send intent → transfer_wizard: "send 5k", "pay my landlord", "transfer of 800 to …", "make a transfer", "I need to transfer now". Natural phrasing and Nigerian English all count — extract whatever fields you can.
+- When the user includes transfer details, put them in extracted_hints: amount (naira number; "5k"/"5 thousand" → 5000), account_number (10 digits), bank_name (e.g. Opay, GTBank), bank_code (6 digits if pasted), label_hint (RENT/FOOD/VENDOR/OTHER). Partial hints are fine.
+- Mid-wizard: "800", "opay", "I already gave you the account" → fill_wizard with whatever you can extract from this message AND history. "do I have a budget?" → cancel_surface or show_surface limits_read, not fill_wizard.
 - Settings changes (raise limit, change window, exit restrictions) → reply_only, not limits_read.
-- Date/time questions ("what day is it", "today's date") → reply_only using Current date and Current time from live facts. Never say you don't have a calendar.`;
-
-// ─── Guardrails ─────────────────────────────────────────────────────
+- Date/time questions → reply_only using Current date and Current time from live facts.`;
 
 const GUARDRAILS = `Hard guardrails — violations are blocked automatically:
 - Never quote a balance, allowance amount, or account number from memory or earlier messages. Those come from live facts for YOUR reasoning only. In user-facing messages for read surfaces, do not paste the numbers — the surface owns them.
 - Never trigger transfer_wizard just because money was mentioned in passing — only when the user is clearly asking to send money right now.
 - Never trigger a surface that isn't listed in "Available surfaces" above.
 - If live facts say the window is CLOSED, do not suggest the user can send money right now — they'll need to wait.
-- You cannot execute transfers, check balances, or read account data yourself. You can only propose surfaces that do those things.
-- show_surface requires confidence: "high" or "medium". Missing confidence is treated as medium (text only).`;
-
-// ─── Tool definition ────────────────────────────────────────────────
+- You cannot execute transfers, check balances, or read account data yourself. You can only propose surfaces / fill_wizard / cancel_surface.
+- show_surface, fill_wizard, and cancel_surface require confidence: "high" or "medium". Missing confidence is treated as medium (text only).`;
 
 export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
   name: 'propose_turn',
   description:
-    'Decide what to say and optionally which surface to show. You MUST call this tool every turn.',
+    'Decide what to say and optionally which surface to show or how to update the transfer wizard. You MUST call this tool every turn.',
   schema: {
     type: 'object',
     required: ['message', 'action'],
@@ -85,9 +85,14 @@ export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
         properties: {
           type: {
             type: 'string',
-            enum: ['reply_only', 'show_surface'],
+            enum: [
+              'reply_only',
+              'show_surface',
+              'fill_wizard',
+              'cancel_surface',
+            ],
             description:
-              'reply_only: just send the message, no UI. show_surface: send message then launch a surface.',
+              'reply_only: text only. show_surface: launch a surface. fill_wizard: merge extracted_hints into the active transfer draft. cancel_surface: cancel active wizard or pending confirm.',
           },
           surface_key: {
             type: 'string',
@@ -97,7 +102,7 @@ export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
           extracted_hints: {
             type: 'object',
             description:
-              'Optional structured data extracted from the message to pre-fill the surface. Only include fields you are confident about. For transfer_wizard: include every detail the user gave so the wizard can skip those steps.',
+              'Structured data from the user message (and clear history). Include every field you are confident about for transfers.',
             properties: {
               amount: {
                 type: 'number',
@@ -111,7 +116,7 @@ export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
               bank_name: {
                 type: 'string',
                 description:
-                  'Recipient bank name if stated (e.g. GTBank, Access, Zenith)',
+                  'Recipient bank name if stated (e.g. GTBank, Access, Opay, Zenith)',
               },
               bank_code: {
                 type: 'string',
@@ -122,7 +127,7 @@ export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
                 type: 'string',
                 enum: ['RENT', 'FOOD', 'VENDOR', 'OTHER'],
                 description:
-                  'Recipient category if clearly stated (e.g. landlord → RENT, food vendor → FOOD)',
+                  'Recipient category if clearly stated (e.g. landlord → RENT)',
               },
             },
           },
@@ -130,7 +135,7 @@ export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
             type: 'string',
             enum: ['high', 'medium'],
             description:
-              "Required for show_surface. Use 'high' only when intent is clear. Use 'medium' when ambiguous — system skips the surface.",
+              "Required for show_surface, fill_wizard, cancel_surface. Use 'high' only when intent is clear.",
           },
           reasoning: {
             type: 'string',
@@ -142,8 +147,6 @@ export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
     },
   },
 };
-
-// ─── System message builder ─────────────────────────────────────────
 
 export function buildOrchestratorSystemMessage(
   liveFacts: string,
@@ -177,4 +180,4 @@ export function buildOrchestratorSystemMessage(
       GUARDRAILS,
     ].join('\n\n---\n\n'),
   };
-};
+}

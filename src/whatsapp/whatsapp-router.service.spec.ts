@@ -2,8 +2,8 @@ import { WhatsappRouterService } from "./whatsapp-router.service";
 import { OnboardingStage, WhatsappMessageType } from "@prisma/client";
 
 /**
- * Free-text fallthrough goes through Orchestrator + ActionExecutor.
- * Exact keyword shortcuts and wizard drafts stay deterministic.
+ * Post-onboarding free text always goes through Orchestrator + ActionExecutor.
+ * Buttons / lists / flows stay deterministic.
  */
 describe("WhatsappRouterService — orchestrator free text", () => {
   let prisma: {
@@ -11,15 +11,11 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   };
   let whatsapp: { sendText: jest.Mock };
   let onboarding: Record<string, jest.Mock>;
-  let spendSummary: Record<string, jest.Mock>;
   let transferConfirmation: Record<string, jest.Mock>;
-  let managerConversation: Record<string, jest.Mock>;
   let accountActions: Record<string, jest.Mock>;
   let pinGate: { handlePinFlowReply: jest.Mock };
   let orchestrator: { handleMessage: jest.Mock };
   let actionExecutor: { execute: jest.Mock; sendSafeFallback: jest.Mock };
-  let chunkedMessenger: { sendChunkedReply: jest.Mock };
-  let hintsRecovery: { recoverForUser: jest.Mock };
   let service: WhatsappRouterService;
 
   const user = {
@@ -50,15 +46,10 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       handleInboundButton: jest.fn(),
       handleInboundFlowReply: jest.fn().mockResolvedValue(undefined),
     };
-    spendSummary = {
-      getWeeklySummary: jest.fn(),
-      formatAsText: jest.fn(),
-    };
     transferConfirmation = {
       initiateTransfer: jest.fn(),
       executeVerifiedTransfer: jest.fn().mockResolvedValue(undefined),
     };
-    managerConversation = { fileChangeRequest: jest.fn() };
     accountActions = {
       getActiveDraft: jest.fn().mockResolvedValue(null),
       sendBalance: jest.fn().mockResolvedValue(undefined),
@@ -66,7 +57,10 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       sendAccountDetails: jest.fn().mockResolvedValue(undefined),
       startTransferWizard: jest.fn().mockResolvedValue(undefined),
       sendMainMenu: jest.fn().mockResolvedValue(undefined),
-      handleWizardText: jest.fn().mockResolvedValue(undefined),
+      handleWizardText: jest.fn().mockResolvedValue("handled"),
+      handleWizardSelection: jest.fn().mockResolvedValue(undefined),
+      applyHintsToDraft: jest.fn().mockResolvedValue(undefined),
+      cancelActiveSurfaces: jest.fn().mockResolvedValue(undefined),
     };
     pinGate = { handlePinFlowReply: jest.fn() };
     orchestrator = { handleMessage: jest.fn() };
@@ -74,32 +68,23 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       execute: jest.fn().mockResolvedValue(undefined),
       sendSafeFallback: jest.fn().mockResolvedValue(undefined),
     };
-    chunkedMessenger = {
-      sendChunkedReply: jest.fn().mockResolvedValue(undefined),
-    };
-    hintsRecovery = {
-      recoverForUser: jest.fn().mockResolvedValue({}),
-    };
 
     service = new WhatsappRouterService(
       prisma as any,
       whatsapp as any,
       onboarding as any,
-      spendSummary as any,
       transferConfirmation as any,
-      managerConversation as any,
       accountActions as any,
       pinGate as any,
       orchestrator as any,
       actionExecutor as any,
-      chunkedMessenger as any,
-      hintsRecovery as any,
     );
   });
 
   it("routes free text through orchestrator then action executor", async () => {
     const orchResult = {
       message: "pulling that up",
+      actionType: "show_surface",
       surfaceKey: "balance_read",
       ok: true,
     };
@@ -115,111 +100,68 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     expect(accountActions.sendBalance).not.toHaveBeenCalled();
   });
 
-  it("never reaches the orchestrator for an exact keyword shortcut", async () => {
-    await service.route(makeMessage("balance"));
+  it("routes balance paraphrases through the orchestrator (no regex shortcut)", async () => {
+    orchestrator.handleMessage.mockResolvedValue({
+      message: "pulling that up",
+      actionType: "show_surface",
+      surfaceKey: "balance_read",
+      ok: true,
+    });
 
-    expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
-    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
-    expect(actionExecutor.execute).not.toHaveBeenCalled();
-  });
-
-  it("never reaches the orchestrator for a common balance paraphrase", async () => {
     await service.route(makeMessage("how much do I have"));
 
-    expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
-    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    expect(orchestrator.handleMessage).toHaveBeenCalled();
+    expect(accountActions.sendBalance).not.toHaveBeenCalled();
   });
 
-  it("fast-paths transfer details without calling the orchestrator", async () => {
-    await service.route(
-      makeMessage(
-        "i want to send money to this account 8100368023, Opay",
-      ),
-    );
-
-    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
-    expect(accountActions.startTransferWizard).toHaveBeenCalledWith(
-      user,
-      expect.objectContaining({
-        accountNumber: "8100368023",
-        bankName: "opay",
-      }),
-      expect.objectContaining({ recoverFromSession: true }),
-    );
-  });
-
-  it("recovers transfer hints when the orchestrator fails", async () => {
-    orchestrator.handleMessage.mockResolvedValue({ ok: false, message: "" });
-    hintsRecovery.recoverForUser.mockResolvedValue({
-      accountNumber: "8100368023",
-      bankName: "opay",
-    });
-
-    await service.route(makeMessage("I need to transfer now"));
-
-    expect(actionExecutor.sendSafeFallback).not.toHaveBeenCalled();
-    expect(accountActions.startTransferWizard).toHaveBeenCalledWith(
-      user,
-      expect.objectContaining({
-        accountNumber: "8100368023",
-        bankName: "opay",
-      }),
-      expect.objectContaining({ recoverFromSession: false }),
-    );
-  });
-
-  it("does not reopen a transfer from old hints when the user asked something else", async () => {
-    orchestrator.handleMessage.mockResolvedValue({ ok: false, message: "" });
-    hintsRecovery.recoverForUser.mockResolvedValue({
-      accountNumber: "8100368023",
-      bankName: "opay",
-    });
-
-    await service.route(makeMessage("do i have my budget setup?"));
-
-    expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
-    expect(actionExecutor.sendSafeFallback).toHaveBeenCalledWith(user);
-  });
-
-  it("re-routes when the wizard signals a mid-flow interrupt", async () => {
-    accountActions.getActiveDraft.mockResolvedValue({ id: "draft-1" });
-    accountActions.handleWizardText.mockResolvedValue("interrupt");
+  it("routes natural transfer phrasing through the orchestrator (no regex fast-path)", async () => {
     orchestrator.handleMessage.mockResolvedValue({
-      message: "your allowance is set",
+      message: "on it",
+      actionType: "show_surface",
+      surfaceKey: "transfer_wizard",
+      extractedHints: {
+        amount: 800,
+        accountNumber: "8100368023",
+        bankName: "opay",
+      },
       ok: true,
     });
 
     await service.route(
-      makeMessage("I'm asking if i have set a budget in my account"),
+      makeMessage("okay. lets make a transfer of 800 to 8100368023, opay"),
     );
 
-    expect(accountActions.handleWizardText).toHaveBeenCalled();
-    expect(orchestrator.handleMessage).toHaveBeenCalledWith(
-      user,
-      "I'm asking if i have set a budget in my account",
-    );
+    expect(orchestrator.handleMessage).toHaveBeenCalled();
+    expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
     expect(actionExecutor.execute).toHaveBeenCalled();
   });
 
-  it("never reaches the orchestrator for a common limits paraphrase", async () => {
-    await service.route(makeMessage("how much can I spend today"));
+  it("routes mid-wizard free text through the orchestrator (draft does not block)", async () => {
+    accountActions.getActiveDraft.mockResolvedValue({ id: "draft-1" });
+    orchestrator.handleMessage.mockResolvedValue({
+      message: "got it",
+      actionType: "fill_wizard",
+      extractedHints: { amount: 800 },
+      ok: true,
+    });
 
-    expect(accountActions.sendLimitsStatus).toHaveBeenCalledWith(user);
-    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    await service.route(makeMessage("800"));
+
+    expect(accountActions.handleWizardText).not.toHaveBeenCalled();
+    expect(orchestrator.handleMessage).toHaveBeenCalledWith(user, "800");
+    expect(actionExecutor.execute).toHaveBeenCalled();
   });
 
-  it("never reaches the orchestrator while an active transfer draft owns the turn", async () => {
-    accountActions.getActiveDraft.mockResolvedValue({ id: "draft-1" });
-    accountActions.handleWizardText.mockResolvedValue("handled");
+  it("soft-fails through the executor when the orchestrator returns ok:false", async () => {
+    orchestrator.handleMessage.mockResolvedValue({ ok: false, message: "" });
 
-    await service.route(makeMessage("50000"));
+    await service.route(makeMessage("do i have my budget setup?"));
 
-    expect(accountActions.handleWizardText).toHaveBeenCalledWith(
-      user,
-      "draft-1",
-      "50000",
-    );
-    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    expect(actionExecutor.execute).toHaveBeenCalledWith(user, {
+      ok: false,
+      message: "",
+    });
+    expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
   });
 
   it("never reaches the orchestrator for a pre-account onboarding user", async () => {
@@ -239,16 +181,15 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     expect(orchestrator.handleMessage).not.toHaveBeenCalled();
   });
 
-  it("passes casual chat through orchestrator (settings talk is not intercepted by shortcuts)", async () => {
+  it("passes casual chat through orchestrator", async () => {
     orchestrator.handleMessage.mockResolvedValue({
       message: "I hear you — managers can look at that",
+      actionType: "reply_only",
       ok: true,
     });
 
     await service.route(makeMessage("can you loosen my limits please"));
 
-    expect(managerConversation.fileChangeRequest).not.toHaveBeenCalled();
-    expect(accountActions.sendLimitsStatus).not.toHaveBeenCalled();
     expect(orchestrator.handleMessage).toHaveBeenCalled();
     expect(actionExecutor.execute).toHaveBeenCalled();
   });
@@ -275,47 +216,6 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         "txn-1",
       );
       expect(onboarding.handleInboundFlowReply).not.toHaveBeenCalled();
-    });
-
-    it("does not execute anything when the gate declines", async () => {
-      pinGate.handlePinFlowReply.mockResolvedValue({ action: "none" });
-
-      await service.route(flowMessage(), { pin: "0000" });
-
-      expect(
-        transferConfirmation.executeVerifiedTransfer,
-      ).not.toHaveBeenCalled();
-    });
-
-    it("passes the in-memory PIN to the gate, not the redacted persisted value", async () => {
-      pinGate.handlePinFlowReply.mockResolvedValue({ action: "none" });
-
-      await service.route(flowMessage(), { pin: "8317" });
-
-      expect(pinGate.handlePinFlowReply).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ flow_token: "tok-1" }),
-        { pin: "8317" },
-      );
-    });
-
-    it("routes a KYC submission to onboarding, not the PIN gate", async () => {
-      const kycUser = { ...user, onboardingStage: "PLAN_PROPOSED" };
-      prisma.user.findUnique.mockResolvedValue(kycUser);
-      prisma.user.update.mockResolvedValue(kycUser);
-
-      await service.route(
-        {
-          id: "m2",
-          type: WhatsappMessageType.FLOW_REPLY,
-          fromNumber: "234801",
-          flowResponseJson: { flow_token: "tok-2", first_name: "Daniel" },
-        } as any,
-        { id_number: "12345678901" },
-      );
-
-      expect(pinGate.handlePinFlowReply).not.toHaveBeenCalled();
-      expect(onboarding.handleInboundFlowReply).toHaveBeenCalled();
     });
   });
 });

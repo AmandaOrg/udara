@@ -48,7 +48,11 @@ describe('ActionValidatorService', () => {
       user,
       eligible,
     );
-    expect(result).toEqual({ message: 'hey', ok: true });
+    expect(result).toEqual({
+      message: 'hey',
+      actionType: 'reply_only',
+      ok: true,
+    });
   });
 
   it('launches surface when confidence is high and key is eligible', () => {
@@ -67,6 +71,7 @@ describe('ActionValidatorService', () => {
       eligible,
     );
     expect(result.ok).toBe(true);
+    expect(result.actionType).toBe('show_surface');
     expect(result.surfaceKey).toBe('transfer_wizard');
     expect(result.extractedHints).toEqual({
       amount: 15000,
@@ -96,6 +101,43 @@ describe('ActionValidatorService', () => {
     });
   });
 
+  it('accepts fill_wizard with sanitized hints', () => {
+    const result = validator.validate(
+      {
+        message: 'got it',
+        action: {
+          type: 'fill_wizard',
+          confidence: 'high',
+          extracted_hints: { amount: 800, account_number: 'bad' },
+        },
+      },
+      user,
+      eligible,
+    );
+    expect(result).toEqual({
+      message: 'got it',
+      actionType: 'fill_wizard',
+      extractedHints: { amount: 800 },
+      ok: true,
+    });
+  });
+
+  it('accepts cancel_surface at high confidence', () => {
+    const result = validator.validate(
+      {
+        message: 'cool, checking your budget instead',
+        action: { type: 'cancel_surface', confidence: 'high' },
+      },
+      user,
+      eligible,
+    );
+    expect(result).toEqual({
+      message: 'cool, checking your budget instead',
+      actionType: 'cancel_surface',
+      ok: true,
+    });
+  });
+
   it('downgrades medium confidence to reply_only', () => {
     const result = validator.validate(
       proposal({
@@ -108,6 +150,7 @@ describe('ActionValidatorService', () => {
     );
     expect(result).toEqual({
       message: 'want me to open the transfer form?',
+      actionType: 'reply_only',
       ok: true,
     });
     expect(result.surfaceKey).toBeUndefined();
@@ -123,6 +166,7 @@ describe('ActionValidatorService', () => {
       eligible,
     );
     expect(result.surfaceKey).toBeUndefined();
+    expect(result.actionType).toBe('reply_only');
     expect(result.ok).toBe(true);
     expect(result.message).toBe('checking now');
   });
@@ -138,6 +182,7 @@ describe('ActionValidatorService', () => {
       eligible,
     );
     expect(result.surfaceKey).toBeUndefined();
+    expect(result.actionType).toBe('reply_only');
     expect(result.message).toBe('lets do kyc');
   });
 
@@ -148,5 +193,6 @@ describe('ActionValidatorService', () => {
       eligible,
     );
     expect(result.surfaceKey).toBeUndefined();
+    expect(result.actionType).toBe('reply_only');
   });
 });

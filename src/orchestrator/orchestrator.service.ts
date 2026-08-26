@@ -1,10 +1,10 @@
 /**
- * The AI Orchestrator — single LLM brain that replaces the old
- * IntentRouterService + KeduChatService combo. On every free-text turn:
+ * The AI Orchestrator — single LLM brain for post-onboarding free text.
+ * On every free-text turn:
  *
- *   1. Loads conversation session + live facts
+ *   1. Loads conversation session + live facts (including active transfer mode)
  *   2. Prunes the surface registry to only eligible surfaces
- *   3. Calls the LLM with propose_turn (forced tool call, 4s timeout)
+ *   3. Calls the LLM with propose_turn (forced tool call)
  *   4. Validates the proposal (ActionValidatorService)
  *   5. Returns a validated OrchestratorResult for ActionExecutor
  *
@@ -28,6 +28,7 @@ import {
   ProposedTurn,
   OrchestratorResult,
   ORCHESTRATOR_LLM_TIMEOUT_MS,
+  ProposeActionType,
 } from './orchestrator.types';
 import {
   formatWatCalendarDate,
@@ -39,8 +40,17 @@ import {
   ConversationSessionStatus,
   LlmCallPurpose,
   Prisma,
+  TransactionStatus,
+  TransferDraftStatus,
   User,
 } from '@prisma/client';
+
+const ACTION_TYPES: ReadonlySet<string> = new Set([
+  'reply_only',
+  'show_surface',
+  'fill_wizard',
+  'cancel_surface',
+]);
 
 @Injectable()
 export class OrchestratorService {
@@ -56,11 +66,10 @@ export class OrchestratorService {
   ) {}
 
   /**
-   * Main entry point — called by the router for any free-text message
-   * that doesn't match a regex shortcut or active wizard/confirm flow.
-   *
-   * Returns a validated result; ActionExecutor handles sending and surface
-   * dispatch. On failure, returns `{ ok: false }` — never throws.
+   * Main entry point — called by the router for post-onboarding free text
+   * (including mid-wizard replies). Returns a validated result; ActionExecutor
+   * handles sending and surface dispatch. On failure, returns `{ ok: false }`
+   * — never throws.
    */
   async handleMessage(
     user: User,
@@ -74,28 +83,48 @@ export class OrchestratorService {
     let logId: string | undefined;
 
     try {
-      const result = await this.withTimeout(
-        this.llm.complete<ProposedTurn>({
-          messages: [
-            buildOrchestratorSystemMessage(liveFacts, eligibleSurfaces, user),
-            ...history,
-          ],
-          tool: PROPOSE_TURN_TOOL,
-          forceTool: true,
-          purpose: LlmCallPurpose.ORCHESTRATOR_TURN,
-          userId: user.id,
-        }),
+      const llmParams = {
+        messages: [
+          buildOrchestratorSystemMessage(liveFacts, eligibleSurfaces, user),
+          ...history,
+        ],
+        tool: PROPOSE_TURN_TOOL,
+        forceTool: true as const,
+        purpose: LlmCallPurpose.ORCHESTRATOR_TURN,
+        userId: user.id,
+      };
+
+      let result = await this.withTimeout(
+        this.llm.complete<ProposedTurn>(llmParams),
         ORCHESTRATOR_LLM_TIMEOUT_MS,
       );
 
-      const log = await this.llmLogger.log({
+      let log = await this.llmLogger.log({
         userId: user.id,
         purpose: LlmCallPurpose.ORCHESTRATOR_TURN,
         result,
       });
       logId = log.id;
 
-      const proposal = this.parseProposal(result);
+      let proposal = this.parseProposal(result);
+      // One retry on a malformed tool call — not on timeout (already waited).
+      if (!proposal) {
+        this.logger.warn(
+          `Orchestrator parse_failed for user ${user.id} — retrying once`,
+        );
+        result = await this.withTimeout(
+          this.llm.complete<ProposedTurn>(llmParams),
+          ORCHESTRATOR_LLM_TIMEOUT_MS,
+        );
+        log = await this.llmLogger.log({
+          userId: user.id,
+          purpose: LlmCallPurpose.ORCHESTRATOR_TURN,
+          result,
+        });
+        logId = log.id;
+        proposal = this.parseProposal(result);
+      }
+
       if (!proposal) {
         if (logId) {
           await this.llmLogger.markApplied(
@@ -117,9 +146,17 @@ export class OrchestratorService {
         eligibleSurfaces,
       );
 
-      const launchedSurface = !!validated.surfaceKey;
+      const launchedSurface =
+        validated.actionType === 'show_surface' && !!validated.surfaceKey;
+      const sideEffect =
+        validated.actionType === 'fill_wizard' ||
+        validated.actionType === 'cancel_surface' ||
+        launchedSurface;
       const rejectionReason =
-        proposal.action.type === 'show_surface' && !launchedSurface
+        (proposal.action.type === 'show_surface' ||
+          proposal.action.type === 'fill_wizard' ||
+          proposal.action.type === 'cancel_surface') &&
+        !sideEffect
           ? proposal.action.confidence === 'high'
             ? 'surface_ineligible_or_missing_key'
             : 'confidence_not_high'
@@ -131,6 +168,7 @@ export class OrchestratorService {
           proposed: proposal,
           validated: {
             message: validated.message,
+            actionType: validated.actionType ?? null,
             surfaceKey: validated.surfaceKey ?? null,
             extractedHints: validated.extractedHints ?? null,
           },
@@ -142,7 +180,7 @@ export class OrchestratorService {
       this.logger.debug(
         `Orchestrator: user=${user.id} ` +
           `proposed=${proposal.action.type}:${proposal.action.surface_key ?? 'none'} ` +
-          `validated=${validated.surfaceKey ?? 'reply_only'} ` +
+          `validated=${validated.actionType ?? 'reply_only'}:${validated.surfaceKey ?? 'none'} ` +
           `confidence=${proposal.action.confidence ?? 'missing→medium'} ` +
           `reason="${proposal.action.reasoning ?? ''}"`,
       );
@@ -205,19 +243,22 @@ export class OrchestratorService {
     if (!args || typeof args !== 'object') return null;
 
     const a = args as Record<string, unknown>;
-    if (typeof a.message !== 'string' || !a.message) return null;
-
     const action = a.action as Record<string, unknown> | undefined;
     if (!action || typeof action.type !== 'string') return null;
 
-    if (action.type !== 'reply_only' && action.type !== 'show_surface') {
+    const message =
+      typeof a.message === 'string' && a.message.trim()
+        ? a.message
+        : 'on it.';
+
+    if (!ACTION_TYPES.has(action.type)) {
       return null;
     }
 
     return {
-      message: a.message,
+      message,
       action: {
-        type: action.type,
+        type: action.type as ProposeActionType,
         surface_key:
           typeof action.surface_key === 'string'
             ? action.surface_key
@@ -245,6 +286,36 @@ export class OrchestratorService {
       `- Current time: ${formatWatClockTime(now)} WAT`,
       `- Spending window: ${user.windowStartHour}:00 to ${user.windowEndHour}:00 WAT`,
     ];
+
+    const draft = await this.prisma.transferDraft.findFirst({
+      where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
+      orderBy: { createdAt: 'desc' },
+    });
+    const pendingConfirm = await this.prisma.transaction.findFirst({
+      where: {
+        userId: user.id,
+        status: TransactionStatus.PENDING_CONFIRMATION,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (pendingConfirm) {
+      lines.push(
+        '- Active mode: awaiting_confirm',
+        `- Pending confirm: amount ₦${Number(pendingConfirm.amount).toLocaleString('en-NG')} (user should tap Confirm or Cancel; use cancel_surface only if they clearly abort in text)`,
+      );
+    } else if (draft) {
+      lines.push(
+        '- Active mode: transfer_wizard',
+        `- Draft step: ${draft.step}`,
+        `- Draft amount: ${draft.amount != null ? `₦${Number(draft.amount).toLocaleString('en-NG')}` : 'missing'}`,
+        `- Draft account: ${draft.accountNumber ?? 'missing'}`,
+        `- Draft bank: ${draft.bankName ?? draft.bankCode ?? 'missing'}`,
+        '- If the user is answering a missing field, use fill_wizard with extracted_hints. If they change topic, use cancel_surface or show_surface for the new intent.',
+      );
+    } else {
+      lines.push('- Active mode: free');
+    }
 
     if (user.disciplineExitedAt) {
       lines.push(

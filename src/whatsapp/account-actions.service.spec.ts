@@ -91,8 +91,10 @@ describe("AccountActionsService", () => {
   };
   let tagging: { findRecipient: jest.Mock };
   let whatsapp: { sendText: jest.Mock; sendListMessage: jest.Mock };
-  let transferConfirmation: { initiateTransfer: jest.Mock };
-  let hintsRecovery: { recoverForUser: jest.Mock };
+  let transferConfirmation: {
+    initiateTransfer: jest.Mock;
+    cancelPendingForUser: jest.Mock;
+  };
   let service: AccountActionsService;
 
   function makeUser(overrides: Record<string, unknown> = {}) {
@@ -135,8 +137,10 @@ describe("AccountActionsService", () => {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "wamid.1" }),
       sendListMessage: jest.fn().mockResolvedValue({ waMessageId: "wamid.2" }),
     };
-    transferConfirmation = { initiateTransfer: jest.fn() };
-    hintsRecovery = { recoverForUser: jest.fn().mockResolvedValue({}) };
+    transferConfirmation = {
+      initiateTransfer: jest.fn(),
+      cancelPendingForUser: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new AccountActionsService(
       prisma as any,
@@ -146,7 +150,6 @@ describe("AccountActionsService", () => {
       tagging as any,
       whatsapp as any,
       transferConfirmation as any,
-      hintsRecovery as any,
     );
   });
 
@@ -459,25 +462,44 @@ describe("AccountActionsService", () => {
       );
     });
 
-    it("interrupts the amount step on a conversational question", async () => {
+    it("applyHintsToDraft merges mid-flow without restarting", async () => {
       await service.startTransferWizard(makeUser() as any, {
         accountNumber: "8100368023",
         bankCode: "000013",
         bankName: "Opay",
       });
+      const draftBefore = await service.getActiveDraft("user-1");
+      expect(draftBefore!.step).toBe(TransferDraftStep.AWAITING_AMOUNT);
+
+      rubies.nameEnquiry.mockResolvedValue({
+        accountName: "Jane Doe",
+        bankName: "Opay",
+      });
+      await service.applyHintsToDraft(makeUser() as any, { amount: 800 });
+
+      const draftAfter = await service.getActiveDraft("user-1");
+      expect(draftAfter!.id).toBe(draftBefore!.id);
+      expect(Number(draftAfter!.amount)).toBe(800);
+      expect(rubies.nameEnquiry).toHaveBeenCalled();
+    });
+
+    it("cancelActiveSurfaces silently cancels the draft and pending confirms", async () => {
+      await service.startTransferWizard(makeUser() as any);
       const draft = await service.getActiveDraft("user-1");
-      const outcome = await service.handleWizardText(
-        makeUser() as any,
-        draft!.id,
-        "I'm asking if i have set a budget in my account",
-      );
-      expect(outcome).toBe("interrupt");
+      whatsapp.sendText.mockClear();
+
+      await service.cancelActiveSurfaces(makeUser() as any);
+
       expect(prisma._drafts.get(draft!.id)!.status).toBe(
         TransferDraftStatus.CANCELLED,
       );
+      expect(transferConfirmation.cancelPendingForUser).toHaveBeenCalledWith(
+        "user-1",
+        { silent: true },
+      );
       expect(whatsapp.sendText).not.toHaveBeenCalledWith(
         "234801",
-        expect.stringContaining("valid amount"),
+        "cancelled.",
         "user-1",
       );
     });

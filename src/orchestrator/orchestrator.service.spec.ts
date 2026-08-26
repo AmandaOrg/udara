@@ -41,6 +41,12 @@ describe('OrchestratorService', () => {
           Promise.resolve({ id: 'sess-1', messages: data.messages }),
         ),
       },
+      transferDraft: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      transaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
     };
     llm = { complete: jest.fn() };
     llmLogger = {
@@ -65,6 +71,10 @@ describe('OrchestratorService', () => {
       windowService as any,
       new ActionValidatorService(),
     );
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('validates a high-confidence surface proposal and marks applied', async () => {
@@ -110,32 +120,15 @@ describe('OrchestratorService', () => {
   });
 
   it('returns ok:false on LLM timeout', async () => {
-    llm.complete.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(
-            () =>
-              resolve({
-                toolCall: {
-                  name: 'propose_turn',
-                  arguments: {
-                    message: 'late',
-                    action: { type: 'reply_only' },
-                  },
-                },
-                latencyMs: ORCHESTRATOR_LLM_TIMEOUT_MS + 1000,
-                provider: 'stub',
-                model: 'stub',
-              }),
-            ORCHESTRATOR_LLM_TIMEOUT_MS + 50,
-          );
-        }),
-    );
+    jest.useFakeTimers();
+    llm.complete.mockReturnValue(new Promise(() => undefined));
 
-    const result = await service.handleMessage(user, 'hello');
+    const pending = service.handleMessage(user, 'hello');
+    await jest.advanceTimersByTimeAsync(ORCHESTRATOR_LLM_TIMEOUT_MS + 1);
+    await expect(pending).resolves.toEqual({ message: '', ok: false });
 
-    expect(result).toEqual({ message: '', ok: false });
-  }, 10000);
+    jest.useRealTimers();
+  });
 
   it('returns ok:false when tool call is missing', async () => {
     llm.complete.mockResolvedValue({
@@ -152,6 +145,49 @@ describe('OrchestratorService', () => {
       'log-1',
       expect.objectContaining({ rejectionReason: 'parse_failed' }),
       false,
+    );
+  });
+
+  it('includes Active mode: transfer_wizard in live facts when a draft is open', async () => {
+    prisma.transferDraft.findFirst.mockResolvedValue({
+      id: 'draft-1',
+      step: 'AWAITING_AMOUNT',
+      amount: null,
+      accountNumber: '8100368023',
+      bankName: 'Opay',
+      bankCode: '100004',
+    });
+    llm.complete.mockResolvedValue({
+      toolCall: {
+        name: 'propose_turn',
+        arguments: {
+          message: 'got it',
+          action: {
+            type: 'fill_wizard',
+            confidence: 'high',
+            extracted_hints: { amount: 800 },
+          },
+        },
+      },
+      latencyMs: 80,
+      provider: 'stub',
+      model: 'stub',
+    });
+
+    const result = await service.handleMessage(user, '800');
+
+    expect(result.ok).toBe(true);
+    expect(result.actionType).toBe('fill_wizard');
+    expect(result.extractedHints).toEqual({ amount: 800 });
+    expect(llm.complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'system',
+            content: expect.stringContaining('Active mode: transfer_wizard'),
+          }),
+        ]),
+      }),
     );
   });
 });

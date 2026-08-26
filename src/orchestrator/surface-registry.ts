@@ -49,7 +49,7 @@ export const SURFACE_REGISTRY: SurfaceDefinition[] = [
     key: 'transfer_wizard',
     kind: 'wizard',
     description:
-      'Start the send-money wizard. Use when user clearly wants to send or transfer money RIGHT NOW: "send 5k", "pay my landlord", "I need to transfer", "can I send money". Extract amount, account number, bank, and label into extracted_hints when the user includes them — the wizard will skip filled steps. Do NOT trigger for past transfers or casual mentions.',
+      'Start the send-money wizard. Use when user clearly wants to send or transfer money RIGHT NOW — any natural phrasing. Put amount, account_number, bank_name/bank_code, and label_hint into extracted_hints when present so the wizard skips filled steps. Do NOT trigger for past transfers or casual mentions.',
     isEligible: (u) => !!u.rubiesAccountNumber,
   },
   {

@@ -15,13 +15,21 @@ export type SurfaceKind =
   | 'whatsapp_flow'
   | 'wizard';
 
+export type ActiveMode = 'free' | 'transfer_wizard' | 'awaiting_confirm';
+
+export type ProposeActionType =
+  | 'reply_only'
+  | 'show_surface'
+  | 'fill_wizard'
+  | 'cancel_surface';
+
 /**
  * Raw output from the LLM's `propose_turn` tool call, before validation.
  */
 export interface ProposedTurn {
   message: string;
   action: {
-    type: 'reply_only' | 'show_surface';
+    type: ProposeActionType;
     surface_key?: string;
     extracted_hints?: Record<string, unknown>;
     confidence?: 'high' | 'medium';
@@ -31,20 +39,27 @@ export interface ProposedTurn {
 
 /**
  * The validated result returned for dispatch.
- * If `ok` is false, ActionExecutor runs the failure SOP (apology + menu).
+ * If `ok` is false, ActionExecutor runs the failure SOP (apology only).
  */
 export interface OrchestratorResult {
   /** Persona text to send to the user (ignored on failure — executor uses SOP copy). */
   message: string;
+  /** Action the executor should take after sending the message. */
+  actionType?: ProposeActionType;
   /** If set, the executor dispatches this surface after sending the message. */
   surfaceKey?: string;
-  /** Pre-fill hints for the surface (validated; transfer_wizard fields today). */
+  /** Pre-fill / fill hints for the surface (validated; transfer_wizard fields). */
   extractedHints?: TransferWizardHints;
-  /** When false, executor runs apology + spending_menu instead of the proposal. */
+  /** When false, executor runs soft apology instead of the proposal. */
   ok?: boolean;
 }
 
-export const ORCHESTRATOR_LLM_TIMEOUT_MS = 4000;
+/**
+ * Bedrock/tool-call turns routinely take longer than 4s. The webhook is
+ * already ACK'd, so we can wait — 12s stays inside WhatsApp's typing
+ * indicator window (~25s) without dumping the failure SOP on every slow turn.
+ */
+export const ORCHESTRATOR_LLM_TIMEOUT_MS = 12_000;
 
 export const ORCHESTRATOR_FAILURE_MESSAGE =
-  "hmm, give me a sec — something glitched on my end. here's the menu in the meantime:";
+  "sorry, I missed that — try saying it one more time?";

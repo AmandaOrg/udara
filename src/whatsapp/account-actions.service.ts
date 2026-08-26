@@ -8,10 +8,9 @@ import { WhatsappService } from "./whatsapp.service";
 import { TransferConfirmationService } from "./transfer-confirmation.service";
 import { BankInfo, BankMatchResult, matchBanks } from "../common/bank-match.util";
 import { TransferWizardHints } from "../orchestrator/transfer-hints.util";
-import { TransferHintsRecoveryService } from "./transfer-hints-recovery.service";
-import { mergeTransferHints } from "./transfer-hints-from-text.util";
 import {
   RecipientLabel,
+  TransactionStatus,
   TransferDraft,
   TransferDraftStatus,
   TransferDraftStep,
@@ -28,10 +27,6 @@ export const MENU_ACCOUNT = `${MENU_BUTTON_PREFIX}account`;
 export const MENU_TRANSFER = `${MENU_BUTTON_PREFIX}transfer`;
 
 const CANCEL_WORDS = /^(cancel|stop|nevermind|never mind)$/i;
-
-/** Mid-wizard topic change — cancel the draft and let the router re-handle. */
-const WIZARD_INTERRUPT_RE =
-  /\?|\b(budget|balance|limit|allowance|menu|help|account details|what can i|do i have|how much)\b/i;
 
 const LABEL_ROWS = [
   { id: `${LABEL_BUTTON_PREFIX}RENT`, title: "🏠 Rent" },
@@ -64,7 +59,6 @@ export class AccountActionsService {
     private readonly tagging: TaggingService,
     private readonly whatsapp: WhatsappService,
     private readonly transferConfirmation: TransferConfirmationService,
-    private readonly hintsRecovery: TransferHintsRecoveryService,
   ) {}
 
   // =========================================================================
@@ -193,7 +187,7 @@ export class AccountActionsService {
   async startTransferWizard(
     user: User,
     hints?: TransferWizardHints,
-    options?: { recoverFromSession?: boolean },
+    _options?: { recoverFromSession?: boolean },
   ): Promise<void> {
     if (!user.rubiesAccountNumber) {
       await this.whatsapp.sendText(
@@ -210,18 +204,58 @@ export class AccountActionsService {
       data: { status: TransferDraftStatus.CANCELLED },
     });
 
-    const recovered =
-      options?.recoverFromSession !== false
-        ? await this.hintsRecovery.recoverForUser(user.id)
-        : {};
-    const mergedHints = mergeTransferHints(recovered, hints);
+    await this.advanceWithHints(user, hints ?? {}, null);
+  }
 
-    const amount = mergedHints?.amount;
-    const accountNumber = mergedHints?.accountNumber;
-    const labelHint = mergedHints?.labelHint;
+  /**
+   * Merge LLM-extracted hints into the active draft (or start one). Used by
+   * fill_wizard so mid-flow answers never restart the wizard from scratch.
+   */
+  async applyHintsToDraft(
+    user: User,
+    hints: TransferWizardHints,
+  ): Promise<void> {
+    if (!user.rubiesAccountNumber) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "you don't have a udara account yet, so there's nothing to send from.",
+        user.id,
+      );
+      return;
+    }
 
-    let bankCode = mergedHints?.bankCode;
-    let bankName = mergedHints?.bankName;
+    const existing = await this.getActiveDraft(user.id);
+    await this.advanceWithHints(user, hints, existing);
+  }
+
+  /** Cancels active transfer draft and any pending confirm — silent (persona already spoke). */
+  async cancelActiveSurfaces(user: User): Promise<void> {
+    const draft = await this.getActiveDraft(user.id);
+    if (draft) {
+      await this.cancelDraft(user, draft.id, { silent: true });
+    }
+    await this.transferConfirmation.cancelPendingForUser(user.id, {
+      silent: true,
+    });
+  }
+
+  /**
+   * Resolve bank fields from hints, persist draft state, and ask only for
+   * whatever is still missing (or run name-enquiry when complete).
+   */
+  private async advanceWithHints(
+    user: User,
+    hints: TransferWizardHints,
+    existing: TransferDraft | null,
+  ): Promise<void> {
+    let amount =
+      hints.amount ??
+      (existing?.amount != null ? Number(existing.amount) : undefined);
+    let accountNumber = hints.accountNumber ?? existing?.accountNumber ?? undefined;
+    let bankCode = hints.bankCode ?? existing?.bankCode ?? undefined;
+    let bankName = hints.bankName ?? existing?.bankName ?? undefined;
+    const labelHint = hints.labelHint ?? existing?.label ?? undefined;
+
     let bankMatch: BankMatchResult | null = null;
 
     if (!bankCode && bankName) {
@@ -236,49 +270,79 @@ export class AccountActionsService {
       const bank = banks.find((b) => b.bankCode === bankCode);
       if (bank) {
         bankName = bank.bankName;
-      } else {
+      } else if (!existing?.bankCode) {
         bankCode = undefined;
       }
     }
 
-    const draftBase = {
-      userId: user.id,
-      amount,
-      accountNumber,
-      bankCode,
-      bankName,
+    const draftData = {
+      amount: amount ?? null,
+      accountNumber: accountNumber ?? null,
+      bankCode: bankCode ?? null,
+      bankName: bankName ?? null,
       ...(labelHint ? { label: labelHint } : {}),
     };
 
     if (amount && accountNumber && bankCode && bankName) {
-      const draft = await this.prisma.transferDraft.create({
-        data: {
-          ...draftBase,
-          step: TransferDraftStep.AWAITING_BANK_SELECTION,
-        },
-      });
+      const draft = existing
+        ? await this.prisma.transferDraft.update({
+            where: { id: existing.id },
+            data: {
+              ...draftData,
+              step: TransferDraftStep.AWAITING_BANK_SELECTION,
+            },
+          })
+        : await this.prisma.transferDraft.create({
+            data: {
+              userId: user.id,
+              ...draftData,
+              step: TransferDraftStep.AWAITING_BANK_SELECTION,
+            },
+          });
       await this.resolveBank(user, draft, bankCode, bankName, labelHint);
       return;
     }
 
     if (amount && accountNumber && bankMatch?.kind === "multiple") {
-      await this.prisma.transferDraft.create({
-        data: {
-          ...draftBase,
-          step: TransferDraftStep.AWAITING_BANK_SELECTION,
-        },
-      });
+      if (existing) {
+        await this.prisma.transferDraft.update({
+          where: { id: existing.id },
+          data: {
+            ...draftData,
+            step: TransferDraftStep.AWAITING_BANK_SELECTION,
+          },
+        });
+      } else {
+        await this.prisma.transferDraft.create({
+          data: {
+            userId: user.id,
+            ...draftData,
+            step: TransferDraftStep.AWAITING_BANK_SELECTION,
+          },
+        });
+      }
       await this.promptBankList(user, bankMatch.banks);
       return;
     }
 
     if (amount && accountNumber) {
-      await this.prisma.transferDraft.create({
-        data: {
-          ...draftBase,
-          step: TransferDraftStep.AWAITING_BANK_SELECTION,
-        },
-      });
+      if (existing) {
+        await this.prisma.transferDraft.update({
+          where: { id: existing.id },
+          data: {
+            ...draftData,
+            step: TransferDraftStep.AWAITING_BANK_SELECTION,
+          },
+        });
+      } else {
+        await this.prisma.transferDraft.create({
+          data: {
+            userId: user.id,
+            ...draftData,
+            step: TransferDraftStep.AWAITING_BANK_SELECTION,
+          },
+        });
+      }
       await this.whatsapp.sendText(
         user.whatsappNumber,
         `got it, ₦${amount.toLocaleString("en-NG")} to ${accountNumber}. which bank? type the bank name (e.g. gtbank, access, zenith).`,
@@ -288,12 +352,23 @@ export class AccountActionsService {
     }
 
     if (amount && bankCode && bankName) {
-      await this.prisma.transferDraft.create({
-        data: {
-          ...draftBase,
-          step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
-        },
-      });
+      if (existing) {
+        await this.prisma.transferDraft.update({
+          where: { id: existing.id },
+          data: {
+            ...draftData,
+            step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
+          },
+        });
+      } else {
+        await this.prisma.transferDraft.create({
+          data: {
+            userId: user.id,
+            ...draftData,
+            step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
+          },
+        });
+      }
       await this.whatsapp.sendText(
         user.whatsappNumber,
         `got it, ₦${amount.toLocaleString("en-NG")} to ${bankName}. what's the recipient's 10-digit account number?`,
@@ -302,28 +377,21 @@ export class AccountActionsService {
       return;
     }
 
-    if (amount && bankName && bankMatch?.kind === "multiple") {
-      await this.prisma.transferDraft.create({
-        data: {
-          ...draftBase,
-          step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
-        },
-      });
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        `got it, ₦${amount.toLocaleString("en-NG")}. what's the recipient's 10-digit account number?`,
-        user.id,
-      );
-      return;
-    }
-
     if (accountNumber && bankCode && bankName && !amount) {
-      await this.prisma.transferDraft.create({
-        data: {
-          ...draftBase,
-          step: TransferDraftStep.AWAITING_AMOUNT,
-        },
-      });
+      if (existing) {
+        await this.prisma.transferDraft.update({
+          where: { id: existing.id },
+          data: { ...draftData, step: TransferDraftStep.AWAITING_AMOUNT },
+        });
+      } else {
+        await this.prisma.transferDraft.create({
+          data: {
+            userId: user.id,
+            ...draftData,
+            step: TransferDraftStep.AWAITING_AMOUNT,
+          },
+        });
+      }
       await this.whatsapp.sendText(
         user.whatsappNumber,
         `how much would you like to send to ${accountNumber} at ${bankName}? (just the number, e.g. 5000)`,
@@ -333,12 +401,20 @@ export class AccountActionsService {
     }
 
     if (accountNumber && !amount) {
-      await this.prisma.transferDraft.create({
-        data: {
-          ...draftBase,
-          step: TransferDraftStep.AWAITING_AMOUNT,
-        },
-      });
+      if (existing) {
+        await this.prisma.transferDraft.update({
+          where: { id: existing.id },
+          data: { ...draftData, step: TransferDraftStep.AWAITING_AMOUNT },
+        });
+      } else {
+        await this.prisma.transferDraft.create({
+          data: {
+            userId: user.id,
+            ...draftData,
+            step: TransferDraftStep.AWAITING_AMOUNT,
+          },
+        });
+      }
       await this.whatsapp.sendText(
         user.whatsappNumber,
         `how much would you like to send to account ${accountNumber}? (just the number, e.g. 5000)`,
@@ -348,14 +424,24 @@ export class AccountActionsService {
     }
 
     if (amount !== undefined) {
-      await this.prisma.transferDraft.create({
-        data: {
-          userId: user.id,
-          amount,
-          step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
-          ...(labelHint ? { label: labelHint } : {}),
-        },
-      });
+      if (existing) {
+        await this.prisma.transferDraft.update({
+          where: { id: existing.id },
+          data: {
+            ...draftData,
+            step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
+          },
+        });
+      } else {
+        await this.prisma.transferDraft.create({
+          data: {
+            userId: user.id,
+            amount,
+            step: TransferDraftStep.AWAITING_ACCOUNT_NUMBER,
+            ...(labelHint ? { label: labelHint } : {}),
+          },
+        });
+      }
       await this.whatsapp.sendText(
         user.whatsappNumber,
         `got it, ₦${amount.toLocaleString("en-NG")}. what's the recipient's 10-digit account number?`,
@@ -364,9 +450,16 @@ export class AccountActionsService {
       return;
     }
 
-    await this.prisma.transferDraft.create({
-      data: { userId: user.id, step: TransferDraftStep.AWAITING_AMOUNT },
-    });
+    if (existing) {
+      await this.prisma.transferDraft.update({
+        where: { id: existing.id },
+        data: { ...draftData, step: TransferDraftStep.AWAITING_AMOUNT },
+      });
+    } else {
+      await this.prisma.transferDraft.create({
+        data: { userId: user.id, step: TransferDraftStep.AWAITING_AMOUNT },
+      });
+    }
 
     await this.whatsapp.sendText(
       user.whatsappNumber,
@@ -390,9 +483,8 @@ export class AccountActionsService {
   }
 
   /**
-   * Router calls this for any TEXT while the user has an ACTIVE draft.
-   * Returns `interrupt` when the user changed topic — draft is cancelled and
-   * the router should fall through to normal message handling.
+   * Deterministic text handler for wizard steps. Prefer orchestrator
+   * fill_wizard for free text; this remains for exact cancel words if called.
    */
   async handleWizardText(
     user: User,
@@ -407,11 +499,6 @@ export class AccountActionsService {
     const draft = await this.prisma.transferDraft.findUniqueOrThrow({
       where: { id: draftId },
     });
-
-    if (this.isWizardInterrupt(text)) {
-      await this.cancelDraft(user, draftId, { silent: true });
-      return "interrupt";
-    }
 
     switch (draft.step) {
       case TransferDraftStep.AWAITING_AMOUNT:
@@ -431,13 +518,6 @@ export class AccountActionsService {
         );
         return "handled";
     }
-  }
-
-  private isWizardInterrupt(text: string): boolean {
-    const trimmed = text.trim();
-    if (!trimmed) return false;
-    // Only clear topic changes — invalid numbers still get the normal prompt.
-    return WIZARD_INTERRUPT_RE.test(trimmed);
   }
 
   /** Router calls this for BANK_BUTTON_PREFIX/LABEL_BUTTON_PREFIX list replies. */
@@ -537,14 +617,7 @@ export class AccountActionsService {
     draft: TransferDraft,
     text: string,
   ): Promise<void> {
-    let accountNumber = text.replace(/\D/g, "");
-    if (accountNumber.length !== 10) {
-      const recovered = await this.hintsRecovery.recoverForUser(user.id);
-      if (recovered.accountNumber) {
-        accountNumber = recovered.accountNumber;
-      }
-    }
-
+    const accountNumber = text.replace(/\D/g, "");
     if (accountNumber.length !== 10) {
       await this.whatsapp.sendText(
         user.whatsappNumber,

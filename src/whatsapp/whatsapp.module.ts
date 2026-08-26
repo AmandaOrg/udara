@@ -12,7 +12,6 @@ import { KeduChatService } from "./kedu-chat.service";
 import { AccountActionsService } from "./account-actions.service";
 import { IntentRouterService } from "./intent-router.service";
 import { PinGateService } from "./pin-gate.service";
-import { TransferHintsRecoveryService } from "./transfer-hints-recovery.service";
 import { ActionExecutorService } from "../orchestrator/action-executor.service";
 import { OrchestratorModule } from "../orchestrator/orchestrator.module";
 import { PinModule } from "../pin/pin.module";
@@ -57,7 +56,6 @@ import { AiModule } from "../ai/ai.module";
     AccountActionsService,
     IntentRouterService,
     PinGateService,
-    TransferHintsRecoveryService,
     // Needs WhatsApp/account deps — provided here, not in OrchestratorModule.
     ActionExecutorService,
   ],

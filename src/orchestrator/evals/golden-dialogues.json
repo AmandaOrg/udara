@@ -501,5 +501,145 @@
     "expected_surface": "transfer_wizard",
     "expected_confidence": "high",
     "forbidden_surfaces": ["balance_read"]
+  },
+  {
+    "test_case_id": "tx_natural_of_amount_opay",
+    "history": [{ "role": "user", "content": "okay. lets make a transfer of 800 to 8100368023, opay" }],
+    "mock_proposal": {
+      "message": "on it",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": {
+          "amount": 800,
+          "account_number": "8100368023",
+          "bank_name": "opay"
+        }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read", "limits_read"],
+    "expected_surface": "transfer_wizard",
+    "expected_action_type": "show_surface",
+    "expected_hints": {
+      "amount": 800,
+      "accountNumber": "8100368023",
+      "bankName": "opay"
+    },
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read", "limits_read"]
+  },
+  {
+    "test_case_id": "tx_send_my_guy_5k",
+    "history": [{ "role": "user", "content": "send my guy 5k" }],
+    "mock_proposal": {
+      "message": "got it — opening send money for ₦5,000",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 5000 }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read"],
+    "expected_surface": "transfer_wizard",
+    "expected_action_type": "show_surface",
+    "expected_hints": { "amount": 5000 },
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read"]
+  },
+  {
+    "test_case_id": "fill_wizard_amount_mid_flow",
+    "history": [
+      { "role": "assistant", "content": "how much do you want to send?" },
+      { "role": "user", "content": "800" }
+    ],
+    "mock_proposal": {
+      "message": "got it",
+      "action": {
+        "type": "fill_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 800 }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read", "limits_read"],
+    "expected_surface": null,
+    "expected_action_type": "fill_wizard",
+    "expected_hints": { "amount": 800 },
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard", "balance_read", "limits_read"]
+  },
+  {
+    "test_case_id": "fill_wizard_already_sent_account",
+    "history": [
+      { "role": "assistant", "content": "what's the 10-digit account number?" },
+      { "role": "user", "content": "I already sent the account" }
+    ],
+    "mock_proposal": {
+      "message": "got the account from earlier — what's the amount?",
+      "action": {
+        "type": "fill_wizard",
+        "confidence": "high",
+        "extracted_hints": { "account_number": "8100368023" }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "limits_read"],
+    "expected_surface": null,
+    "expected_action_type": "fill_wizard",
+    "expected_hints": { "accountNumber": "8100368023" },
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard", "limits_read"]
+  },
+  {
+    "test_case_id": "mid_wizard_budget_question_cancel",
+    "history": [
+      { "role": "assistant", "content": "how much do you want to send?" },
+      { "role": "user", "content": "do I have a budget?" }
+    ],
+    "mock_proposal": {
+      "message": "pausing the transfer — checking your limits",
+      "action": {
+        "type": "cancel_surface",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "limits_read", "balance_read"],
+    "expected_surface": null,
+    "expected_action_type": "cancel_surface",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard", "limits_read", "balance_read"]
+  },
+  {
+    "test_case_id": "mid_wizard_budget_then_limits",
+    "history": [
+      { "role": "assistant", "content": "how much do you want to send?" },
+      { "role": "user", "content": "I'm asking if i have set a budget in my account" }
+    ],
+    "mock_proposal": {
+      "message": "dropping the transfer for now — pulling your limits",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "limits_read",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["limits_read", "transfer_wizard", "balance_read"],
+    "expected_surface": "limits_read",
+    "expected_action_type": "show_surface",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard", "balance_read"]
+  },
+  {
+    "test_case_id": "soft_failure_not_a_surface",
+    "history": [{ "role": "user", "content": "do i have my budget setup?" }],
+    "mock_proposal": {
+      "message": "sorry, I missed that — try saying it one more time?",
+      "action": { "type": "reply_only" }
+    },
+    "eligible_surfaces": ["transfer_wizard", "limits_read", "spending_menu"],
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
+    "expected_confidence": null,
+    "forbidden_surfaces": ["transfer_wizard", "limits_read", "spending_menu"]
   }
 ]

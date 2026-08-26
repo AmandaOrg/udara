@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { ActionValidatorService } from '../action-validator.service';
-import { ProposedTurn } from '../orchestrator.types';
+import { ProposedTurn, ProposeActionType } from '../orchestrator.types';
 import { SurfaceDefinition, SURFACE_REGISTRY } from '../surface-registry';
 import { OnboardingStage } from '@prisma/client';
 
@@ -11,6 +11,8 @@ interface GoldenCase {
   mock_proposal: ProposedTurn;
   eligible_surfaces: string[];
   expected_surface: string | null;
+  expected_action_type?: ProposeActionType;
+  expected_hints?: Record<string, unknown>;
   expected_confidence: 'high' | 'medium' | null;
   forbidden_surfaces: string[];
 }
@@ -64,6 +66,14 @@ describe('Golden dialogues — validator contract', () => {
 
       expect(result.ok).toBe(true);
       expect(result.surfaceKey ?? null).toBe(c.expected_surface);
+
+      if (c.expected_action_type) {
+        expect(result.actionType).toBe(c.expected_action_type);
+      }
+
+      if (c.expected_hints) {
+        expect(result.extractedHints).toEqual(c.expected_hints);
+      }
 
       if (c.expected_surface) {
         expect(c.forbidden_surfaces).not.toContain(c.expected_surface);

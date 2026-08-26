@@ -20,12 +20,8 @@ import {
 } from "@prisma/client";
 
 /**
- * General post-onboarding conversation — the fallback once a message
- * doesn't match one of the structured stopgap commands (transfer/manager/
- * summary, see parsers/text-command.parser.ts). Free-text, no tool call:
- * Kedu talking in its own voice, nothing here writes to User/Transaction/
- * anything financial — that only ever happens through the structured
- * commands or button confirms, per the guardrail pattern.
+ * Legacy persona chat service — retained for unit specs. Live free text
+ * post-onboarding goes through OrchestratorService + ActionExecutorService.
  */
 @Injectable()
 export class KeduChatService {

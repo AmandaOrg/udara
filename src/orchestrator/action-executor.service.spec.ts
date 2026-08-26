@@ -29,6 +29,8 @@ describe('ActionExecutorService', () => {
       sendAccountDetails: jest.fn().mockResolvedValue(undefined),
       startTransferWizard: jest.fn().mockResolvedValue(undefined),
       sendMainMenu: jest.fn().mockResolvedValue(undefined),
+      applyHintsToDraft: jest.fn().mockResolvedValue(undefined),
+      cancelActiveSurfaces: jest.fn().mockResolvedValue(undefined),
     };
     spendSummary = {
       getWeeklySummary: jest.fn().mockResolvedValue({}),
@@ -47,6 +49,7 @@ describe('ActionExecutorService', () => {
   it('sends persona message then dispatches surface', async () => {
     await executor.execute(user, {
       message: 'pulling your balance up',
+      actionType: 'show_surface',
       surfaceKey: 'balance_read',
       ok: true,
     });
@@ -59,9 +62,10 @@ describe('ActionExecutorService', () => {
     expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
   });
 
-  it('passes sanitized transfer hints into startTransferWizard', async () => {
+  it('passes sanitized transfer hints into startTransferWizard without session recovery', async () => {
     await executor.execute(user, {
       message: 'lets send that',
+      actionType: 'show_surface',
       surfaceKey: 'transfer_wizard',
       extractedHints: {
         amount: 15000,
@@ -72,15 +76,43 @@ describe('ActionExecutorService', () => {
       ok: true,
     });
 
-    expect(accountActions.startTransferWizard).toHaveBeenCalledWith(user, {
-      amount: 15000,
-      accountNumber: '0123456789',
-      bankName: 'GTBank',
-      labelHint: 'RENT',
-    });
+    expect(accountActions.startTransferWizard).toHaveBeenCalledWith(
+      user,
+      {
+        amount: 15000,
+        accountNumber: '0123456789',
+        bankName: 'GTBank',
+        labelHint: 'RENT',
+      },
+      { recoverFromSession: false },
+    );
   });
 
-  it('runs failure SOP: apology + main menu', async () => {
+  it('fill_wizard applies hints to the active draft', async () => {
+    await executor.execute(user, {
+      message: 'got it',
+      actionType: 'fill_wizard',
+      extractedHints: { amount: 800 },
+      ok: true,
+    });
+
+    expect(accountActions.applyHintsToDraft).toHaveBeenCalledWith(user, {
+      amount: 800,
+    });
+    expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
+  });
+
+  it('cancel_surface cancels active wizard / pending confirm', async () => {
+    await executor.execute(user, {
+      message: 'okay, dropping that',
+      actionType: 'cancel_surface',
+      ok: true,
+    });
+
+    expect(accountActions.cancelActiveSurfaces).toHaveBeenCalledWith(user);
+  });
+
+  it('runs failure SOP: apology without dumping the menu', async () => {
     await executor.execute(user, { message: '', ok: false });
 
     expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
@@ -88,18 +120,32 @@ describe('ActionExecutorService', () => {
       ORCHESTRATOR_FAILURE_MESSAGE,
       'user-1',
     );
-    expect(accountActions.sendMainMenu).toHaveBeenCalledWith(user);
+    expect(accountActions.sendMainMenu).not.toHaveBeenCalled();
     expect(accountActions.sendBalance).not.toHaveBeenCalled();
+    expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
   });
 
-  it('reply_only sends message without surface', async () => {
+  it('show_surface for a non-transfer surface cancels any active wizard first', async () => {
     await executor.execute(user, {
-      message: 'I hear you',
+      message: 'checking your limits',
+      actionType: 'show_surface',
+      surfaceKey: 'limits_read',
       ok: true,
     });
 
-    expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalled();
-    expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
-    expect(accountActions.sendMainMenu).not.toHaveBeenCalled();
+    expect(accountActions.cancelActiveSurfaces).toHaveBeenCalledWith(user);
+    expect(accountActions.sendLimitsStatus).toHaveBeenCalledWith(user);
+  });
+
+  it('show_surface transfer_wizard does not cancel first', async () => {
+    await executor.execute(user, {
+      message: 'lets send that',
+      actionType: 'show_surface',
+      surfaceKey: 'transfer_wizard',
+      ok: true,
+    });
+
+    expect(accountActions.cancelActiveSurfaces).not.toHaveBeenCalled();
+    expect(accountActions.startTransferWizard).toHaveBeenCalled();
   });
 });

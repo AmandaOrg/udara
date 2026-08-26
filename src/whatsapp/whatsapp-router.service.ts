@@ -5,13 +5,11 @@ import {
   OnboardingService,
   isPreAccountStage,
 } from "../onboarding/onboarding.service";
-import { SpendSummaryService } from "../allowance/spend-summary.service";
 import {
   TransferConfirmationService,
   CONFIRM_BUTTON_PREFIX,
   CANCEL_BUTTON_PREFIX,
 } from "./transfer-confirmation.service";
-import { ManagerConversationService } from "../manager/manager-conversation.service";
 import { OrchestratorService } from "../orchestrator/orchestrator.service";
 import { ActionExecutorService } from "../orchestrator/action-executor.service";
 import {
@@ -24,46 +22,16 @@ import {
   MENU_LIMITS,
   MENU_TRANSFER,
 } from "./account-actions.service";
-import {
-  parseManagerCommand,
-  parseTransferCommand,
-  isSpendSummaryQuery,
-} from "./parsers/text-command.parser";
 import { User, WhatsappMessage, WhatsappMessageType } from "@prisma/client";
 import { PinGateService } from "./pin-gate.service";
 import { SensitiveFields } from "./whatsapp-message.service";
-import { ChunkedMessengerService } from "./chunked-messenger.service";
-import { TransferHintsRecoveryService } from "./transfer-hints-recovery.service";
-import {
-  extractTransferHintsFromText,
-  hasTransferHints,
-  looksLikeTransferIntent,
-  mergeTransferHints,
-} from "./transfer-hints-from-text.util";
-import { ORCHESTRATOR_FAILURE_MESSAGE } from "../orchestrator/orchestrator.types";
-
-// Quick-access keyword shortcuts — same actions the "menu" list offers,
-// reachable without opening the menu first. Deliberately not a fuzzy/AI
-// match: exact keywords only, consistent with the rest of the stopgap
-// command parsing.
-const BALANCE_RE = /^balance$/i;
-const BALANCE_PARAPHRASE_RE =
-  /^(check\s+)?balance\b|^how much do i have\b|^what(?:'s| is) in my account\b/i;
-const LIMITS_RE = /^limits?$/i;
-const LIMITS_PARAPHRASE_RE =
-  /^how much can i (still )?spend\b|^what(?:'s| is) left (for )?today\b|^daily limit\b/i;
-const ACCOUNT_DETAILS_RE = /^account( details)?$/i;
-const TRANSFER_START_RE = /^(send money|transfer)$/i;
 
 /**
- * The top-level inbound decision tree (PRD §5: webhook-in -> window check ->
- * allowance check -> ... -> response-out).
+ * Top-level inbound router.
  *
- * Free-text transfer/settings-change/summary intent is still a small set of
- * structured stopgap commands (parsers/text-command.parser.ts), not real NLP
- * classification — deliberately honest about that; nothing downstream
- * depends on it changing. Post-onboarding free text that doesn't match a
- * shortcut goes through the AI Orchestrator + ActionExecutor.
+ * Structured WhatsApp payloads (button ids, list ids, Flow JSON, PIN) stay
+ * deterministic. All post-onboarding free text goes to the LLM orchestrator —
+ * no regex product path for intent or transfer field extraction.
  */
 @Injectable()
 export class WhatsappRouterService {
@@ -73,22 +41,13 @@ export class WhatsappRouterService {
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsappService,
     private readonly onboarding: OnboardingService,
-    private readonly spendSummary: SpendSummaryService,
     private readonly transferConfirmation: TransferConfirmationService,
-    private readonly managerConversation: ManagerConversationService,
     private readonly accountActions: AccountActionsService,
     private readonly pinGate: PinGateService,
     private readonly orchestrator: OrchestratorService,
     private readonly actionExecutor: ActionExecutorService,
-    private readonly chunkedMessenger: ChunkedMessengerService,
-    private readonly hintsRecovery: TransferHintsRecoveryService,
   ) {}
 
-  /**
-   * `sensitive` carries plaintext values (PIN, BVN/NIN) that were stripped
-   * from the persisted `message` row — see whatsapp-message.service.ts. Only
-   * the Flow-reply handlers read it; it is never logged or re-persisted.
-   */
   async route(
     message: WhatsappMessage,
     sensitive: SensitiveFields = {},
@@ -122,7 +81,6 @@ export class WhatsappRouterService {
     }
   }
 
-  /** Looks up the user by WhatsApp number, creating a fresh DISCOVERY-stage row on first contact. */
   private async findOrCreateUser(whatsappNumber: string): Promise<User> {
     const existing = await this.prisma.user.findUnique({
       where: { whatsappNumber },
@@ -138,13 +96,6 @@ export class WhatsappRouterService {
     });
   }
 
-  /**
-   * v0 scope decision (see build-out plan): audio stays fully stubbed,
-   * including during onboarding, despite the PRD's voice-note-first design.
-   * The mediaId is already persisted on the WhatsappMessage row by
-   * WhatsappMessageService — downloadMedia()/transcription is a fast-follow,
-   * not built now — so this is a real, honest reply, not a lie.
-   */
   private async handleAudio(
     user: User,
     message: WhatsappMessage,
@@ -156,13 +107,6 @@ export class WhatsappRouterService {
     );
   }
 
-  /**
-   * Dispatches by button-id namespace: confirm_transfer/cancel_transfer to
-   * TransferConfirmationService; menu:/bank:/label: to AccountActionsService
-   * (the interactive balance/limits/account/transfer surface); during
-   * onboarding's STRUCTURED_QUESTIONS stage, everything else goes to
-   * OnboardingService's list-reply handler.
-   */
   private async handleButtonReply(
     user: User,
     message: WhatsappMessage,
@@ -227,20 +171,15 @@ export class WhatsappRouterService {
         return this.accountActions.sendLimitsStatus(user);
       case MENU_ACCOUNT:
         return this.accountActions.sendAccountDetails(user);
-      case MENU_TRANSFER: {
-        const recovered = await this.hintsRecovery.recoverForUser(user.id);
-        return this.accountActions.startTransferWizard(user, recovered);
-      }
+      case MENU_TRANSFER:
+        return this.accountActions.startTransferWizard(user, undefined, {
+          recoverFromSession: false,
+        });
       default:
         this.logger.warn(`Unrecognized menu selection "${payload}"`);
     }
   }
 
-  /**
-   * A WhatsApp Flow submission — currently only the Trust Moment's KYC form
-   * (see OnboardingService.handleInboundFlowReply). Not meaningful outside a
-   * pre-account onboarding stage since nothing else in the app sends a flow.
-   */
   private async handleFlowReply(
     user: User,
     message: WhatsappMessage,
@@ -249,11 +188,6 @@ export class WhatsappRouterService {
     const responseJson =
       (message.flowResponseJson as Record<string, unknown> | null) ?? {};
 
-    // A PIN submission is identified by its challenge, not by the stage the
-    // user happens to be in — PIN entry is post-onboarding, so the
-    // pre-account gate below would otherwise reject it. handlePinFlowReply
-    // returns "none" for any token that isn't a live PIN challenge, so a KYC
-    // submission falls through to the onboarding handler untouched.
     if (sensitive.pin !== undefined || sensitive.pin_confirm !== undefined) {
       const outcome = await this.pinGate.handlePinFlowReply(
         user,
@@ -278,15 +212,9 @@ export class WhatsappRouterService {
   }
 
   /**
-   * Pre-account-stage users (still in the onboarding script) go entirely to
-   * OnboardingService — the interactive account-actions surface below
-   * (balance/limits/account/transfer) needs a real Rubies account to act on,
-   * so it's only reachable past that point.
-   *
-   * For everyone else: an in-progress send-money wizard step takes priority
-   * over everything; then structured stopgap commands/keyword shortcuts
-   * (deterministic, zero-latency). Anything that still doesn't match goes
-   * through OrchestratorService + ActionExecutorService.
+   * Pre-account onboarding stays scripted. Post-onboarding free text always
+   * goes to the orchestrator (including when a transfer draft is active —
+   * the model sees Active mode and can fill_wizard or cancel_surface).
    */
   private async handleText(
     user: User,
@@ -299,109 +227,7 @@ export class WhatsappRouterService {
       return;
     }
 
-    const activeDraft = await this.accountActions.getActiveDraft(user.id);
-    if (activeDraft) {
-      const outcome = await this.accountActions.handleWizardText(
-        user,
-        activeDraft.id,
-        text,
-      );
-      if (outcome !== "interrupt") {
-        return;
-      }
-      // User changed topic mid-wizard — draft was cancelled; fall through.
-    }
-
-    const transferCommand = parseTransferCommand(text);
-    if (transferCommand) {
-      await this.transferConfirmation.initiateTransfer({
-        userId: user.id,
-        ...transferCommand,
-      });
-      return;
-    }
-
-    if (BALANCE_RE.test(text.trim()) || BALANCE_PARAPHRASE_RE.test(text.trim())) {
-      await this.accountActions.sendBalance(user);
-      return;
-    }
-    if (LIMITS_RE.test(text.trim()) || LIMITS_PARAPHRASE_RE.test(text.trim())) {
-      await this.accountActions.sendLimitsStatus(user);
-      return;
-    }
-    if (ACCOUNT_DETAILS_RE.test(text.trim())) {
-      await this.accountActions.sendAccountDetails(user);
-      return;
-    }
-    if (TRANSFER_START_RE.test(text.trim())) {
-      const recovered = await this.hintsRecovery.recoverForUser(user.id);
-      await this.accountActions.startTransferWizard(user, recovered);
-      return;
-    }
-
-    const managerCommand = parseManagerCommand(text);
-    if (managerCommand) {
-      await this.managerConversation.fileChangeRequest({
-        userId: user.id,
-        ...managerCommand,
-      });
-      return;
-    }
-
-    if (isSpendSummaryQuery(text)) {
-      const summary = await this.spendSummary.getWeeklySummary(user.id);
-      await this.whatsapp.sendText(
-        message.fromNumber,
-        this.spendSummary.formatAsText(summary),
-        user.id,
-      );
-      return;
-    }
-
-    if (/^help$|^menu$|^commands$/i.test(text.trim())) {
-      await this.accountActions.sendMainMenu(user);
-      return;
-    }
-
-    // ── Deterministic transfer fast-path (no LLM) ─────────────────────
-    const inlineHints = extractTransferHintsFromText(text);
-    if (looksLikeTransferIntent(text) && hasTransferHints(inlineHints)) {
-      await this.chunkedMessenger.sendChunkedReply(
-        user.whatsappNumber,
-        "got it — I'll set up that transfer.",
-        user.id,
-      );
-      await this.accountActions.startTransferWizard(user, inlineHints, {
-        recoverFromSession: true,
-      });
-      return;
-    }
-
-    // ── AI Orchestrator + Action Executor ───────────────────────────
     const result = await this.orchestrator.handleMessage(user, text);
-    if (result.ok === false) {
-      // Only reopen a transfer on failure when THIS message is clearly a
-      // send intent. Old session hints alone must not hijack a budget /
-      // balance question into the transfer wizard.
-      if (looksLikeTransferIntent(text)) {
-        const recovered = await this.hintsRecovery.recoverForUser(user.id);
-        const hints = mergeTransferHints(
-          recovered,
-          extractTransferHintsFromText(text),
-        );
-        await this.chunkedMessenger.sendChunkedReply(
-          user.whatsappNumber,
-          ORCHESTRATOR_FAILURE_MESSAGE,
-          user.id,
-        );
-        await this.accountActions.startTransferWizard(user, hints, {
-          recoverFromSession: false,
-        });
-        return;
-      }
-      await this.actionExecutor.sendSafeFallback(user);
-      return;
-    }
     await this.actionExecutor.execute(user, result);
   }
 

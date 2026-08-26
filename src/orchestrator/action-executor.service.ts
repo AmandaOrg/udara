@@ -1,6 +1,6 @@
 /**
  * Executes a validated orchestrator turn: persona text first (wrapping),
- * then the deterministic UI surface. Owns the failure SOP (apology + menu).
+ * then the deterministic UI surface / wizard fill / cancel.
  *
  * Lives under orchestrator/ but is provided by WhatsappModule because it
  * depends on WhatsApp send + account-action services.
@@ -29,10 +29,6 @@ export class ActionExecutorService {
     private readonly whatsapp: WhatsappService,
   ) {}
 
-  /**
-   * Send persona text, then dispatch any validated surface.
-   * On `ok === false`, runs the failure SOP instead.
-   */
   async execute(user: User, result: OrchestratorResult): Promise<void> {
     if (result.ok === false) {
       await this.sendSafeFallback(user);
@@ -45,7 +41,27 @@ export class ActionExecutorService {
       user.id,
     );
 
-    if (result.surfaceKey) {
+    const actionType = result.actionType ?? 'reply_only';
+
+    if (actionType === 'cancel_surface') {
+      await this.accountActions.cancelActiveSurfaces(user);
+      return;
+    }
+
+    if (actionType === 'fill_wizard') {
+      await this.accountActions.applyHintsToDraft(
+        user,
+        result.extractedHints ?? {},
+      );
+      return;
+    }
+
+    if (actionType === 'show_surface' && result.surfaceKey) {
+      // Topic change away from the transfer wizard must drop the draft so
+      // the next turn isn't trapped in an abandoned send-money flow.
+      if (result.surfaceKey !== 'transfer_wizard') {
+        await this.accountActions.cancelActiveSurfaces(user);
+      }
       await this.dispatchSurface(
         user,
         result.surfaceKey,
@@ -54,14 +70,13 @@ export class ActionExecutorService {
     }
   }
 
-  /** Apology + main menu — never drop the turn silently. */
+  /** Short apology — do not dump the menu; that hijacks the user's next turn. */
   async sendSafeFallback(user: User): Promise<void> {
     await this.chunkedMessenger.sendChunkedReply(
       user.whatsappNumber,
       ORCHESTRATOR_FAILURE_MESSAGE,
       user.id,
     );
-    await this.accountActions.sendMainMenu(user);
   }
 
   private async dispatchSurface(
@@ -80,7 +95,10 @@ export class ActionExecutorService {
         await this.accountActions.sendAccountDetails(user);
         break;
       case 'transfer_wizard':
-        await this.accountActions.startTransferWizard(user, hints);
+        // LLM owns extraction — do not re-parse session with regex recovery.
+        await this.accountActions.startTransferWizard(user, hints, {
+          recoverFromSession: false,
+        });
         break;
       case 'spending_menu':
         await this.accountActions.sendMainMenu(user);

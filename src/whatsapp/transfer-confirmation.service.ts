@@ -381,6 +381,33 @@ export class TransferConfirmationService {
     );
   }
 
+  /** Cancels all PENDING_CONFIRMATION transfers for a user (orchestrator cancel_surface). */
+  async cancelPendingForUser(
+    userId: string,
+    options?: { silent?: boolean },
+  ): Promise<void> {
+    const pending = await this.prisma.transaction.findMany({
+      where: {
+        userId,
+        status: TransactionStatus.PENDING_CONFIRMATION,
+      },
+      include: { user: true },
+    });
+    for (const transaction of pending) {
+      await this.prisma.transaction.update({
+        where: { id: transaction.id },
+        data: { status: TransactionStatus.CANCELLED },
+      });
+      if (!options?.silent) {
+        await this.whatsapp.sendText(
+          transaction.user.whatsappNumber,
+          "Cancelled, nothing was sent.",
+          transaction.user.id,
+        );
+      }
+    }
+  }
+
   /**
    * Shared by confirmTransfer's synchronous SUCCESS/FAILED path and the
    * reconciliation scheduler (for transactions that came back PENDING and

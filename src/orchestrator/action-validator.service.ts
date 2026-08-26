@@ -4,9 +4,9 @@
  *
  * Validation rules:
  * 1. reply_only → always passes (just text, no side effects)
- * 2. show_surface → surface_key must exist and be eligible
- * 3. Missing or medium confidence → downgrade to reply_only (safe default)
- * 4. Only confidence === "high" launches a surface
+ * 2. show_surface → surface_key must exist and be eligible; high confidence only
+ * 3. fill_wizard / cancel_surface → high confidence only; sanitize hints for fill
+ * 4. Missing or medium confidence → downgrade to reply_only (safe default)
  * 5. Unknown surface key → downgrade to reply_only
  */
 
@@ -25,26 +25,58 @@ export class ActionValidatorService {
     user: User,
     eligibleSurfaces: SurfaceDefinition[],
   ): OrchestratorResult {
-    // reply_only is always safe — just persona text, no side effects.
     if (proposal.action.type === 'reply_only') {
-      return { message: proposal.message, ok: true };
+      return {
+        message: proposal.message,
+        actionType: 'reply_only',
+        ok: true,
+      };
     }
 
-    const surfaceKey = proposal.action.surface_key;
+    const confidence = proposal.action.confidence ?? 'medium';
+    if (confidence !== 'high') {
+      this.logger.debug(
+        `${confidence} confidence on "${proposal.action.type}" for user ${user.id} — sending text only`,
+      );
+      return {
+        message: proposal.message,
+        actionType: 'reply_only',
+        ok: true,
+      };
+    }
 
-    // show_surface without a key is malformed — downgrade.
+    if (proposal.action.type === 'cancel_surface') {
+      return {
+        message: proposal.message,
+        actionType: 'cancel_surface',
+        ok: true,
+      };
+    }
+
+    if (proposal.action.type === 'fill_wizard') {
+      return {
+        message: proposal.message,
+        actionType: 'fill_wizard',
+        extractedHints: sanitizeTransferHints(
+          proposal.action.extracted_hints,
+        ),
+        ok: true,
+      };
+    }
+
+    // show_surface
+    const surfaceKey = proposal.action.surface_key;
     if (!surfaceKey) {
       this.logger.warn(
         `show_surface proposed with no surface_key for user ${user.id} — downgrading to reply_only`,
       );
       return {
         message: proposal.message,
+        actionType: 'reply_only',
         ok: true,
       };
     }
 
-    // Surface must be in the eligible set (double-check — the model should
-    // only see eligible surfaces, but it can hallucinate).
     const surface = eligibleSurfaces.find((s) => s.key === surfaceKey);
     if (!surface) {
       this.logger.warn(
@@ -52,18 +84,7 @@ export class ActionValidatorService {
       );
       return {
         message: proposal.message,
-        ok: true,
-      };
-    }
-
-    // Missing confidence = medium. Only explicit "high" launches a surface.
-    const confidence = proposal.action.confidence ?? 'medium';
-    if (confidence !== 'high') {
-      this.logger.debug(
-        `${confidence} confidence on "${surfaceKey}" for user ${user.id} — sending text only`,
-      );
-      return {
-        message: proposal.message,
+        actionType: 'reply_only',
         ok: true,
       };
     }
@@ -73,9 +94,9 @@ export class ActionValidatorService {
         ? sanitizeTransferHints(proposal.action.extracted_hints)
         : undefined;
 
-    // All checks passed — execute the surface.
     return {
       message: proposal.message,
+      actionType: 'show_surface',
       surfaceKey,
       extractedHints,
       ok: true,
