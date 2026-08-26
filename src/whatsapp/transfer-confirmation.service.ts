@@ -183,6 +183,21 @@ export class TransferConfirmationService {
     if (feeLine) {
       bodyLines.push(feeLine);
     }
+
+    // Live wallet balance — separate from daily allowance so the confirm
+    // screen matches what users expect (₦1000 balance − ₦800 = ₦200 left).
+    if (user.rubiesAccountNumber) {
+      const balance = await this.rubies
+        .getBalance(user.rubiesAccountNumber)
+        .catch(() => null);
+      if (balance !== null) {
+        const afterBalance = balance - params.amount - evaluation.feeAmount;
+        bodyLines.push(
+          `Account balance after this: ₦${Math.max(0, afterBalance).toLocaleString("en-NG")}`,
+        );
+      }
+    }
+
     bodyLines.push(
       `Allowance left today after this: ₦${Math.max(0, evaluation.remainingToday - params.amount).toLocaleString("en-NG")}`,
     );

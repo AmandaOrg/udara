@@ -459,6 +459,29 @@ describe("AccountActionsService", () => {
       );
     });
 
+    it("interrupts the amount step on a conversational question", async () => {
+      await service.startTransferWizard(makeUser() as any, {
+        accountNumber: "8100368023",
+        bankCode: "000013",
+        bankName: "Opay",
+      });
+      const draft = await service.getActiveDraft("user-1");
+      const outcome = await service.handleWizardText(
+        makeUser() as any,
+        draft!.id,
+        "I'm asking if i have set a budget in my account",
+      );
+      expect(outcome).toBe("interrupt");
+      expect(prisma._drafts.get(draft!.id)!.status).toBe(
+        TransferDraftStatus.CANCELLED,
+      );
+      expect(whatsapp.sendText).not.toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("valid amount"),
+        "user-1",
+      );
+    });
+
     async function driveToBankStep() {
       await service.startTransferWizard(makeUser() as any);
       const draft = await service.getActiveDraft("user-1");

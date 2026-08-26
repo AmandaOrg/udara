@@ -239,26 +239,29 @@ describe("TransferConfirmationService", () => {
 
     it("creates a PENDING_CONFIRMATION transaction and sends confirm/cancel buttons", async () => {
       prisma.transaction.create.mockResolvedValue({ id: "txn-1" });
+      rubies.getBalance.mockResolvedValue(1000);
 
       await service.initiateTransfer({
         userId: "user-1",
         accountNumber: "0011223344",
         bankCode: "000005",
-        amount: 5000,
+        amount: 800,
       });
 
       expect(prisma.transaction.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             status: TransactionStatus.PENDING_CONFIRMATION,
-            amount: 5000,
+            amount: 800,
             idempotencyKey: expect.any(String),
           }),
         }),
       );
       expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
         "234801",
-        expect.any(String),
+        expect.stringMatching(
+          /Account balance after this: ₦200[\s\S]*Allowance left today after this/i,
+        ),
         [
           { id: `${CONFIRM_BUTTON_PREFIX}txn-1`, title: "Confirm" },
           { id: `${CANCEL_BUTTON_PREFIX}txn-1`, title: "Cancel" },

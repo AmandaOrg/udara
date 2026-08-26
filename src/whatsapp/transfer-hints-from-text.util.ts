@@ -28,7 +28,7 @@ const LABEL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: RecipientLabel }> 
   ];
 
 const TRANSFER_INTENT_RE =
-  /\b(send|transfer|pay)\b.*\b(money|cash|account|\d{10})\b|\b(send|transfer)\s+(money|to\b)|\d{10}\b.*\b(opay|bank|gtbank|access|zenith|kuda)\b/i;
+  /\b(send|transfer|pay)\b.*\b(money|cash|account|\d{10})\b|\b(send|transfer)\s+(money|to\b)|\b(i\s+)?(need\s+to\s+|want\s+to\s+|wanna\s+)?(send|transfer|pay)\b|\d{10}\b.*\b(opay|bank|gtbank|access|zenith|kuda)\b/i;
 
 /**
  * Deterministic extraction from free text — no LLM. Used as a fast path and

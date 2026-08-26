@@ -29,6 +29,10 @@ export const MENU_TRANSFER = `${MENU_BUTTON_PREFIX}transfer`;
 
 const CANCEL_WORDS = /^(cancel|stop|nevermind|never mind)$/i;
 
+/** Mid-wizard topic change — cancel the draft and let the router re-handle. */
+const WIZARD_INTERRUPT_RE =
+  /\?|\b(budget|balance|limit|allowance|menu|help|account details|what can i|do i have|how much)\b/i;
+
 const LABEL_ROWS = [
   { id: `${LABEL_BUTTON_PREFIX}RENT`, title: "🏠 Rent" },
   { id: `${LABEL_BUTTON_PREFIX}FOOD`, title: "🍔 Food" },
@@ -371,43 +375,69 @@ export class AccountActionsService {
     );
   }
 
-  async cancelDraft(user: User, draftId: string): Promise<void> {
+  async cancelDraft(
+    user: User,
+    draftId: string,
+    options?: { silent?: boolean },
+  ): Promise<void> {
     await this.prisma.transferDraft.update({
       where: { id: draftId },
       data: { status: TransferDraftStatus.CANCELLED },
     });
-    await this.whatsapp.sendText(user.whatsappNumber, "cancelled.", user.id);
+    if (!options?.silent) {
+      await this.whatsapp.sendText(user.whatsappNumber, "cancelled.", user.id);
+    }
   }
 
-  /** Router calls this for any TEXT while the user has an ACTIVE draft. */
+  /**
+   * Router calls this for any TEXT while the user has an ACTIVE draft.
+   * Returns `interrupt` when the user changed topic — draft is cancelled and
+   * the router should fall through to normal message handling.
+   */
   async handleWizardText(
     user: User,
     draftId: string,
     text: string,
-  ): Promise<void> {
+  ): Promise<"handled" | "interrupt"> {
     if (CANCEL_WORDS.test(text.trim())) {
       await this.cancelDraft(user, draftId);
-      return;
+      return "handled";
     }
 
     const draft = await this.prisma.transferDraft.findUniqueOrThrow({
       where: { id: draftId },
     });
 
+    if (this.isWizardInterrupt(text)) {
+      await this.cancelDraft(user, draftId, { silent: true });
+      return "interrupt";
+    }
+
     switch (draft.step) {
       case TransferDraftStep.AWAITING_AMOUNT:
-        return this.handleAmountText(user, draft, text);
+        await this.handleAmountText(user, draft, text);
+        return "handled";
       case TransferDraftStep.AWAITING_ACCOUNT_NUMBER:
-        return this.handleAccountNumberText(user, draft, text);
+        await this.handleAccountNumberText(user, draft, text);
+        return "handled";
       case TransferDraftStep.AWAITING_BANK_SELECTION:
-        return this.handleBankNameText(user, draft, text);
+        await this.handleBankNameText(user, draft, text);
+        return "handled";
       default:
         await this.whatsapp.sendText(
           user.whatsappNumber,
           'tap one of the options above, or if you\'d rather start over, say "cancel".',
           user.id,
         );
+        return "handled";
     }
+  }
+
+  private isWizardInterrupt(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    // Only clear topic changes — invalid numbers still get the normal prompt.
+    return WIZARD_INTERRUPT_RE.test(trimmed);
   }
 
   /** Router calls this for BANK_BUTTON_PREFIX/LABEL_BUTTON_PREFIX list replies. */

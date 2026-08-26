@@ -168,6 +168,39 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     );
   });
 
+  it("does not reopen a transfer from old hints when the user asked something else", async () => {
+    orchestrator.handleMessage.mockResolvedValue({ ok: false, message: "" });
+    hintsRecovery.recoverForUser.mockResolvedValue({
+      accountNumber: "8100368023",
+      bankName: "opay",
+    });
+
+    await service.route(makeMessage("do i have my budget setup?"));
+
+    expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
+    expect(actionExecutor.sendSafeFallback).toHaveBeenCalledWith(user);
+  });
+
+  it("re-routes when the wizard signals a mid-flow interrupt", async () => {
+    accountActions.getActiveDraft.mockResolvedValue({ id: "draft-1" });
+    accountActions.handleWizardText.mockResolvedValue("interrupt");
+    orchestrator.handleMessage.mockResolvedValue({
+      message: "your allowance is set",
+      ok: true,
+    });
+
+    await service.route(
+      makeMessage("I'm asking if i have set a budget in my account"),
+    );
+
+    expect(accountActions.handleWizardText).toHaveBeenCalled();
+    expect(orchestrator.handleMessage).toHaveBeenCalledWith(
+      user,
+      "I'm asking if i have set a budget in my account",
+    );
+    expect(actionExecutor.execute).toHaveBeenCalled();
+  });
+
   it("never reaches the orchestrator for a common limits paraphrase", async () => {
     await service.route(makeMessage("how much can I spend today"));
 
@@ -177,6 +210,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
 
   it("never reaches the orchestrator while an active transfer draft owns the turn", async () => {
     accountActions.getActiveDraft.mockResolvedValue({ id: "draft-1" });
+    accountActions.handleWizardText.mockResolvedValue("handled");
 
     await service.route(makeMessage("50000"));
 

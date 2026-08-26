@@ -301,8 +301,15 @@ export class WhatsappRouterService {
 
     const activeDraft = await this.accountActions.getActiveDraft(user.id);
     if (activeDraft) {
-      await this.accountActions.handleWizardText(user, activeDraft.id, text);
-      return;
+      const outcome = await this.accountActions.handleWizardText(
+        user,
+        activeDraft.id,
+        text,
+      );
+      if (outcome !== "interrupt") {
+        return;
+      }
+      // User changed topic mid-wizard — draft was cancelled; fall through.
     }
 
     const transferCommand = parseTransferCommand(text);
@@ -373,12 +380,15 @@ export class WhatsappRouterService {
     // ── AI Orchestrator + Action Executor ───────────────────────────
     const result = await this.orchestrator.handleMessage(user, text);
     if (result.ok === false) {
-      const recovered = await this.hintsRecovery.recoverForUser(user.id);
-      const hints = mergeTransferHints(
-        recovered,
-        extractTransferHintsFromText(text),
-      );
-      if (looksLikeTransferIntent(text) || hasTransferHints(hints)) {
+      // Only reopen a transfer on failure when THIS message is clearly a
+      // send intent. Old session hints alone must not hijack a budget /
+      // balance question into the transfer wizard.
+      if (looksLikeTransferIntent(text)) {
+        const recovered = await this.hintsRecovery.recoverForUser(user.id);
+        const hints = mergeTransferHints(
+          recovered,
+          extractTransferHintsFromText(text),
+        );
         await this.chunkedMessenger.sendChunkedReply(
           user.whatsappNumber,
           ORCHESTRATOR_FAILURE_MESSAGE,
