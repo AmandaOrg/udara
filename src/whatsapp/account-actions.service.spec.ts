@@ -94,6 +94,7 @@ describe("AccountActionsService", () => {
   let transferConfirmation: {
     initiateTransfer: jest.Mock;
     cancelPendingForUser: jest.Mock;
+    resumePendingTransferUi: jest.Mock;
   };
   let service: AccountActionsService;
 
@@ -140,6 +141,7 @@ describe("AccountActionsService", () => {
     transferConfirmation = {
       initiateTransfer: jest.fn(),
       cancelPendingForUser: jest.fn().mockResolvedValue(undefined),
+      resumePendingTransferUi: jest.fn().mockResolvedValue(false),
     };
 
     service = new AccountActionsService(

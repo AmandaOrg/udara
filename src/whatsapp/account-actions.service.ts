@@ -228,6 +228,13 @@ export class AccountActionsService {
     await this.advanceWithHints(user, hints, existing);
   }
 
+  /**
+   * If confirm/PIN is already in progress, resume that UI instead of a new wizard.
+   */
+  async resumePendingTransfer(user: User): Promise<boolean> {
+    return this.transferConfirmation.resumePendingTransferUi(user);
+  }
+
   /** Cancels active transfer draft and any pending confirm — silent (persona already spoke). */
   async cancelActiveSurfaces(user: User): Promise<void> {
     const draft = await this.getActiveDraft(user.id);

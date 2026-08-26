@@ -530,6 +530,31 @@
     "forbidden_surfaces": ["balance_read", "limits_read"]
   },
   {
+    "test_case_id": "tx_ready_send_not_stalled_on_reply_only",
+    "history": [{ "role": "user", "content": "lets make a trasfer of 200 to 8100368023, opay" }],
+    "mock_proposal": {
+      "message": "let's get that ₦200 transfer to Opay ready.",
+      "action": {
+        "type": "reply_only",
+        "extracted_hints": {
+          "amount": 200,
+          "account_number": "8100368023",
+          "bank_name": "opay"
+        }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read"],
+    "expected_surface": "transfer_wizard",
+    "expected_action_type": "show_surface",
+    "expected_hints": {
+      "amount": 200,
+      "accountNumber": "8100368023",
+      "bankName": "opay"
+    },
+    "expected_confidence": null,
+    "forbidden_surfaces": ["balance_read"]
+  },
+  {
     "test_case_id": "tx_send_my_guy_5k",
     "history": [{ "role": "user", "content": "send my guy 5k" }],
     "mock_proposal": {

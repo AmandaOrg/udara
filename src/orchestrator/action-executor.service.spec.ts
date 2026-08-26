@@ -27,6 +27,7 @@ describe('ActionExecutorService', () => {
       sendLimitsStatus: jest.fn().mockResolvedValue(undefined),
       sendAccountDetails: jest.fn().mockResolvedValue(undefined),
       startTransferWizard: jest.fn().mockResolvedValue(undefined),
+      resumePendingTransfer: jest.fn().mockResolvedValue(false),
       sendMainMenu: jest.fn().mockResolvedValue(undefined),
       applyHintsToDraft: jest.fn().mockResolvedValue(undefined),
       cancelActiveSurfaces: jest.fn().mockResolvedValue(undefined),
@@ -145,5 +146,19 @@ describe('ActionExecutorService', () => {
 
     expect(accountActions.cancelActiveSurfaces).not.toHaveBeenCalled();
     expect(accountActions.startTransferWizard).toHaveBeenCalled();
+  });
+
+  it('resumes pending confirm instead of starting a blank wizard', async () => {
+    accountActions.resumePendingTransfer.mockResolvedValue(true);
+
+    await executor.execute(user, {
+      message: "i've pulled the details back up",
+      actionType: 'show_surface',
+      surfaceKey: 'transfer_wizard',
+      ok: true,
+    });
+
+    expect(accountActions.resumePendingTransfer).toHaveBeenCalledWith(user);
+    expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
   });
 });

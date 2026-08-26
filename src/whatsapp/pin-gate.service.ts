@@ -14,7 +14,9 @@ import { SensitiveFields } from "./whatsapp-message.service";
  * a forwardRef cycle between the two services.
  */
 export type PinFlowOutcome =
-  { action: "none" } | { action: "execute_transfer"; transactionId: string };
+  | { action: "none" }
+  | { action: "execute_transfer"; transactionId: string }
+  | { action: "pin_setup_complete" };
 
 /**
  * The WhatsApp-facing half of PIN authentication: sending the entry/setup
@@ -165,8 +167,8 @@ export class PinGateService {
     }
 
     if (challenge.purpose === PinChallengePurpose.SETUP) {
-      await this.handleSetupSubmission(user, sensitive);
-      return { action: "none" };
+      const ok = await this.handleSetupSubmission(user, sensitive);
+      return ok ? { action: "pin_setup_complete" } : { action: "none" };
     }
 
     return this.handleTransferSubmission(
@@ -179,7 +181,7 @@ export class PinGateService {
   private async handleSetupSubmission(
     user: User,
     sensitive: SensitiveFields,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const pin = sensitive.pin ?? "";
     const confirm = sensitive.pin_confirm ?? "";
 
@@ -187,7 +189,7 @@ export class PinGateService {
     if (!result.ok) {
       await this.whatsapp.sendText(user.whatsappNumber, result.reason, user.id);
       await this.requestPinSetup(user); // fresh challenge, fresh form
-      return;
+      return false;
     }
 
     await this.whatsapp.sendText(
@@ -195,6 +197,7 @@ export class PinGateService {
       "your pin is set. you'll enter it to approve every transfer from now on. if you ever forget it, message me and we'll sort it out.",
       user.id,
     );
+    return true;
   }
 
   private async handleTransferSubmission(

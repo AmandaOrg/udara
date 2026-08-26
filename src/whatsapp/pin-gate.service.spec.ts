@@ -227,7 +227,7 @@ describe("PinGateService", () => {
         { pin: "8317", pin_confirm: "8317" },
       );
 
-      expect(outcome).toEqual({ action: "none" });
+      expect(outcome).toEqual({ action: "pin_setup_complete" });
       expect(pin.setPin).toHaveBeenCalledWith("user-1", "8317", "8317");
     });
 

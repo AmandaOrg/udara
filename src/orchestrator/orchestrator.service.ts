@@ -316,7 +316,7 @@ export class OrchestratorService {
     if (pendingConfirm) {
       lines.push(
         '- Active mode: awaiting_confirm',
-        `- Pending confirm: amount ₦${Number(pendingConfirm.amount).toLocaleString('en-NG')} (user should tap Confirm or Cancel; use cancel_surface only if they clearly abort in text)`,
+        `- Pending confirm: amount ₦${Number(pendingConfirm.amount).toLocaleString('en-NG')} (do NOT start transfer_wizard. Remind them to tap Confirm/Cancel or enter PIN. The system can resend those buttons.)`,
       );
     } else if (draft) {
       lines.push(

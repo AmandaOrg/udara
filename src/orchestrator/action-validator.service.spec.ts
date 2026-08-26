@@ -101,6 +101,50 @@ describe('ActionValidatorService', () => {
     });
   });
 
+  it('launches the wizard when reply_only still extracted a ready send', () => {
+    const result = validator.validate(
+      {
+        message: "let's get that ₦200 transfer to Opay ready.",
+        action: {
+          type: 'reply_only',
+          extracted_hints: {
+            amount: 200,
+            account_number: '8100368023',
+            bank_name: 'opay',
+          },
+        },
+      },
+      user,
+      eligible,
+    );
+    expect(result.actionType).toBe('show_surface');
+    expect(result.surfaceKey).toBe('transfer_wizard');
+    expect(result.extractedHints).toEqual({
+      amount: 200,
+      accountNumber: '8100368023',
+      bankName: 'opay',
+    });
+  });
+
+  it('does not drop a ready transfer just because confidence is medium', () => {
+    const result = validator.validate(
+      proposal({
+        surface_key: 'transfer_wizard',
+        confidence: 'medium',
+        extracted_hints: {
+          amount: 200,
+          account_number: '8100368023',
+          bank_name: 'opay',
+        },
+        message: "let's get that ready",
+      }),
+      user,
+      eligible,
+    );
+    expect(result.surfaceKey).toBe('transfer_wizard');
+    expect(result.actionType).toBe('show_surface');
+  });
+
   it('accepts fill_wizard with sanitized hints', () => {
     const result = validator.validate(
       {

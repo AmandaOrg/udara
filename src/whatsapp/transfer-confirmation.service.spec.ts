@@ -36,6 +36,8 @@ describe("TransferConfirmationService", () => {
       create: jest.Mock;
       findUnique: jest.Mock;
       findUniqueOrThrow: jest.Mock;
+      findFirst: jest.Mock;
+      findMany: jest.Mock;
       update: jest.Mock;
     };
     overrideHistory: { create: jest.Mock };
@@ -91,6 +93,8 @@ describe("TransferConfirmationService", () => {
         create: jest.fn(),
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn(),
+        findFirst: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn(),
       },
       overrideHistory: { create: jest.fn() },
@@ -404,6 +408,34 @@ describe("TransferConfirmationService", () => {
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
       expect(pinGate.requestPinSetup).toHaveBeenCalled();
       expect(pinGate.requestTransferPin).not.toHaveBeenCalled();
+    });
+
+    it("resumeAfterPinSetup continues the pending confirm into PIN entry", async () => {
+      prisma.transaction.findFirst.mockResolvedValue(
+        pendingTransaction({ user: { ...user, pinHash: "scrypt$hash" } }),
+      );
+      prisma.transaction.findUnique.mockResolvedValue(
+        pendingTransaction({ user: { ...user, pinHash: "scrypt$hash" } }),
+      );
+
+      await service.resumeAfterPinSetup("user-1");
+
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("enter your PIN"),
+        "user-1",
+      );
+      expect(pinGate.requestTransferPin).toHaveBeenCalled();
+    });
+
+    it("resumePendingTransferUi does not start a new transfer", async () => {
+      prisma.transaction.findFirst.mockResolvedValue(pendingTransaction());
+      prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
+
+      const handled = await service.resumePendingTransferUi(user as any);
+
+      expect(handled).toBe(true);
+      expect(pinGate.requestTransferPin).toHaveBeenCalledWith(user, "txn-1");
     });
 
     it("refuses and cancels, without transferring, when the PIN is locked", async () => {

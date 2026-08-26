@@ -61,3 +61,11 @@ export function sanitizeTransferHints(
 
   return hints;
 }
+
+/** Enough to start the wizard without waiting for "go ahead". */
+export function hasActionableTransferHints(
+  hints: TransferWizardHints,
+): boolean {
+  if (hints.amount == null || hints.amount <= 0) return false;
+  return !!(hints.accountNumber || hints.bankName || hints.bankCode);
+}

@@ -1,4 +1,4 @@
-import { sanitizeTransferHints } from './transfer-hints.util';
+import { hasActionableTransferHints, sanitizeTransferHints } from './transfer-hints.util';
 
 describe('sanitizeTransferHints', () => {
   it('keeps valid fields and drops invalid ones', () => {
@@ -35,5 +35,21 @@ describe('sanitizeTransferHints', () => {
   it('returns empty object for missing input', () => {
     expect(sanitizeTransferHints()).toEqual({});
     expect(sanitizeTransferHints({})).toEqual({});
+  });
+});
+
+describe('hasActionableTransferHints', () => {
+  it('is true when amount and destination are present', () => {
+    expect(
+      hasActionableTransferHints({
+        amount: 200,
+        accountNumber: '8100368023',
+        bankName: 'opay',
+      }),
+    ).toBe(true);
+  });
+
+  it('is false for amount only', () => {
+    expect(hasActionableTransferHints({ amount: 200 })).toBe(false);
   });
 });

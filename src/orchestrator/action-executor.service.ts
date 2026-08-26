@@ -105,12 +105,14 @@ export class ActionExecutorService {
       case 'account_details':
         await this.accountActions.sendAccountDetails(user);
         break;
-      case 'transfer_wizard':
-        // LLM owns extraction — do not re-parse session with regex recovery.
+      case 'transfer_wizard': {
+        const resumed = await this.accountActions.resumePendingTransfer(user);
+        if (resumed) break;
         await this.accountActions.startTransferWizard(user, hints, {
           recoverFromSession: false,
         });
         break;
+      }
       case 'spending_menu':
         await this.accountActions.sendMainMenu(user);
         break;

@@ -200,6 +200,9 @@ export class WhatsappRouterService {
           outcome.transactionId,
         );
       }
+      if (outcome.action === "pin_setup_complete") {
+        await this.transferConfirmation.resumeAfterPinSetup(user.id);
+      }
       return;
     }
 

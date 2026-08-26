@@ -289,6 +289,68 @@ export class TransferConfirmationService {
   }
 
   /**
+   * After first-time PIN setup, continue the transfer the user already confirmed
+   * (they should get the enter-PIN flow, not a blank wizard).
+   */
+  async resumeAfterPinSetup(userId: string): Promise<void> {
+    const pending = await this.prisma.transaction.findFirst({
+      where: {
+        userId,
+        status: {
+          in: [
+            TransactionStatus.PENDING_CONFIRMATION,
+            TransactionStatus.PENDING_PIN,
+          ],
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      include: { user: true },
+    });
+    if (!pending) return;
+
+    if (pending.status === TransactionStatus.PENDING_PIN) {
+      await this.pinGate.requestTransferPin(pending.user, pending.id);
+      return;
+    }
+
+    await this.whatsapp.sendText(
+      pending.user.whatsappNumber,
+      "now enter your PIN to send that transfer.",
+      pending.user.id,
+    );
+    await this.confirmTransfer(pending.id);
+  }
+
+  /**
+   * If a confirm or PIN step is already in flight, resume it instead of
+   * starting a new send-money wizard from scratch.
+   */
+  async resumePendingTransferUi(user: User): Promise<boolean> {
+    const pending = await this.prisma.transaction.findFirst({
+      where: {
+        userId: user.id,
+        status: {
+          in: [
+            TransactionStatus.PENDING_CONFIRMATION,
+            TransactionStatus.PENDING_PIN,
+          ],
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      include: { recipient: true, user: true },
+    });
+    if (!pending) return false;
+
+    if (pending.status === TransactionStatus.PENDING_PIN) {
+      await this.pinGate.requestTransferPin(user, pending.id);
+      return true;
+    }
+
+    await this.confirmTransfer(pending.id);
+    return true;
+  }
+
+  /**
    * Executes a transfer whose PIN has already been verified. Private and
    * called from exactly one place (PinGateService, after consuming a valid
    * single-use challenge bound to this transaction id) — that is what makes

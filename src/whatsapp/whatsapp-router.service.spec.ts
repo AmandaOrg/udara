@@ -49,6 +49,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     transferConfirmation = {
       initiateTransfer: jest.fn(),
       executeVerifiedTransfer: jest.fn().mockResolvedValue(undefined),
+      resumeAfterPinSetup: jest.fn().mockResolvedValue(undefined),
     };
     accountActions = {
       getActiveDraft: jest.fn().mockResolvedValue(null),
@@ -228,6 +229,22 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         "txn-1",
       );
       expect(onboarding.handleInboundFlowReply).not.toHaveBeenCalled();
+    });
+
+    it("resumes the pending transfer after first-time PIN setup", async () => {
+      pinGate.handlePinFlowReply.mockResolvedValue({
+        action: "pin_setup_complete",
+      });
+
+      await service.route(flowMessage(), {
+        pin: "8317",
+        pin_confirm: "8317",
+      });
+
+      expect(transferConfirmation.resumeAfterPinSetup).toHaveBeenCalledWith(
+        "user-1",
+      );
+      expect(transferConfirmation.executeVerifiedTransfer).not.toHaveBeenCalled();
     });
   });
 });
