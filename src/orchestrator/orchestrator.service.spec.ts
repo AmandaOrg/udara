@@ -1,6 +1,6 @@
 import { OrchestratorService } from './orchestrator.service';
 import { ActionValidatorService } from './action-validator.service';
-import { LlmCallPurpose, OnboardingStage } from '@prisma/client';
+import { LlmCallPurpose, OnboardingStage, TransactionStatus } from '@prisma/client';
 import { ORCHESTRATOR_LLM_TIMEOUT_MS } from './orchestrator.types';
 
 describe('OrchestratorService', () => {
@@ -43,6 +43,7 @@ describe('OrchestratorService', () => {
       },
       transferDraft: {
         findFirst: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       transaction: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -210,5 +211,100 @@ describe('OrchestratorService', () => {
     expect(result.ok).toBe(true);
     expect(result.actionType).toBe('reply_only');
     expect(result.surfaceKey).toBeUndefined();
+  });
+
+  it('treats a leftover draft as free after a later completed send', async () => {
+    const draftCreated = new Date('2026-08-26T15:00:00Z');
+    const sentAt = new Date('2026-08-26T16:14:00Z');
+    prisma.transferDraft.findFirst.mockResolvedValue({
+      id: 'draft-stale',
+      step: 'AWAITING_ACCOUNT_NUMBER',
+      amount: 800,
+      accountNumber: null,
+      bankName: 'Opay',
+      createdAt: draftCreated,
+    });
+    prisma.transaction.findFirst.mockImplementation(
+      async ({ where }: { where: { status?: unknown } }) => {
+        if (where.status === TransactionStatus.EXECUTED) {
+          return {
+            amount: 800,
+            executedAt: sentAt,
+            recipient: { accountName: 'SAMUEL DAVID EGWU' },
+          };
+        }
+        return null;
+      },
+    );
+    llm.complete.mockResolvedValue({
+      toolCall: {
+        name: 'propose_turn',
+        arguments: {
+          message: "you're welcome",
+          action: { type: 'reply_only' },
+        },
+      },
+      latencyMs: 40,
+      provider: 'stub',
+      model: 'stub',
+    });
+
+    const result = await service.handleMessage(user, 'thank you');
+
+    expect(result.ok).toBe(true);
+    expect(result.actionType).toBe('reply_only');
+    expect(prisma.transferDraft.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'draft-stale' }),
+      }),
+    );
+    expect(llm.complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'system',
+            content: expect.stringMatching(
+              /Active mode: free[\s\S]*Last completed transfer: ₦800 to SAMUEL DAVID EGWU/,
+            ),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('does not open the wizard on a vague send; stores a spend check instead', async () => {
+    llm.complete.mockResolvedValue({
+      toolCall: {
+        name: 'propose_turn',
+        arguments: {
+          message: 'on it.',
+          action: {
+            type: 'show_surface',
+            surface_key: 'transfer_wizard',
+            confidence: 'high',
+            extracted_hints: { amount: 800, bank_name: 'opay' },
+          },
+        },
+      },
+      latencyMs: 40,
+      provider: 'stub',
+      model: 'stub',
+    });
+
+    const result = await service.handleMessage(user, 'send 800 to opay');
+
+    expect(result.ok).toBe(true);
+    expect(result.actionType).toBe('reply_only');
+    expect(result.surfaceKey).toBeUndefined();
+    expect(result.message).toMatch(/what's it actually for/i);
+    expect(prisma.conversationSession.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          contextData: expect.objectContaining({
+            spendCheck: expect.objectContaining({ amount: 800 }),
+          }),
+        }),
+      }),
+    );
   });
 });

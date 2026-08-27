@@ -1,0 +1,17 @@
+---
+description: Orchestrator, WhatsApp routing, transfer wizard, golden evals, redaction
+globs: src/orchestrator/**/*,src/whatsapp/**/*,src/cli/**/*,docs/specs/*TRANSFER*,docs/specs/*SPEND_CHECK*,docs/tech-design/*TRANSFER*,docs/tech-design/*SPEND_CHECK*,initiatives/transfer-intent-grounding/**,initiatives/spend-check-before-send/**
+alwaysApply: false
+---
+
+# Orchestrator and WhatsApp
+
+Canonical: `docs/PRODUCT_BEHAVIOR.md`, `docs/specs/TRANSFER_INTENT_GROUNDING_SPEC.md`, `docs/specs/SPEND_CHECK_BEFORE_SEND_SPEC.md`.
+
+- OrchestratorModule has no WhatsApp send. `ActionExecutorService` stays in WhatsappModule.
+- Every turn: `propose_turn` then `ActionValidatorService`. Unknown/ineligible/medium → `reply_only`.
+- Closed-send utterances (`thanks`, “you already sent it”) must not `show_surface transfer_wizard` or `fill_wizard`. Mid-wizard “I already sent the account” is not closed.
+- Vague first sends (`shouldPauseForSpendCheck`) stay `reply_only`. Promote `reply_only` → wizard only when purpose is already stated, or a spend-check is in progress and they proceed, plus actionable sanitized hints.
+- Transfer wizard is `TransferDraft`, not `ConversationSession`. After `EXECUTED`, cancel active drafts and record the success fact in chat history.
+- Never put PIN/KYC in `WhatsappMessage.textBody` or goldens.
+- Validator or surface changes: update `golden-dialogues.json` and run `npm run orchestrator:golden` plus targeted Jest.

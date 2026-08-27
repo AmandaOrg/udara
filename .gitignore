@@ -4,4 +4,3 @@ dist
 .env.e2e
 *.log
 .DS_Store
-ai-orchestrator-architecture-plan.md

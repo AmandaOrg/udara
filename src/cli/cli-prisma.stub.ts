@@ -85,18 +85,32 @@ export class CliPrismaStub {
 
     update: async (args: {
       where: { id: string };
-      data: { messages: Prisma.InputJsonValue };
+      data: { messages?: Prisma.InputJsonValue; contextData?: Prisma.InputJsonValue };
     }): Promise<SessionRow> => {
       const row = this.sessions.get(args.where.id);
       if (!row) {
         throw new Error(`CLI prisma: session ${args.where.id} not found`);
       }
-      row.messages = Array.isArray(args.data.messages)
-        ? [...(args.data.messages as unknown[])]
-        : [];
+      if (args.data.messages !== undefined) {
+        row.messages = Array.isArray(args.data.messages)
+          ? [...(args.data.messages as unknown[])]
+          : [];
+      }
+      if (args.data.contextData !== undefined) {
+        row.contextData = args.data.contextData;
+      }
       row.updatedAt = new Date();
       this.sessions.set(row.id, row);
       return { ...row, messages: [...row.messages] };
     },
+  };
+
+  transferDraft = {
+    findFirst: async () => null,
+    updateMany: async () => ({ count: 0 }),
+  };
+
+  transaction = {
+    findFirst: async () => null,
   };
 }

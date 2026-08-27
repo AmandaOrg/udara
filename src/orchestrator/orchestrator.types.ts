@@ -15,7 +15,7 @@ export type SurfaceKind =
   | 'whatsapp_flow'
   | 'wizard';
 
-export type ActiveMode = 'free' | 'transfer_wizard' | 'awaiting_confirm';
+export type ActiveMode = 'free' | 'transfer_wizard' | 'awaiting_confirm' | 'spend_check';
 
 export type ProposeActionType =
   | 'reply_only'

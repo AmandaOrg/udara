@@ -1,0 +1,26 @@
+---
+description: Udara always-on working rules (routing, money safety, docs, tests)
+alwaysApply: true
+---
+
+# Working agreement
+
+Read `AGENTS.md` before editing. Canonical behavior is code + `docs/`. The original PRD is not in the repo.
+
+## Invariants
+
+- Buttons, lists, Flows, PIN are deterministic. Post-onboarding free text goes through orchestrator `propose_turn` → `ActionValidatorService` → `ActionExecutorService`.
+- The model never executes transfers or invents balances. Surfaces own numbers.
+- KYC/PIN only via WhatsApp Flows under `docs/whatsapp-flows/`. Redact sensitive fields in persisted messages.
+- Spending window is WAT (`WindowService`). Confirm then PIN before money moves.
+- User-facing name is Udara; package/DB may say `kedu` / `KEDU`.
+
+## Work tracking
+
+Non-trivial changes need `initiatives/<slug>/plan.md` plus spec and tech-design companions. Update the initiative index when status changes. Status values: `not started` · `in progress` · `blocked` · `completed` · `deleted`.
+
+## Verify before done
+
+Targeted Jest for touched files. Golden dialogues if orchestrator validation changed. E2e subset if webhooks/wizards/HMAC changed. `npm run docs:check` if you added or linked markdown.
+
+Local: Postgres `:5433`, `WHATSAPP_DRY_RUN`, `RUBIES_DRY_RUN`, `AI_PROVIDER=stub`.

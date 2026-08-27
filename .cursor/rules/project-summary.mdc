@@ -1,0 +1,18 @@
+---
+description: Read and surgically update the Udara project summary
+alwaysApply: true
+---
+
+# Project summary protocol
+
+The map of this repo is `.cursor/project/summary.md`.
+
+## On every session
+
+Read the summary before broad exploration. Use the quick-reference table to find modules.
+
+## After structural changes
+
+Update only the sections you affected. Bump `Last updated`. Do not rewrite the whole file.
+
+Update when you add/rename/remove a module, Prisma model/enum, env var, npm script, integration, or a convention in `AGENTS.md`.

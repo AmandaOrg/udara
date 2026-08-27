@@ -8,11 +8,15 @@ import { TaggingService } from "../tagging/tagging.service";
 import { WhatsappService } from "./whatsapp.service";
 import { PinGateService } from "./pin-gate.service";
 import {
+  ConversationPersona,
+  ConversationSessionStatus,
   OnboardingStage,
+  Prisma,
   RecipientLabel,
   Transaction,
   TransactionStatus,
   TransactionType,
+  TransferDraftStatus,
   User,
 } from "@prisma/client";
 import { TransactionType as LocalTransactionType } from "../common/enums/transaction-type.enum";
@@ -524,6 +528,14 @@ export class TransferConfirmationService {
       // the user already saw succeed — see sweepFeeToFeesAccount.
       await this.sweepFeeToFeesAccount(transaction, transaction.user);
       await this.allowance.recordSpend(transaction.id);
+      await this.prisma.transferDraft.updateMany({
+        where: {
+          userId: transaction.userId,
+          status: TransferDraftStatus.ACTIVE,
+        },
+        data: { status: TransferDraftStatus.CANCELLED },
+      });
+      await this.recordCompletedTransferInChat(transaction);
 
       const isFirstTransactionOfOnboarding =
         transaction.user.onboardingStage === OnboardingStage.ACCOUNT_CREATED ||
@@ -696,5 +708,49 @@ export class TransferConfirmationService {
       .catch(() => null);
     this.feesAccountNameCache = resolved?.accountName ?? "Udara Fees";
     return this.feesAccountNameCache;
+  }
+
+  /**
+   * Wizard/confirm/success never go through the orchestrator, so they were
+   * invisible in chat history. Write a one-line fact so "thank you" cannot
+   * restart the same send.
+   */
+  private async recordCompletedTransferInChat(
+    transaction: Transaction & {
+      recipient?: { accountName: string | null; accountNumber: string } | null;
+    },
+  ): Promise<void> {
+    const who =
+      transaction.recipient?.accountName ??
+      transaction.recipient?.accountNumber ??
+      "the recipient";
+    const line = `System: ₦${Number(transaction.amount).toLocaleString("en-NG")} to ${who} succeeded. Do not start that transfer again.`;
+    try {
+      const session = await this.prisma.conversationSession.findFirst({
+        where: {
+          userId: transaction.userId,
+          persona: ConversationPersona.KEDU,
+          status: ConversationSessionStatus.ACTIVE,
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+      if (!session) return;
+      const messages = Array.isArray(session.messages)
+        ? [...(session.messages as object[])]
+        : [];
+      messages.push({
+        role: "assistant",
+        content: line,
+        at: new Date().toISOString(),
+      });
+      await this.prisma.conversationSession.update({
+        where: { id: session.id },
+        data: { messages: messages as Prisma.InputJsonValue },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Could not record completed transfer in chat for user ${transaction.userId}: ${String(err)}`,
+      );
+    }
   }
 }

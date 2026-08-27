@@ -1,60 +1,82 @@
-# Kedu — v0
+# Udara
 
-A strict, proactive financial agent on WhatsApp. See the PRD for full context.
+A strict WhatsApp savings agent that governs a real Rubies Microfinance account. Udara enforces a daily spending window, confirm-before-send transfers, daily/weekly allowances, and a delayed “managers” path for settings changes.
 
-## Status
+The npm package is still named `kedu`. User-facing product voice is **Udara**.
 
-This is a hand-written scaffold, not a `nest new` output — it was built in an
-environment without npm registry access, so **nothing has been installed or
-run yet**. First commands in Claude Code (or wherever you continue) should be:
+## Start here
+
+| Audience | Read |
+| --- | --- |
+| Humans (setup + map) | this file, then [docs/README.md](docs/README.md) |
+| Collaborators and AI agents | [AGENTS.md](AGENTS.md) |
+| Active work | [initiatives/README.md](initiatives/README.md) |
+
+## Stack
+
+NestJS 10, Prisma 5, PostgreSQL 16, TypeScript, Jest unit tests, black-box HTTP e2e, golden orchestrator dialogues.
+
+Default HTTP port **3000**. Local Postgres is published on host **5433** (see [docker-compose.yml](docker-compose.yml)).
+
+## Local setup
 
 ```bash
 npm install
-docker compose up -d          # local Postgres
-cp .env.example .env          # fill in real values
-npx prisma migrate dev --name init
+docker compose up -d
+cp .env.example .env
+npx prisma generate
+npx prisma migrate deploy
 npm run start:dev
 ```
 
-## Structure
+For local and e2e runs, keep dry-run flags on:
+
+- `WHATSAPP_DRY_RUN=true`
+- `RUBIES_DRY_RUN=true`
+- `AI_PROVIDER=stub`
+
+Details: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and [.env.example](.env.example).
+
+## Modules
 
 ```
 src/
-  prisma/       PrismaService + module (global, injectable anywhere)
-  whatsapp/     Cloud API webhook (verify + inbound) and outbound sender
-  rubies/       Account provisioning + transfer client — typed, TODO'd (you've built this before)
-  allowance/    THE CORE ENGINE — window check, fee calculator, daily/weekly rollover
-  onboarding/   Stage machine + conversation session storage
-  tagging/      Recipient tag lookup/creation
-  manager/      Settings-change request gate (7-day minimum, enforced server-side)
-prisma/
-  schema.prisma Data model: User, DailyAllowance, Recipient, Transaction,
-                 OverrideHistory, SettingsChangeRequest, OnboardingSession
+  prisma/        Global PrismaService
+  config/        Boot-time env validation
+  allowance/     Window, fees, daily/weekly allowance
+  onboarding/    Stage machine + ConversationSession
+  tagging/       Recipient tags
+  manager/       Settings-change gate + delayed persona
+  rubies/        BaaS client + inbound webhook
+  ai/            LLM providers (stub / anthropic / openrouter / gemini / bedrock)
+  orchestrator/  propose_turn brain + validator + surfaces (no WhatsApp send)
+  whatsapp/      Webhook, router, wizards, PIN gate, ActionExecutor
+  pin/           PIN challenge / verify
+  cli/           Orchestrator dry-run + golden runner
+  common/        WAT time, bank match, display name
 ```
 
-## What's real vs. stubbed
+## Commands
 
-**Implemented (business logic, unit-testable now):**
-- `WindowService` — 11AM–8PM check
-- `FeeCalculatorService` — early-access / borrow fee math, surplus waiver
-- `AllowanceService` — today's allowance, weekly rollover, spend classification
-  (NORMAL / EARLY_ACCESS / BORROWED)
-- `ManagerService` — the 7-day eligibility gate
+| Script | Purpose |
+| --- | --- |
+| `npm run start:dev` | Watch-mode Nest server |
+| `npm run build` | `nest build` |
+| `npm test` | Jest unit tests under `src/` |
+| `npm run lint` | ESLint |
+| `npm run e2e` / `npm run e2e:smoke` | Black-box HTTP scenarios |
+| `npm run orchestrator:golden` | Golden dialogue validator |
+| `npm run orchestrator:cli` | Safe orchestrator dry-run REPL |
+| `npm run docs:check` | Documentation structure and link check |
 
-**Stubbed with TODOs (deliberately — either you already have the pattern, or
-it depends on decisions not yet made):**
-- `RubiesService` — swap in your existing client/auth
-- `WhatsappService` / `WhatsappController` — payload parsing depends on final
-  message-routing shape
-- `OnboardingService` — prompt design + structured-output extraction, once
-  model choice is confirmed with Samuel
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint, Prisma generate/migrate, build, unit tests, and `docs:check`. E2e and live LLM evals stay local.
 
-## First things to do in Claude Code
+## Documentation system
 
-1. `npm install` and confirm it builds (`npm run build`)
-2. `npx prisma generate` + `npx prisma migrate dev` against local Postgres
-3. Write unit tests for `FeeCalculatorService` and `AllowanceService` against
-   the exact figures in the PRD — this is the one mechanic the whole product
-   depends on, so it's worth locking down before anything else
-4. Wire `RubiesService` and `WhatsappService` against your existing patterns
-5. Fill in `WhatsappController.receive()` routing once 1–4 are solid
+Non-trivial work uses three layers:
+
+1. **Initiative plan** — execution status in `initiatives/<name>/plan.md`
+2. **Spec** — stakeholder-visible behavior in `docs/specs/`
+3. **Tech design** — implementation in `docs/tech-design/`
+
+Cross-cutting maps live in [docs/PRODUCT_BEHAVIOR.md](docs/PRODUCT_BEHAVIOR.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/TESTING.md](docs/TESTING.md).

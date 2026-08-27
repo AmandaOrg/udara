@@ -42,6 +42,8 @@ describe("TransferConfirmationService", () => {
     };
     overrideHistory: { create: jest.Mock };
     dailyAllowance: { findMany: jest.Mock };
+    conversationSession: { findFirst: jest.Mock; update: jest.Mock };
+    transferDraft: { updateMany: jest.Mock };
   };
   let allowance: {
     evaluateSpend: jest.Mock;
@@ -99,6 +101,13 @@ describe("TransferConfirmationService", () => {
       },
       overrideHistory: { create: jest.fn() },
       dailyAllowance: { findMany: jest.fn().mockResolvedValue([]) },
+      conversationSession: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn(),
+      },
+      transferDraft: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
     };
     allowance = {
       evaluateSpend: jest.fn().mockResolvedValue({
@@ -684,6 +693,38 @@ describe("TransferConfirmationService", () => {
         }),
       );
       expect(allowance.recordSpend).toHaveBeenCalledWith("txn-1");
+      expect(prisma.transferDraft.updateMany).toHaveBeenCalled();
+    });
+
+    it("appends a completed-send fact to the orchestrator chat session", async () => {
+      prisma.transaction.findUniqueOrThrow.mockResolvedValue({
+        id: "txn-1",
+        status: TransactionStatus.CONFIRMED,
+        user,
+        userId: "user-1",
+        recipient,
+        amount: 800,
+        type: TransactionType.NORMAL,
+        feeAmount: 0,
+      });
+      prisma.conversationSession.findFirst.mockResolvedValue({
+        id: "sess-1",
+        messages: [{ role: "user", content: "send 800" }],
+      });
+
+      await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+      expect(prisma.conversationSession.update).toHaveBeenCalledWith({
+        where: { id: "sess-1" },
+        data: {
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              role: "assistant",
+              content: expect.stringMatching(/₦800 .+ succeeded/),
+            }),
+          ]),
+        },
+      });
     });
 
     it("completes onboarding (-> COMPLETE) instead of the normal 'Done' message when the user was FUNDED/ACCOUNT_CREATED", async () => {

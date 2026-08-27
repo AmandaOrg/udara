@@ -485,6 +485,12 @@ describe("AccountActionsService", () => {
       expect(rubies.nameEnquiry).toHaveBeenCalled();
     });
 
+    it("applyHintsToDraft is a no-op when no draft is open", async () => {
+      await service.applyHintsToDraft(makeUser() as any, { amount: 800 });
+      expect(await service.getActiveDraft("user-1")).toBeNull();
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+    });
+
     it("cancelActiveSurfaces silently cancels the draft and pending confirms", async () => {
       await service.startTransferWizard(makeUser() as any);
       const draft = await service.getActiveDraft("user-1");

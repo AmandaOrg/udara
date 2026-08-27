@@ -240,9 +240,10 @@
       }
     },
     "eligible_surfaces": ["transfer_wizard", "balance_read"],
-    "expected_surface": "transfer_wizard",
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
     "expected_confidence": "high",
-    "forbidden_surfaces": ["balance_read"]
+    "forbidden_surfaces": ["transfer_wizard", "balance_read"]
   },
   {
     "test_case_id": "reply_only_malformed_show_no_key",
@@ -299,9 +300,10 @@
       }
     },
     "eligible_surfaces": ["transfer_wizard", "spending_menu"],
-    "expected_surface": "transfer_wizard",
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
     "expected_confidence": "high",
-    "forbidden_surfaces": ["spending_menu"]
+    "forbidden_surfaces": ["transfer_wizard", "spending_menu"]
   },
   {
     "test_case_id": "window_closed_chat_not_transfer",
@@ -519,18 +521,13 @@
       }
     },
     "eligible_surfaces": ["transfer_wizard", "balance_read", "limits_read"],
-    "expected_surface": "transfer_wizard",
-    "expected_action_type": "show_surface",
-    "expected_hints": {
-      "amount": 800,
-      "accountNumber": "8100368023",
-      "bankName": "opay"
-    },
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
     "expected_confidence": "high",
-    "forbidden_surfaces": ["balance_read", "limits_read"]
+    "forbidden_surfaces": ["transfer_wizard", "balance_read", "limits_read"]
   },
   {
-    "test_case_id": "tx_ready_send_not_stalled_on_reply_only",
+    "test_case_id": "tx_ready_send_spend_check_not_wizard",
     "history": [{ "role": "user", "content": "lets make a trasfer of 200 to 8100368023, opay" }],
     "mock_proposal": {
       "message": "let's get that ₦200 transfer to Opay ready.",
@@ -544,15 +541,10 @@
       }
     },
     "eligible_surfaces": ["transfer_wizard", "balance_read"],
-    "expected_surface": "transfer_wizard",
-    "expected_action_type": "show_surface",
-    "expected_hints": {
-      "amount": 200,
-      "accountNumber": "8100368023",
-      "bankName": "opay"
-    },
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
     "expected_confidence": null,
-    "forbidden_surfaces": ["balance_read"]
+    "forbidden_surfaces": ["transfer_wizard", "balance_read"]
   },
   {
     "test_case_id": "tx_send_my_guy_5k",
@@ -567,11 +559,10 @@
       }
     },
     "eligible_surfaces": ["transfer_wizard", "balance_read"],
-    "expected_surface": "transfer_wizard",
-    "expected_action_type": "show_surface",
-    "expected_hints": { "amount": 5000 },
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
     "expected_confidence": "high",
-    "forbidden_surfaces": ["balance_read"]
+    "forbidden_surfaces": ["transfer_wizard", "balance_read"]
   },
   {
     "test_case_id": "fill_wizard_amount_mid_flow",
@@ -699,5 +690,72 @@
     "expected_action_type": "reply_only",
     "expected_confidence": null,
     "forbidden_surfaces": ["limits_read", "transfer_wizard"]
+  },
+  {
+    "test_case_id": "thanks_does_not_restart_transfer",
+    "history": [
+      { "role": "user", "content": "alright, i want to transfer 800 to 8100368023, opay" },
+      { "role": "assistant", "content": "on it." },
+      { "role": "assistant", "content": "System: ₦800 to SAMUEL DAVID EGWU succeeded. Do not start that transfer again." },
+      { "role": "user", "content": "thank you" }
+    ],
+    "mock_proposal": {
+      "message": "you're welcome",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 800, "bank_name": "opay" }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "spend_summary", "balance_read"],
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "already_sent_does_not_restart_transfer",
+    "history": [
+      { "role": "assistant", "content": "System: ₦800 to SAMUEL DAVID EGWU succeeded. Do not start that transfer again." },
+      { "role": "user", "content": "you've done the transfers already" }
+    ],
+    "mock_proposal": {
+      "message": "i haven't sent anything yet, but here is a look at your recent activity.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 800, "bank_name": "opay" }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "spend_summary", "balance_read"],
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard"]
+  },
+  {
+    "test_case_id": "spend_check_proceed_launches_wizard",
+    "history": [
+      { "role": "user", "content": "send 800 to opay" },
+      { "role": "assistant", "content": "having room today isn't the same as this being a smart send. what's it actually for?" },
+      { "role": "user", "content": "it's for food" }
+    ],
+    "mock_proposal": {
+      "message": "on it.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 800, "bank_name": "opay", "label_hint": "FOOD" }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read"],
+    "expected_surface": "transfer_wizard",
+    "expected_action_type": "show_surface",
+    "expected_hints": { "amount": 800, "bankName": "opay", "labelHint": "FOOD" },
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read"]
   }
 ]

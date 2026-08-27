@@ -208,8 +208,8 @@ export class AccountActionsService {
   }
 
   /**
-   * Merge LLM-extracted hints into the active draft (or start one). Used by
-   * fill_wizard so mid-flow answers never restart the wizard from scratch.
+   * Merge LLM-extracted hints into the active draft. No-op if none is
+   * open — fill_wizard must not start a new send.
    */
   async applyHintsToDraft(
     user: User,
@@ -225,6 +225,12 @@ export class AccountActionsService {
     }
 
     const existing = await this.getActiveDraft(user.id);
+    if (!existing) {
+      this.logger.debug(
+        `fill_wizard with no active draft for user ${user.id} — ignoring`,
+      );
+      return;
+    }
     await this.advanceWithHints(user, hints, existing);
   }
 

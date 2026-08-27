@@ -64,7 +64,9 @@ export function runGoldenCase(
     );
   });
 
-  const result = validator.validate(c.mock_proposal, user, eligible);
+  const lastUser =
+    [...c.history].reverse().find((m) => m.role === 'user')?.content ?? '';
+  const result = validator.validate(c.mock_proposal, user, eligible, lastUser);
   const actual = result.surfaceKey ?? null;
   const passed = actual === c.expected_surface;
 

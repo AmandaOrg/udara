@@ -62,7 +62,15 @@ describe('Golden dialogues — validator contract', () => {
         );
       });
 
-      const result = validator.validate(c.mock_proposal, user, eligible);
+      const lastUser = [...c.history]
+        .reverse()
+        .find((m) => m.role === 'user')?.content ?? '';
+      const result = validator.validate(
+        c.mock_proposal,
+        user,
+        eligible,
+        lastUser,
+      );
 
       expect(result.ok).toBe(true);
       expect(result.surfaceKey ?? null).toBe(c.expected_surface);

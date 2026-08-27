@@ -3,13 +3,13 @@
  * boundary — "the model proposes, code disposes."
  *
  * Validation rules:
- * 1. reply_only → text only, unless extracted_hints already name a send
- *    (amount + destination) — then launch transfer_wizard immediately
- * 2. show_surface → surface_key must exist and be eligible; high confidence
- *    unless transfer_wizard with actionable hints (do not stall on "go ahead")
- * 3. fill_wizard / cancel_surface → high confidence only; sanitize hints for fill
- * 4. Missing or medium confidence → downgrade to reply_only (safe default)
- * 5. Unknown surface key → downgrade to reply_only
+ * 1. reply_only → text only, unless this is an active send that already
+ *    states a purpose (or a spend-check is in progress) and hints name a send
+ * 2. Vague first sends pause for a spend check (no transfer_wizard)
+ * 3. show_surface → surface_key must exist and be eligible; high confidence
+ * 4. fill_wizard / cancel_surface → high confidence only; sanitize hints for fill
+ * 5. Missing or medium confidence → downgrade to reply_only (safe default)
+ * 6. Unknown surface key → downgrade to reply_only
  */
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -18,9 +18,18 @@ import { ProposedTurn, OrchestratorResult } from './orchestrator.types';
 import { SurfaceDefinition } from './surface-registry';
 import {
   hasActionableTransferHints,
+  isActiveSendUtterance,
+  isClosedTransferUtterance,
+  isSpendCheckAbortUtterance,
+  isSpendCheckProceedUtterance,
   sanitizeTransferHints,
+  shouldPauseForSpendCheck,
   TransferWizardHints,
 } from './transfer-hints.util';
+
+export type ActionValidatorOptions = {
+  spendCheckPending?: boolean;
+};
 
 @Injectable()
 export class ActionValidatorService {
@@ -30,19 +39,36 @@ export class ActionValidatorService {
     proposal: ProposedTurn,
     user: User,
     eligibleSurfaces: SurfaceDefinition[],
+    userText = '',
+    options: ActionValidatorOptions = {},
   ): OrchestratorResult {
     const hints = sanitizeTransferHints(proposal.action.extracted_hints);
     const transferOk = this.transferWizardEligible(eligibleSurfaces);
+    const sendingNow = isActiveSendUtterance(userText);
+    const closedSend = isClosedTransferUtterance(userText);
+    const aborting = isSpendCheckAbortUtterance(userText);
+    const pause = !options.spendCheckPending && shouldPauseForSpendCheck(
+      userText,
+      hints,
+    );
+    const mayPromote =
+      transferOk &&
+      hasActionableTransferHints(hints) &&
+      !closedSend &&
+      !aborting &&
+      !pause &&
+      (sendingNow ||
+        (options.spendCheckPending && isSpendCheckProceedUtterance(userText)));
 
     if (proposal.action.type === 'reply_only') {
-      const promoted = this.promoteReadyTransfer(
-        proposal.message,
-        hints,
-        transferOk,
-        user.id,
-        'reply_only',
-      );
-      if (promoted) return promoted;
+      if (mayPromote) {
+        return this.promoteReadyTransfer(
+          proposal.message,
+          hints,
+          user.id,
+          'reply_only',
+        );
+      }
       return {
         message: proposal.message,
         actionType: 'reply_only',
@@ -52,14 +78,14 @@ export class ActionValidatorService {
 
     const confidence = proposal.action.confidence ?? 'medium';
     if (confidence !== 'high') {
-      const promoted = this.promoteReadyTransfer(
-        proposal.message,
-        hints,
-        transferOk,
-        user.id,
-        `${proposal.action.type}:${confidence}`,
-      );
-      if (promoted) return promoted;
+      if (mayPromote) {
+        return this.promoteReadyTransfer(
+          proposal.message,
+          hints,
+          user.id,
+          `${proposal.action.type}:${confidence}`,
+        );
+      }
       this.logger.debug(
         `${confidence} confidence on "${proposal.action.type}" for user ${user.id} — sending text only`,
       );
@@ -79,6 +105,16 @@ export class ActionValidatorService {
     }
 
     if (proposal.action.type === 'fill_wizard') {
+      if (closedSend) {
+        this.logger.debug(
+          `Blocking fill_wizard for user ${user.id} — utterance closed the send`,
+        );
+        return {
+          message: proposal.message,
+          actionType: 'reply_only',
+          ok: true,
+        };
+      }
       return {
         message: proposal.message,
         actionType: 'fill_wizard',
@@ -89,15 +125,28 @@ export class ActionValidatorService {
 
     // show_surface
     const surfaceKey = proposal.action.surface_key;
-    if (!surfaceKey) {
-      const promoted = this.promoteReadyTransfer(
-        proposal.message,
-        hints,
-        transferOk,
-        user.id,
-        'show_surface:no_key',
+    if (
+      surfaceKey === 'transfer_wizard' &&
+      (closedSend || aborting || pause)
+    ) {
+      this.logger.debug(
+        `Blocking transfer_wizard for user ${user.id} — ${pause ? 'spend check' : 'closed or aborted send'}`,
       );
-      if (promoted) return promoted;
+      return {
+        message: proposal.message,
+        actionType: 'reply_only',
+        ok: true,
+      };
+    }
+    if (!surfaceKey) {
+      if (mayPromote) {
+        return this.promoteReadyTransfer(
+          proposal.message,
+          hints,
+          user.id,
+          'show_surface:no_key',
+        );
+      }
       this.logger.warn(
         `show_surface proposed with no surface_key for user ${user.id} — downgrading to reply_only`,
       );
@@ -141,11 +190,9 @@ export class ActionValidatorService {
   private promoteReadyTransfer(
     message: string,
     hints: TransferWizardHints,
-    transferOk: boolean,
     userId: string,
     from: string,
-  ): OrchestratorResult | null {
-    if (!transferOk || !hasActionableTransferHints(hints)) return null;
+  ): OrchestratorResult {
     this.logger.debug(
       `Promoting ${from} to transfer_wizard for user ${userId} — actionable hints present`,
     );
