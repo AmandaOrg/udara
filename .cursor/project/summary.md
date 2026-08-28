@@ -1,6 +1,6 @@
 # Udara project summary
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 
 Quick orientation for agents. Full behavior: `docs/PRODUCT_BEHAVIOR.md`. Full flow: `docs/ARCHITECTURE.md`. Working rules: `AGENTS.md`.
 
@@ -40,7 +40,7 @@ Surfaces: `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `
 
 ## 5. Data (Prisma)
 
-User, DailyAllowance, Recipient, Transaction, OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WhatsappMessage, PIN challenge, Rubies webhook log, LLM call log, nudges.
+User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel), OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WhatsappMessage, PIN challenge, Rubies webhook log, LLM call log, nudges.
 
 `TransferDraft` ≠ `ConversationSession`. Persona enum still `KEDU` | `MANAGER`. Session `contextData.spendCheck` holds pending send hints during the pre-wizard spend check.
 
@@ -72,6 +72,6 @@ WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), LLM (`AI_PRO
 - Fee sweep skipped without `RUBIES_FEES_ACCOUNT_NUMBER`
 - Missing committed PRD / onboarding script / tone PDF
 
-## 10. Active initiative
+## 10. Active initiatives
 
-`initiatives/spend-check-before-send` — vague sends get one coaching question before the wizard; remaining allowance is not a skip.
+`initiatives/spend-check-before-send` — vague sends + purposeLabel; `beneficiary-prefill` completed; `bill-payments` blocked on Rubies API spike.

@@ -41,22 +41,25 @@ When someone asks to send money and they still have remaining daily allowance, U
 
 ### Deliverables
 
-- [ ] Spec + tech design registered
-- [ ] Validator does not launch/promote a vague first send
-- [ ] Session remembers pending send hints across the check
-- [ ] Prompt: remaining allowance is not permission
-- [ ] Goldens updated; new proceed-after-check case
+- [x] Spec + tech design registered
+- [x] Validator does not launch/promote a vague first send
+- [x] Session remembers pending send hints across the check
+- [x] Prompt: remaining allowance is not permission
+- [x] Goldens updated; new proceed-after-check case
+- [x] Phase 2: LLM `label_hint` classification → `Transaction.purposeLabel`
 
 ### Acceptance tests
 
-- [ ] “send 800 to opay” with no why → `reply_only` (no wizard)
-- [ ] “send 5k to my landlord for rent” → wizard same turn
-- [ ] After the check, “it’s for food” / “just send it” → wizard
-- [ ] Closed-send / thanks still must not relaunch
+- [x] “send 800 to opay” with no why → `reply_only` (no wizard)
+- [x] “send 5k to my landlord for rent” → wizard same turn
+- [x] After the check, “it’s for food” / “just send it” → wizard
+- [x] Closed-send / thanks still must not relaunch
+- [x] `initiateTransfer` persists `purposeLabel` when `labelHint` provided
 
 ### Progress log
 
 - 2026-08-27: Initiative opened from production observation (wizard skips coaching when allowance remains).
+- 2026-08-28: Phase 2 — `Transaction.purposeLabel` + spend-check `label_hint` classification.
 
 ### Risk
 
@@ -67,6 +70,7 @@ When someone asks to send money and they still have remaining daily allowance, U
 | Phase | Description | Status |
 | --- | --- | --- |
 | 1 | Spend-check gate | in progress |
+| 2 | Purpose classification + purposeLabel | completed |
 
 ## Deferred
 

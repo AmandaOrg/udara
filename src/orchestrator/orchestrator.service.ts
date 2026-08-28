@@ -345,7 +345,8 @@ export class OrchestratorService {
       `- Spending window: ${user.windowStartHour}:00 to ${user.windowEndHour}:00 WAT`,
     ];
 
-    const [draft, pending, lastSent, allowanceSummary] = await Promise.all([
+    const [draft, pending, lastSent, allowanceSummary, savedRecipients] =
+      await Promise.all([
       this.prisma.transferDraft.findFirst({
         where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
         orderBy: { createdAt: 'desc' },
@@ -375,6 +376,11 @@ export class OrchestratorService {
           `Could not load allowance for user ${user.id}: ${String(err)}`,
         );
         return null;
+      }),
+      this.prisma.recipient.findMany({
+        where: { userId: user.id },
+        orderBy: [{ lastUsedAt: 'desc' }, { createdAt: 'desc' }],
+        take: 8,
       }),
     ]);
     const pendingConfirm = pending;
@@ -418,9 +424,10 @@ export class OrchestratorService {
       const raw = transferHintsToRaw(spendCheck);
       lines.push(
         '- Active mode: spend_check',
-        `- Pending send hints: amount=${raw.amount ?? 'missing'}, account=${raw.account_number ?? 'missing'}, bank=${raw.bank_name ?? raw.bank_code ?? 'missing'}`,
-        '- Remaining allowance is not permission to skip this. Ask (or keep asking) what the send is for unless they already answered.',
-        '- If they gave a purpose, insisted, or still want to send → show_surface transfer_wizard with extracted_hints this turn. If they backed off → reply_only.',
+        `- Pending send hints: amount=${raw.amount ?? 'missing'}, account=${raw.account_number ?? 'missing'}, bank=${raw.bank_name ?? raw.bank_code ?? 'missing'}, purpose=${raw.label_hint ?? 'not stated yet'}`,
+        '- Remaining allowance is not permission to skip this. Ask one open-ended question: what is this for? (free text, not buttons).',
+        '- When they answer, set label_hint in extracted_hints to RENT, FOOD, VENDOR, or OTHER based on their words — you classify, do not invent account numbers.',
+        '- If they gave a purpose, insisted, or still want to send → show_surface transfer_wizard with extracted_hints (including label_hint) this turn. If they backed off → reply_only.',
       );
     } else {
       lines.push('- Active mode: free');
@@ -469,6 +476,18 @@ export class OrchestratorService {
     } else {
       lines.push(
         "- Allowance figures unavailable this turn. If asked, say you can't pull it up right now. Do NOT estimate.",
+      );
+    }
+
+    if (savedRecipients.length > 0) {
+      const names = savedRecipients
+        .map((r) => r.nickname ?? r.accountName ?? r.accountNumber)
+        .filter(Boolean)
+        .slice(0, 6)
+        .join(', ');
+      lines.push(
+        `- Saved beneficiaries (nicknames only — never invent account numbers): ${names}`,
+        '- For "send to <name>", put beneficiary_name in extracted_hints; code resolves the account.',
       );
     }
 
@@ -531,6 +550,19 @@ export class OrchestratorService {
         await this.writeSpendCheck(sessionId, null);
       }
       return validated;
+    }
+
+    if (
+      wasPending &&
+      !launchedWizard &&
+      (hints.amount != null ||
+        hints.accountNumber ||
+        hints.bankCode ||
+        hints.bankName ||
+        hints.labelHint ||
+        hints.beneficiaryName)
+    ) {
+      await this.writeSpendCheck(sessionId, hints);
     }
 
     const paused =

@@ -58,8 +58,8 @@ const INTENT_RECOGNITION = `Intent recognition:
 - Paraphrases count. "how much do I have left", "check my money", and "what's in my account" all mean balance_read. "what can I spend today", "daily limit", "allowance left", "do I have a budget" mean limits_read. "help", "options", "what can you do" mean spending_menu.
 - Past-tense money talk is NOT an active transfer. "I sent money yesterday" or "that transfer cleared" → reply_only or spend_summary, not transfer_wizard.
 - Active send with a stated purpose → transfer_wizard same turn. Vague send (amount/destination, no why) → reply_only spend check first, not transfer_wizard.
-- When Active mode is spend_check: they are answering the why. Purpose, "just send it", or still wanting to send → transfer_wizard with extracted_hints from this message AND the pending hints in live facts. "never mind" → reply_only.
-- When the user includes transfer details, put them in extracted_hints: amount (naira number; "5k"/"5 thousand" → 5000), account_number (10 digits), bank_name (e.g. Opay, GTBank), bank_code (6 digits if pasted), label_hint (RENT/FOOD/VENDOR/OTHER). Partial hints are fine.
+- When Active mode is spend_check: they are answering the why. Classify their answer into label_hint (RENT/FOOD/VENDOR/OTHER). Purpose, "just send it", or still wanting to send → transfer_wizard with extracted_hints from this message AND pending hints in live facts. "never mind" → reply_only.
+- When the user includes transfer details, put them in extracted_hints: amount (naira number; "5k"/"5 thousand" → 5000), account_number (10 digits), bank_name (e.g. Opay, GTBank), bank_code (6 digits if pasted), label_hint (RENT/FOOD/VENDOR/OTHER for spend purpose), beneficiary_name (saved nickname like "james" — never invent account numbers). Partial hints are fine.
 - Mid-wizard: "800", "opay", "I already gave you the account" → fill_wizard with whatever you can extract from this message AND history. "do I have a budget?" → cancel_surface or show_surface limits_read, not fill_wizard.
 - Settings changes (raise limit, change window, exit restrictions) → reply_only, not limits_read.
 - Date/time questions → reply_only using Current date and Current time from live facts.`;
@@ -134,7 +134,12 @@ export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
                 type: 'string',
                 enum: ['RENT', 'FOOD', 'VENDOR', 'OTHER'],
                 description:
-                  'Recipient category if clearly stated (e.g. landlord → RENT)',
+                  'Spend purpose category if clearly stated (e.g. landlord → RENT, groceries → FOOD). Use during spend_check when they answer what the send is for.',
+              },
+              beneficiary_name: {
+                type: 'string',
+                description:
+                  'Saved recipient nickname if they refer to someone by name ("james", "landlord") without giving account/bank. Code resolves — never invent account_number from this.',
               },
             },
           },

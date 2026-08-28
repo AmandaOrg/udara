@@ -16,6 +16,7 @@ Users who still have remaining daily allowance can say they want to send money a
 - Remaining allowance is not permission to skip that question.
 - A send that already states a purpose can still open the wizard in the same turn.
 - After the question, answering or insisting still prepares the send (does not loop forever).
+- The user's free-text answer is classified into `RENT | FOOD | VENDOR | OTHER` and stored on the transaction as `purposeLabel`.
 
 ## Non-goals
 
@@ -35,19 +36,22 @@ Users who still have remaining daily allowance can say they want to send money a
 - Label hint `RENT` / `FOOD` / `VENDOR` counts as purpose; `OTHER` does not skip the check by itself.
 - Window closed: do not open the wizard; the spend check does not override the window lock.
 - Bare `yes` after the check may proceed; bare `yes` with no check in progress still does not invent a new send by itself.
+- `purposeLabel` on the transaction may differ from `Recipient.label` when sending to someone tagged on an earlier transfer.
 
 ## Safety / PII
 
-No new collection of PIN, BVN, or NIN. Purpose is free text in the existing chat session.
+No new collection of PIN, BVN, or NIN. Purpose is free text in the existing chat session; classification is LLM `label_hint` sanitized by code.
 
 ## Acceptance (observable)
 
 - Vague Opay/amount send → no `transfer_wizard` on that turn.
 - Landlord/rent (or similar) send → `transfer_wizard` allowed same turn.
-- After a spend-check question, a purpose or “just send it” → `transfer_wizard` allowed.
+- After a spend-check question, a purpose or “just send it” → `transfer_wizard` allowed with `labelHint` when stated.
+- Executed transaction row includes `purposeLabel` when classification was provided.
 
 ## Changelog
 
 | Date | Change |
 | --- | --- |
 | 2026-08-27 | Initial |
+| 2026-08-28 | Phase 2: purposeLabel persistence + spend-check classification |

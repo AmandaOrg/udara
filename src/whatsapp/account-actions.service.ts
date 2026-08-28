@@ -9,6 +9,9 @@ import { TransferConfirmationService } from "./transfer-confirmation.service";
 import { BankInfo, BankMatchResult, matchBanks } from "../common/bank-match.util";
 import { TransferWizardHints } from "../orchestrator/transfer-hints.util";
 import {
+  ConversationPersona,
+  ConversationSessionStatus,
+  Prisma,
   RecipientLabel,
   TransactionStatus,
   TransferDraft,
@@ -20,6 +23,7 @@ import {
 export const MENU_BUTTON_PREFIX = "menu:";
 export const BANK_BUTTON_PREFIX = "bank:";
 export const LABEL_BUTTON_PREFIX = "label:";
+export const BENEFICIARY_BUTTON_PREFIX = "beneficiary:";
 
 export const MENU_BALANCE = `${MENU_BUTTON_PREFIX}balance`;
 export const MENU_LIMITS = `${MENU_BUTTON_PREFIX}limits`;
@@ -198,13 +202,57 @@ export class AccountActionsService {
       return;
     }
 
+    const resolved = await this.resolveBeneficiaryHints(user, hints ?? {});
+    if (resolved === "disambiguation_sent") {
+      return;
+    }
+
     // Only one active draft at a time — starting fresh abandons any stale one.
     await this.prisma.transferDraft.updateMany({
       where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
       data: { status: TransferDraftStatus.CANCELLED },
     });
 
-    await this.advanceWithHints(user, hints ?? {}, null);
+    await this.advanceWithHints(user, resolved, null);
+  }
+
+  /**
+   * User picked one of several saved beneficiaries after a disambiguation list.
+   */
+  async handleBeneficiarySelection(
+    user: User,
+    recipientId: string,
+  ): Promise<void> {
+    const pick = await this.readBeneficiaryPick(user.id);
+    if (!pick) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        'that request has expired, say "transfer" to start again.',
+        user.id,
+      );
+      return;
+    }
+
+    const recipient = await this.prisma.recipient.findFirst({
+      where: { id: recipientId, userId: user.id },
+    });
+    if (!recipient) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "couldn't find that saved recipient, try again.",
+        user.id,
+      );
+      return;
+    }
+
+    await this.clearBeneficiaryPick(user.id);
+    const merged: TransferWizardHints = {
+      ...pick.hints,
+      accountNumber: recipient.accountNumber,
+      bankCode: recipient.bankCode,
+      beneficiaryName: pick.hints.beneficiaryName ?? recipient.nickname ?? undefined,
+    };
+    await this.startTransferWizard(user, merged);
   }
 
   /**
@@ -312,7 +360,14 @@ export class AccountActionsService {
               step: TransferDraftStep.AWAITING_BANK_SELECTION,
             },
           });
-      await this.resolveBank(user, draft, bankCode, bankName, labelHint);
+      await this.resolveBank(
+        user,
+        draft,
+        bankCode,
+        bankName,
+        labelHint,
+        hints.beneficiaryName,
+      );
       return;
     }
 
@@ -759,6 +814,7 @@ export class AccountActionsService {
     bankCode: string,
     bankName: string,
     labelHint?: RecipientLabel,
+    beneficiaryNickname?: string,
   ): Promise<void> {
     if (!draft.accountNumber) {
       this.logger.error(
@@ -797,6 +853,9 @@ export class AccountActionsService {
 
     const effectiveLabel = labelHint ?? draft.label ?? undefined;
 
+    const purposeLabel =
+      labelHint ?? draft.label ?? RecipientLabel.OTHER;
+
     if (existingRecipient) {
       const updated = await this.prisma.transferDraft.update({
         where: { id: draft.id },
@@ -807,7 +866,10 @@ export class AccountActionsService {
           isNewRecipient: false,
         },
       });
-      await this.finalizeTransfer(user, updated, existingRecipient.label);
+      await this.finalizeTransfer(user, updated, existingRecipient.label, {
+        purposeLabel,
+        beneficiaryNickname,
+      });
       return;
     }
 
@@ -821,7 +883,10 @@ export class AccountActionsService {
           isNewRecipient: true,
         },
       });
-      await this.finalizeTransfer(user, updated, effectiveLabel);
+      await this.finalizeTransfer(user, updated, effectiveLabel, {
+        purposeLabel,
+        beneficiaryNickname,
+      });
       return;
     }
 
@@ -848,7 +913,11 @@ export class AccountActionsService {
   private async finalizeTransfer(
     user: User,
     draft: TransferDraft,
-    label: RecipientLabel,
+    recipientLabel: RecipientLabel,
+    options?: {
+      purposeLabel?: RecipientLabel;
+      beneficiaryNickname?: string;
+    },
   ): Promise<void> {
     if (!draft.amount || !draft.accountNumber || !draft.bankCode) {
       this.logger.error(
@@ -859,7 +928,7 @@ export class AccountActionsService {
 
     await this.prisma.transferDraft.update({
       where: { id: draft.id },
-      data: { status: TransferDraftStatus.COMPLETED, label },
+      data: { status: TransferDraftStatus.COMPLETED, label: recipientLabel },
     });
 
     await this.transferConfirmation.initiateTransfer({
@@ -868,7 +937,133 @@ export class AccountActionsService {
       bankCode: draft.bankCode,
       amount: Number(draft.amount),
       resolvedName: draft.resolvedName ?? undefined,
-      label,
+      label: recipientLabel,
+      purposeLabel:
+        options?.purposeLabel ?? draft.label ?? recipientLabel,
+      beneficiaryNickname: options?.beneficiaryNickname,
+    });
+  }
+
+  private async resolveBeneficiaryHints(
+    user: User,
+    hints: TransferWizardHints,
+  ): Promise<TransferWizardHints | "disambiguation_sent"> {
+    if (
+      hints.accountNumber ||
+      hints.bankCode ||
+      hints.bankName ||
+      !hints.beneficiaryName
+    ) {
+      return hints;
+    }
+
+    const query = hints.beneficiaryName;
+    const unique = await this.tagging.matchBeneficiaryByName(user.id, query);
+    if (unique) {
+      return {
+        ...hints,
+        accountNumber: unique.accountNumber,
+        bankCode: unique.bankCode,
+      };
+    }
+
+    const ambiguous = await this.tagging.findAmbiguousBeneficiaryMatches(
+      user.id,
+      query,
+    );
+    if (ambiguous.length <= 1) {
+      return hints;
+    }
+
+    await this.writeBeneficiaryPick(user.id, hints);
+    await this.whatsapp.sendListMessage(
+      user.whatsappNumber,
+      `which ${query} did you mean?`,
+      "Pick recipient",
+      ambiguous.slice(0, 10).map((r) => ({
+        id: `${BENEFICIARY_BUTTON_PREFIX}${r.id}`,
+        title: (r.nickname ?? r.accountName ?? r.accountNumber).slice(0, 24),
+        description: `${r.accountNumber} · ${r.label.toLowerCase()}`,
+      })),
+      user.id,
+    );
+    return "disambiguation_sent";
+  }
+
+  private async writeBeneficiaryPick(
+    userId: string,
+    hints: TransferWizardHints,
+  ): Promise<void> {
+    const session = await this.getOrCreateKeduSession(userId);
+    const ctx = this.sessionContext(session);
+    ctx.beneficiaryPick = hints;
+    await this.prisma.conversationSession.update({
+      where: { id: session.id },
+      data: { contextData: ctx as Prisma.InputJsonValue },
+    });
+  }
+
+  private async readBeneficiaryPick(
+    userId: string,
+  ): Promise<{ hints: TransferWizardHints } | null> {
+    const session = await this.prisma.conversationSession.findFirst({
+      where: {
+        userId,
+        persona: ConversationPersona.KEDU,
+        status: ConversationSessionStatus.ACTIVE,
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (!session) return null;
+    const raw = this.sessionContext(session).beneficiaryPick;
+    if (!raw || typeof raw !== "object") return null;
+    return { hints: raw as TransferWizardHints };
+  }
+
+  private async clearBeneficiaryPick(userId: string): Promise<void> {
+    const session = await this.prisma.conversationSession.findFirst({
+      where: {
+        userId,
+        persona: ConversationPersona.KEDU,
+        status: ConversationSessionStatus.ACTIVE,
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (!session) return;
+    const ctx = this.sessionContext(session);
+    delete ctx.beneficiaryPick;
+    await this.prisma.conversationSession.update({
+      where: { id: session.id },
+      data: { contextData: ctx as Prisma.InputJsonValue },
+    });
+  }
+
+  private sessionContext(session: {
+    contextData: Prisma.JsonValue;
+  }): Record<string, unknown> {
+    const raw = session.contextData;
+    return raw && typeof raw === "object" && !Array.isArray(raw)
+      ? { ...(raw as Record<string, unknown>) }
+      : {};
+  }
+
+  private async getOrCreateKeduSession(userId: string) {
+    const existing = await this.prisma.conversationSession.findFirst({
+      where: {
+        userId,
+        persona: ConversationPersona.KEDU,
+        status: ConversationSessionStatus.ACTIVE,
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (existing) return existing;
+    return this.prisma.conversationSession.create({
+      data: {
+        userId,
+        persona: ConversationPersona.KEDU,
+        status: ConversationSessionStatus.ACTIVE,
+        messages: [],
+      },
     });
   }
 }

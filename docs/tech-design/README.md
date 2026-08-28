@@ -15,6 +15,8 @@ Engineer-readable **how** for a feature. Architecture, types, files, env, and te
 | --- | --- |
 | [TRANSFER_INTENT_GROUNDING_TECH.md](TRANSFER_INTENT_GROUNDING_TECH.md) | [transfer-intent-grounding](../../initiatives/transfer-intent-grounding/plan.md) |
 | [SPEND_CHECK_BEFORE_SEND_TECH.md](SPEND_CHECK_BEFORE_SEND_TECH.md) | [spend-check-before-send](../../initiatives/spend-check-before-send/plan.md) |
+| [BENEFICIARY_PREFILL_TECH.md](BENEFICIARY_PREFILL_TECH.md) | [beneficiary-prefill](../../initiatives/beneficiary-prefill/plan.md) |
+| [BILL_PAYMENTS_SPIKE.md](BILL_PAYMENTS_SPIKE.md) | [bill-payments](../../initiatives/bill-payments/plan.md) |
 
 ## New design
 

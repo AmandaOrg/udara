@@ -89,7 +89,11 @@ describe("AccountActionsService", () => {
     listBanks: jest.Mock;
     nameEnquiry: jest.Mock;
   };
-  let tagging: { findRecipient: jest.Mock };
+  let tagging: {
+    findRecipient: jest.Mock;
+    matchBeneficiaryByName: jest.Mock;
+    findAmbiguousBeneficiaryMatches: jest.Mock;
+  };
   let whatsapp: { sendText: jest.Mock; sendListMessage: jest.Mock };
   let transferConfirmation: {
     initiateTransfer: jest.Mock;
@@ -133,10 +137,22 @@ describe("AccountActionsService", () => {
       listBanks: jest.fn().mockResolvedValue(banks),
       nameEnquiry: jest.fn(),
     };
-    tagging = { findRecipient: jest.fn().mockResolvedValue(null) };
+    tagging = {
+      findRecipient: jest.fn().mockResolvedValue(null),
+      matchBeneficiaryByName: jest.fn().mockResolvedValue(null),
+      findAmbiguousBeneficiaryMatches: jest.fn().mockResolvedValue([]),
+    };
     whatsapp = {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "wamid.1" }),
       sendListMessage: jest.fn().mockResolvedValue({ waMessageId: "wamid.2" }),
+    };
+    (prisma as any).conversationSession = {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: "sess-1", contextData: {} }),
+      update: jest.fn().mockResolvedValue({ id: "sess-1", contextData: {} }),
+    };
+    (prisma as any).recipient = {
+      findFirst: jest.fn(),
     };
     transferConfirmation = {
       initiateTransfer: jest.fn(),
@@ -642,6 +658,7 @@ describe("AccountActionsService", () => {
           amount: 5000,
           resolvedName: "Jane Doe",
           label: RecipientLabel.VENDOR,
+          purposeLabel: RecipientLabel.OTHER,
         }),
       );
       expect(prisma._drafts.get(draftId)!.status).toBe(
@@ -670,6 +687,7 @@ describe("AccountActionsService", () => {
           amount: 5000,
           resolvedName: "Jane Doe",
           label: RecipientLabel.RENT,
+          purposeLabel: RecipientLabel.RENT,
         }),
       );
       expect(prisma._drafts.get(draftId)!.status).toBe(
@@ -690,6 +708,68 @@ describe("AccountActionsService", () => {
         expect.stringContaining("doesn't match"),
         "user-1",
       );
+    });
+  });
+
+  describe("beneficiary prefill", () => {
+    it("prefills account and bank from a unique saved beneficiary", async () => {
+      tagging.matchBeneficiaryByName.mockResolvedValue({
+        id: "r-james",
+        accountNumber: "9988776655",
+        bankCode: "000013",
+        nickname: "james",
+        label: RecipientLabel.VENDOR,
+      });
+      tagging.findRecipient.mockResolvedValue({
+        id: "r-james",
+        label: RecipientLabel.VENDOR,
+      });
+      rubies.nameEnquiry.mockResolvedValue({
+        accountName: "James Okonkwo",
+        bankName: "GTBank",
+      });
+
+      await service.startTransferWizard(makeUser() as any, {
+        amount: 5000,
+        beneficiaryName: "james",
+        labelHint: RecipientLabel.FOOD,
+      });
+
+      expect(transferConfirmation.initiateTransfer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountNumber: "9988776655",
+          bankCode: "000013",
+          amount: 5000,
+          label: RecipientLabel.VENDOR,
+          purposeLabel: RecipientLabel.FOOD,
+          beneficiaryNickname: "james",
+        }),
+      );
+    });
+
+    it("sends a disambiguation list when multiple beneficiaries match", async () => {
+      tagging.matchBeneficiaryByName.mockResolvedValue(null);
+      tagging.findAmbiguousBeneficiaryMatches.mockResolvedValue([
+        { id: "r1", nickname: "James", accountNumber: "111", label: RecipientLabel.FOOD },
+        { id: "r2", nickname: "James", accountNumber: "222", label: RecipientLabel.VENDOR },
+      ]);
+
+      await service.startTransferWizard(makeUser() as any, {
+        amount: 5000,
+        beneficiaryName: "james",
+      });
+
+      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("which james"),
+        "Pick recipient",
+        expect.arrayContaining([
+          expect.objectContaining({ id: "beneficiary:r1" }),
+          expect.objectContaining({ id: "beneficiary:r2" }),
+        ]),
+        "user-1",
+      );
+      expect(transferConfirmation.initiateTransfer).not.toHaveBeenCalled();
     });
   });
 });

@@ -47,5 +47,7 @@ Do not delete completed folders. Set status `completed` (or `deleted` if abandon
 | --- | --- | --- | --- |
 | [transfer-intent-grounding](transfer-intent-grounding/plan.md) | in progress | [SPEC](../docs/specs/TRANSFER_INTENT_GROUNDING_SPEC.md) | [TECH](../docs/tech-design/TRANSFER_INTENT_GROUNDING_TECH.md) |
 | [spend-check-before-send](spend-check-before-send/plan.md) | in progress | [SPEC](../docs/specs/SPEND_CHECK_BEFORE_SEND_SPEC.md) | [TECH](../docs/tech-design/SPEND_CHECK_BEFORE_SEND_TECH.md) |
+| [beneficiary-prefill](beneficiary-prefill/plan.md) | completed | [SPEC](../docs/specs/BENEFICIARY_PREFILL_SPEC.md) | [TECH](../docs/tech-design/BENEFICIARY_PREFILL_TECH.md) |
+| [bill-payments](bill-payments/plan.md) | blocked | [SPEC](../docs/specs/BILL_PAYMENTS_SPEC.md) | [SPIKE](../docs/tech-design/BILL_PAYMENTS_SPIKE.md) |
 
 Update this table whenever you add a folder or change status. `npm run docs:check` enforces registration.

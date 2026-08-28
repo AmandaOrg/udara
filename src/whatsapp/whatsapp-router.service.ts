@@ -15,6 +15,7 @@ import { ActionExecutorService } from "../orchestrator/action-executor.service";
 import {
   AccountActionsService,
   BANK_BUTTON_PREFIX,
+  BENEFICIARY_BUTTON_PREFIX,
   LABEL_BUTTON_PREFIX,
   MENU_ACCOUNT,
   MENU_BALANCE,
@@ -127,6 +128,11 @@ export class WhatsappRouterService {
 
     if (payload.startsWith(MENU_BUTTON_PREFIX)) {
       await this.handleMenuSelection(user, payload);
+      return;
+    }
+    if (payload.startsWith(BENEFICIARY_BUTTON_PREFIX)) {
+      const recipientId = payload.slice(BENEFICIARY_BUTTON_PREFIX.length);
+      await this.accountActions.handleBeneficiarySelection(user, recipientId);
       return;
     }
     if (

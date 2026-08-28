@@ -757,5 +757,32 @@
     "expected_hints": { "amount": 800, "bankName": "opay", "labelHint": "FOOD" },
     "expected_confidence": "high",
     "forbidden_surfaces": ["balance_read"]
+  },
+  {
+    "test_case_id": "beneficiary_unique_prefill_wizard",
+    "history": [{ "role": "user", "content": "send 5k to james for rent" }],
+    "mock_proposal": {
+      "message": "on it.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": {
+          "amount": 5000,
+          "beneficiary_name": "james",
+          "label_hint": "RENT"
+        }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read"],
+    "expected_surface": "transfer_wizard",
+    "expected_action_type": "show_surface",
+    "expected_hints": {
+      "amount": 5000,
+      "beneficiaryName": "james",
+      "labelHint": "RENT"
+    },
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read"]
   }
 ]

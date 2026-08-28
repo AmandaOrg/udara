@@ -38,6 +38,12 @@ describe('sanitizeTransferHints', () => {
     ).toBeUndefined();
   });
 
+  it('keeps beneficiary_name when long enough', () => {
+    expect(
+      sanitizeTransferHints({ beneficiary_name: '  james  ' }).beneficiaryName,
+    ).toBe('james');
+  });
+
   it('returns empty object for missing input', () => {
     expect(sanitizeTransferHints()).toEqual({});
     expect(sanitizeTransferHints({})).toEqual({});
@@ -57,6 +63,12 @@ describe('hasActionableTransferHints', () => {
 
   it('is false for amount only', () => {
     expect(hasActionableTransferHints({ amount: 200 })).toBe(false);
+  });
+
+  it('is true when amount and beneficiary_name are present', () => {
+    expect(
+      hasActionableTransferHints({ amount: 5000, beneficiaryName: 'james' }),
+    ).toBe(true);
   });
 });
 

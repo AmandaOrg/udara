@@ -48,6 +48,9 @@ describe('OrchestratorService', () => {
       transaction: {
         findFirst: jest.fn().mockResolvedValue(null),
       },
+      recipient: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     };
     llm = { complete: jest.fn() };
     llmLogger = {

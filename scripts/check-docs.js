@@ -126,6 +126,7 @@ if (fs.existsSync(initiativesDir)) {
 const LINK_RE = /!\[[^\]]*\]\(([^)]+)\)|\[[^\]]*\]\(([^)]+)\)/g;
 
 for (const file of walk(ROOT)) {
+  if (rel(file).startsWith('.cursor/plans/')) continue;
   const text = fs.readFileSync(file, 'utf8');
   const fromDir = path.dirname(file);
   let m;

@@ -66,9 +66,10 @@ Fee amounts are shown and stored even if `RUBIES_FEES_ACCOUNT_NUMBER` is unset; 
 1. Send-money wizard is a `TransferDraft` step machine, **separate** from `ConversationSession`.
 2. Steps: amount → account number → bank selection → label (new recipients only).
 3. Orchestrator may start or fill the wizard via `show_surface transfer_wizard` / `fill_wizard` with sanitized hints (amount > 0, 10-digit account, 6-digit bank code, label in RENT/FOOD/VENDOR/OTHER).
-4. A vague send (no stated purpose) gets one spend-check question in chat before the wizard. Remaining daily allowance is not permission to skip that. Purpose already in the message (rent, landlord, food, …) can still open the wizard the same turn. See [specs/SPEND_CHECK_BEFORE_SEND_SPEC.md](specs/SPEND_CHECK_BEFORE_SEND_SPEC.md).
-5. Every send still goes through confirm buttons, then PIN via WhatsApp Flow (`PENDING_PIN` until verified). Money does not move on confirm alone.
-6. Thanks / “you already sent it” must not relaunch the wizard. See [specs/TRANSFER_INTENT_GROUNDING_SPEC.md](specs/TRANSFER_INTENT_GROUNDING_SPEC.md).
+4. A vague send (no stated purpose) gets one spend-check question in chat before the wizard. Remaining daily allowance is not permission to skip that. Purpose already in the message (rent, landlord, food, …) can still open the wizard the same turn. The answer is classified via orchestrator `label_hint` into `RENT | FOOD | VENDOR | OTHER` and stored on the transaction as `purposeLabel` (separate from `Recipient.label` on repeat sends). See [specs/SPEND_CHECK_BEFORE_SEND_SPEC.md](specs/SPEND_CHECK_BEFORE_SEND_SPEC.md).
+5. Repeat sends may pre-fill account/bank from saved beneficiaries when the user names someone uniquely (`beneficiary_name` hint); confirm and PIN are still required. See [specs/BENEFICIARY_PREFILL_SPEC.md](specs/BENEFICIARY_PREFILL_SPEC.md).
+6. Every send still goes through confirm buttons, then PIN via WhatsApp Flow (`PENDING_PIN` until verified). Money does not move on confirm alone.
+7. Thanks / “you already sent it” must not relaunch the wizard. See [specs/TRANSFER_INTENT_GROUNDING_SPEC.md](specs/TRANSFER_INTENT_GROUNDING_SPEC.md).
 
 The orchestrator **cannot** execute transfers or invent balances. Surfaces own numbers.
 

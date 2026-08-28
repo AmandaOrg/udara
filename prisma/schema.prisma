@@ -295,12 +295,16 @@ model Recipient {
   bankCode      String
   accountName   String?
   label         RecipientLabel @default(OTHER)
+  // User-facing name for repeat sends ("james", "landlord") — not a bank field.
+  nickname   String?
+  lastUsedAt DateTime?
 
   createdAt DateTime @default(now())
 
   transactions Transaction[]
 
   @@unique([userId, accountNumber, bankCode])
+  @@index([userId, nickname])
 }
 
 model TransferDraft {
@@ -335,6 +339,9 @@ model Transaction {
   amount Decimal           @db.Decimal(14, 2)
   type   TransactionType   @default(NORMAL)
   status TransactionStatus @default(PENDING_CONFIRMATION)
+  // This send's stated purpose (spend-check / orchestrator label_hint) — may
+  // differ from Recipient.label when the person was tagged on an earlier send.
+  purposeLabel RecipientLabel?
 
   feeAmount         Decimal   @default(0) @db.Decimal(14, 2)
   // Set once the feeAmount (if any) has actually been moved to

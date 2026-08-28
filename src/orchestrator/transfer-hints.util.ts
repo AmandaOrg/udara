@@ -14,6 +14,8 @@ export interface TransferWizardHints {
   bankCode?: string;
   bankName?: string;
   labelHint?: RecipientLabel;
+  /** Saved-beneficiary lookup only — code resolves to account/bank, never the model. */
+  beneficiaryName?: string;
 }
 
 /**
@@ -59,6 +61,13 @@ export function sanitizeTransferHints(
     hints.labelHint = raw.label_hint as RecipientLabel;
   }
 
+  if (typeof raw.beneficiary_name === 'string') {
+    const name = raw.beneficiary_name.trim().slice(0, 50);
+    if (name.length >= 2) {
+      hints.beneficiaryName = name;
+    }
+  }
+
   return hints;
 }
 
@@ -67,7 +76,12 @@ export function hasActionableTransferHints(
   hints: TransferWizardHints,
 ): boolean {
   if (hints.amount == null || hints.amount <= 0) return false;
-  return !!(hints.accountNumber || hints.bankName || hints.bankCode);
+  return !!(
+    hints.accountNumber ||
+    hints.bankName ||
+    hints.bankCode ||
+    hints.beneficiaryName
+  );
 }
 
 /**
@@ -179,6 +193,7 @@ export function transferHintsToRaw(
   if (hints.bankCode) raw.bank_code = hints.bankCode;
   if (hints.bankName) raw.bank_name = hints.bankName;
   if (hints.labelHint) raw.label_hint = hints.labelHint;
+  if (hints.beneficiaryName) raw.beneficiary_name = hints.beneficiaryName;
   return raw;
 }
 
@@ -191,6 +206,7 @@ export function transferHintsFromContext(raw: unknown): TransferWizardHints {
     bank_code: o.bankCode ?? o.bank_code,
     bank_name: o.bankName ?? o.bank_name,
     label_hint: o.labelHint ?? o.label_hint,
+    beneficiary_name: o.beneficiaryName ?? o.beneficiary_name,
   });
 }
 
