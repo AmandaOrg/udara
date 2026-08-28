@@ -59,6 +59,8 @@ CI does not run e2e. Run the relevant subset locally (`npm run e2e:smoke` or a n
 | Transfer wizard / confirm / PIN | Required | If intent gating | Transfer scenarios |
 | Docs-only | `npm run docs:check` | — | — |
 
+Every change also runs `npm run security:check`. Files listed as security-critical in [`scripts/check-security.js`](../scripts/check-security.js) must keep a colocated spec — that list is what stops a guard from losing its only CI coverage. See [SECURITY.md](SECURITY.md).
+
 ## AI providers in tests
 
 Default `AI_PROVIDER=stub` does not emit real `propose_turn` tool calls. Free-text e2e then hits the failure SOP. Deterministic keyword/menu paths are preferred for smoke. Live LLM is opt-in (`E2E_ORCHESTRATOR_LIVE=1`).

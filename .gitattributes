@@ -1,0 +1,14 @@
+# Line endings.
+#
+# Everything git stores is already LF. Without this file a Windows checkout
+# converts it to CRLF in the working tree, which Prettier then reports as an
+# error on every single line — `npx eslint` returns ~19k "Delete \r" findings
+# and `npm run lint` (which runs --fix) rewrites the entire tree, burying real
+# changes in an unreviewable diff. See docs/DEVELOPMENT.md.
+#
+# eol=lf keeps the working tree LF on every platform, so lint output stays
+# readable and diffs stay honest.
+* text=auto eol=lf
+
+# Source documents — never line-ending converted, never diffed as text.
+*.pdf binary

@@ -2,7 +2,7 @@
 
 Stakeholder-facing rules that the running app actually enforces. Cross-feature. Feature-specific observable behavior lives in [specs/](specs/README.md).
 
-**Authority:** this file is reconstructed from Nest services, Prisma enums, `.env.example` defaults, unit tests, and golden dialogues. The original PRD is **not in the repo**. Do not treat PRD section numbers in comments as a committed document.
+**Authority:** this file describes what the code actually does — Nest services, Prisma enums, `.env.example` defaults, unit tests, and golden dialogues. The original PRD is committed at [`✅-Kedu-PRD.pdf`](✅-Kedu-PRD.pdf), but it is historical background and stale in places. Where it disagrees with this file, this file is right. Do not rewrite anything below from the PDF.
 
 Labels used below:
 
@@ -94,7 +94,7 @@ Never quote balances, allowance figures, or account numbers from LLM memory. Liv
 
 KYC (BVN/NIN, DOB, email) is a WhatsApp Flow. It must never be collected as chat text.
 
-**Gap:** `docs/Udara-Onboarding-Script` is not in the repo. Prompt copy in `src/ai/prompts/onboarding.prompts.ts` and the stage machine are what ships.
+The [Canonical Onboarding Script](✅-Kedu-Onboarding-Script.pdf) is committed, but its stage numbering predates this enum and does not match it. The stage machine plus prompt copy in `src/ai/prompts/onboarding.prompts.ts` are what ships.
 
 ---
 
@@ -127,10 +127,16 @@ KYC (BVN/NIN, DOB, email) is a WhatsApp Flow. It must never be collected as chat
 
 ## Voice
 
-**Gap + committed proxy.** Tone PDF is missing. Committed identity/voice is [`src/ai/prompts/kedu-persona.prompts.ts`](../src/ai/prompts/kedu-persona.prompts.ts): lowercase friendly texting, strict on rules, chunked bubbles, no em dashes, no corporate-bank voice.
+**Verified.** The shipped voice is [`src/ai/prompts/kedu-persona.prompts.ts`](../src/ai/prompts/kedu-persona.prompts.ts): lowercase friendly texting, strict on rules, chunked bubbles, no em dashes, no corporate-bank voice. The [Character & Tone System Prompt](✅-Kedu-Character-Tone-Prompt.pdf) it was derived from is committed as background.
 
 ---
 
 ## Surfaces the model may propose
 
-Eligible predicates in [`surface-registry.ts`](../src/orchestrator/surface-registry.ts): `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `spending_menu`, `spend_summary`. Unknown or ineligible keys are downgraded to `reply_only`. Medium/missing confidence is text-only unless the validator promotes a ready send (see transfer-intent spec).
+Eligible predicates in [`surface-registry.ts`](../src/orchestrator/surface-registry.ts): `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `spending_menu`, `spend_summary`. Unknown or ineligible keys are downgraded to `reply_only`. Medium/missing confidence is text-only unless the validator promotes a ready send, which the transfer-intent and spend-check specs gate.
+
+---
+
+## Security boundaries
+
+The invariants that protect funds and identity documents are listed as S1–S12 in [SECURITY.md](SECURITY.md), which is the mandatory review gate for any change here.

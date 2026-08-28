@@ -19,7 +19,8 @@
     "orchestrator:cli": "ts-node -r tsconfig-paths/register src/cli/orchestrator-cli.ts",
     "orchestrator:golden": "ts-node -r tsconfig-paths/register src/cli/orchestrator-cli.ts --golden",
     "orchestrator:fixture": "ts-node -r tsconfig-paths/register src/cli/run-fixture.ts",
-    "docs:check": "node scripts/check-docs.js"
+    "docs:check": "node scripts/check-docs.js",
+    "security:check": "node scripts/check-security.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

@@ -1,0 +1,30 @@
+---
+description: Non-negotiable security gate for Udara (money movement, PII, LLM boundary)
+alwaysApply: true
+---
+
+# Security gate
+
+Udara moves real money and handles PIN, BVN, NIN, and DOB. Full checklist: `docs/SECURITY.md`. Run `npm run security:check` before claiming any change is done.
+
+## Never do these
+
+- Weaken or bypass a signature guard, the validator, the confirm step, or the PIN step to make something work
+- Add a bypass flag (`skipPin`, `forceSend`, `allowOutsideWindow`) or a debug route that moves money
+- Log or persist a PIN, BVN, NIN, DOB, access token, or API key
+- Commit a credential, or paste a real account number or phone number into a test
+- Disable a lint rule, type check, or hook to get a clean run
+
+## Always do these
+
+- Treat model output as untrusted: sanitize hints, validate actions, never execute directly from `propose_turn`
+- Add new sensitive WhatsApp Flow fields to `SENSITIVE_FLOW_FIELDS` in the same change
+- Re-read amount, recipient, and account number from the database at execution time
+- Keep `orchestrator.module.ts` free of WhatsApp send and Rubies providers
+- Add a regression test before fixing a leak or a money bug
+
+## Invariants the gate enforces
+
+S1 raw-body HMAC · S2/S3 webhook guards · S4 constant-time compare · S5 redaction at persistence · S6 Flow fields redacted · S7 PIN before money · S8 validator on every turn · S9 orchestrator holds no send providers · S10 no shell-out or TLS bypass in request path · S11 no committed credentials · S12 security-critical files have tests
+
+Changing any of them needs a human decision and an ADR in `docs/decisions/`.

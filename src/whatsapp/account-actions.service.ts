@@ -10,7 +10,6 @@ import { BankInfo, BankMatchResult, matchBanks } from "../common/bank-match.util
 import { TransferWizardHints } from "../orchestrator/transfer-hints.util";
 import {
   RecipientLabel,
-  TransactionStatus,
   TransferDraft,
   TransferDraftStatus,
   TransferDraftStep,

@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Working agreement
 
-Read `AGENTS.md` before editing. Canonical behavior is code + `docs/`. The original PRD is not in the repo.
+Read `AGENTS.md` before editing. Canonical behavior is code + `docs/`. The founding PDFs in `docs/` (PRD, onboarding script, tone prompt) are historical background and stale in places — never change code or behavior docs to match them.
 
 ## Invariants
 

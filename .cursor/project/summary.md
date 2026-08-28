@@ -1,6 +1,6 @@
 # Udara project summary
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 
 Quick orientation for agents. Full behavior: `docs/PRODUCT_BEHAVIOR.md`. Full flow: `docs/ARCHITECTURE.md`. Working rules: `AGENTS.md`.
 
@@ -50,13 +50,14 @@ WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), LLM (`AI_PRO
 
 ## 7. Commands
 
-`start:dev`, `test`, `lint`, `e2e` / `e2e:smoke`, `orchestrator:golden`, `orchestrator:cli`, `docs:check`. CI: lint, prisma generate/migrate, build, unit test, docs:check. Not in CI: e2e, live LLM.
+`start:dev`, `test`, `lint`, `e2e` / `e2e:smoke`, `orchestrator:golden`, `orchestrator:cli`, `docs:check`, `security:check`. CI: security:check, docs:check, lint, prisma generate/migrate, build, unit test. Not in CI: e2e, live LLM.
 
 ## 8. Docs map
 
 | File | Use |
 | --- | --- |
-| `docs/README.md` | Index + source gaps |
+| `docs/SECURITY.md` | Mandatory gate: S1–S12 invariants + per-change checklist |
+| `docs/README.md` | Index + founding PDFs (background only) |
 | `docs/specs/` | Feature behavior |
 | `docs/tech-design/` | Feature how |
 | `docs/decisions/` | ADRs |
@@ -70,8 +71,9 @@ WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), LLM (`AI_PRO
 - Unsigned webhooks only when secrets blank
 - Stub AI does not emit `propose_turn` (e2e free text → failure SOP)
 - Fee sweep skipped without `RUBIES_FEES_ACCOUNT_NUMBER`
-- Missing committed PRD / onboarding script / tone PDF
+- Founding PDFs (PRD, onboarding script, tone prompt) are in `docs/` but are stale background, not spec — code wins
 
-## 10. Active initiative
+## 10. Active initiatives
 
-`initiatives/spend-check-before-send` — vague sends get one coaching question before the wizard; remaining allowance is not a skip.
+- `initiatives/spend-check-before-send` — vague sends get one coaching question before the wizard; remaining allowance is not a skip.
+- `initiatives/transfer-intent-grounding` — closed-send utterances must not relaunch the wizard; completed sends are written into chat history.

@@ -51,6 +51,21 @@ Never edit applied SQL in place. Update [ARCHITECTURE.md](ARCHITECTURE.md) and `
 
 See root [README.md](../README.md). Format with `npm run format`; lint with `npm run lint`.
 
+**`npm run lint` rewrites files.** It runs `eslint --fix` with the Prettier plugin, so it is a formatter, not a check. To check your own work without touching the tree, run `npx eslint <the files you touched>`.
+
+[`.gitattributes`](../.gitattributes) pins the working tree to LF on every platform. Without it a Windows checkout gets CRLF, Prettier flags every line, and `--fix` rewrites all 200+ files into an unreviewable diff — which is exactly the kind of diff a weakened guard can hide inside. Do not remove it.
+
+A repo-wide `npx eslint` still reports roughly 800 `prettier/prettier` findings. Those are real, pre-existing quote-style inconsistencies (parts of `src/orchestrator/` and `src/cli/` use single quotes), not line endings. Match the file you are editing rather than reformatting it; normalizing the whole tree should be its own commit.
+
+Security and documentation gates:
+
+```bash
+npm run security:check   # S1-S12 invariants, secret scan, redaction sync
+npm run docs:check       # docs structure and links
+```
+
+Both run in CI before lint. See [SECURITY.md](SECURITY.md).
+
 ## Conventions
 
 - Co-locate unit tests as `*.spec.ts` next to the unit.

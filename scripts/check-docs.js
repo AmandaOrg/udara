@@ -28,6 +28,7 @@ const REQUIRED_FILES = [
   'README.md',
   'AGENTS.md',
   'docs/README.md',
+  'docs/SECURITY.md',
   'docs/PRODUCT_BEHAVIOR.md',
   'docs/ARCHITECTURE.md',
   'docs/DEVELOPMENT.md',
@@ -41,6 +42,8 @@ const REQUIRED_FILES = [
   '.cursor/rules/working-agreement.mdc',
   '.cursor/rules/project-summary.mdc',
   '.cursor/rules/orchestrator-and-whatsapp.mdc',
+  '.cursor/rules/security.mdc',
+  'scripts/check-security.js',
 ];
 
 const errors = [];
