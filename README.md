@@ -10,6 +10,7 @@ The npm package is still named `kedu`. User-facing product voice is **Udara**.
 | --- | --- |
 | Humans (setup + map) | this file, then [docs/README.md](docs/README.md) |
 | Collaborators and AI agents | [AGENTS.md](AGENTS.md) |
+| Anyone changing money, PII, or prompts | [docs/SECURITY.md](docs/SECURITY.md) — mandatory |
 | Active work | [initiatives/README.md](initiatives/README.md) |
 
 ## Stack
@@ -68,8 +69,9 @@ src/
 | `npm run orchestrator:golden` | Golden dialogue validator |
 | `npm run orchestrator:cli` | Safe orchestrator dry-run REPL |
 | `npm run docs:check` | Documentation structure and link check |
+| `npm run security:check` | Security invariants, secret scan, redaction sync |
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint, Prisma generate/migrate, build, unit tests, and `docs:check`. E2e and live LLM evals stay local.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `security:check`, `docs:check`, lint, Prisma generate/migrate, build, and unit tests. E2e and live LLM evals stay local.
 
 ## Documentation system
 

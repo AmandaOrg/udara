@@ -5,11 +5,14 @@ Read this before editing Udara. Tool-neutral: Cursor, Claude Code, humans.
 ## Read order
 
 1. This file
-2. [docs/README.md](docs/README.md)
-3. `.cursor/project/summary.md` (module map)
-4. The matching initiative / spec / tech design if the task is non-trivial
+2. [docs/SECURITY.md](docs/SECURITY.md) — mandatory gate, this product moves real money
+3. [docs/README.md](docs/README.md)
+4. `.cursor/project/summary.md` (module map)
+5. The matching initiative / spec / tech design if the task is non-trivial
 
-Do not treat chat history as product authority. Do not invent the missing PRD, onboarding script, or tone PDF; see source gaps in `docs/README.md`.
+Do not treat chat history as product authority.
+
+The original PRD, onboarding script, and tone prompt **are** in `docs/` as PDFs. They are historical background, not specification — parts are stale, and the code is correct where they disagree. Never change code or rewrite a behavior doc to match them. See [docs/README.md](docs/README.md#founding-pdfs--historical-not-authority).
 
 ## Source-of-truth hierarchy
 
@@ -17,9 +20,15 @@ Do not treat chat history as product authority. Do not invent the missing PRD, o
 2. **docs/specs/** (observable behavior)
 3. **docs/tech-design/** and **docs/ARCHITECTURE.md** (how)
 4. **initiatives/*/plan.md** (status of work)
-5. Comments that cite “PRD §…” (hints only; PRD file is not in repo)
+5. The founding PDFs in `docs/` and the `PRD §…` comments that cite them (background only, and stale in places)
 
-If they disagree, fix the docs in the same change as the code, or flag the gap. Do not silently “align” money or PIN behavior to a remembered PRD.
+If they disagree, fix the docs in the same change as the code, or flag the gap. Do not silently “align” money or PIN behavior to the PRD.
+
+## Security first
+
+Udara moves real money and handles PIN, BVN, NIN, and DOB. [docs/SECURITY.md](docs/SECURITY.md) defines twelve invariants (S1–S12) and a per-change-type checklist. Both are mandatory.
+
+Never weaken a guard, the validator, the confirm step, or the PIN step to make something work. Never add a bypass flag. Never log or commit a secret. If a change would alter S1–S12 or widen what the LLM can trigger, stop and ask; record the answer in the initiative plan.
 
 ## Hard product constraints
 
@@ -35,7 +44,7 @@ If they disagree, fix the docs in the same change as the code, or flag the gap. 
 
 - Nest module / service / `*.spec.ts` colocation
 - Prisma for schema; migrations required for model changes
-- Match the file’s existing quote style
+- Match the file’s existing quote style. `npm run lint` runs `--fix`, so it reformats rather than checks — lint only the files you touched (`npx eslint <paths>`). Never delete `.gitattributes`; see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 - Comment why, not what
 - `forwardRef` only for existing WhatsApp circulars
 - Dry-run + `AI_PROVIDER=stub` for local/e2e unless the task is live-LLM
@@ -48,6 +57,7 @@ Non-trivial work: create `initiatives/<slug>/plan.md` from the template **before
 
 | You changed | Also update |
 | --- | --- |
+| A security invariant, guard, or redaction rule | `docs/SECURITY.md` + `scripts/check-security.js` + an ADR |
 | User-visible behavior | spec + plan + `docs/PRODUCT_BEHAVIOR.md` if cross-cutting |
 | Module graph, models, env | `docs/ARCHITECTURE.md` / `DEVELOPMENT.md` + `.cursor/project/summary.md` |
 | Tests / verification | `docs/TESTING.md` |
@@ -56,12 +66,15 @@ Non-trivial work: create `initiatives/<slug>/plan.md` from the template **before
 
 ## Completion checklist
 
+- [ ] `npm run security:check` and the relevant section of [docs/SECURITY.md](docs/SECURITY.md)
 - [ ] Targeted tests for touched units (`npx jest <paths>`)
 - [ ] Golden dialogues if validator/intent/surfaces changed (`npm run orchestrator:golden`)
 - [ ] Relevant e2e subset if webhooks/wizards/HMAC changed
 - [ ] `npm run docs:check`
 - [ ] Initiative plan / spec / tech / summary updated when required
 - [ ] No secrets in git; no PIN/KYC in fixtures
+
+Report the commands you actually ran. Do not claim a check passed that you did not run.
 
 ## Commands
 

@@ -13,7 +13,6 @@ import {
   ConversationSessionStatus,
   Prisma,
   RecipientLabel,
-  TransactionStatus,
   TransferDraft,
   TransferDraftStatus,
   TransferDraftStep,

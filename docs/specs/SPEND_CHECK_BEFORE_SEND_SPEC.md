@@ -4,7 +4,7 @@
 Initiative: [initiatives/spend-check-before-send/plan.md](../../initiatives/spend-check-before-send/plan.md)  
 Tech design: [../tech-design/SPEND_CHECK_BEFORE_SEND_TECH.md](../tech-design/SPEND_CHECK_BEFORE_SEND_TECH.md)
 
-The original PRD is not in the repo. Rules below are product intent verified against identity copy plus this implementation.
+The original PRD is committed in `docs/` but is historical background, not spec. Rules below are verified against identity copy plus this implementation.
 
 ## Problem
 
