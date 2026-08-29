@@ -5,6 +5,7 @@ import { RubiesSignatureGuard } from "./rubies-signature.guard";
 import { RubiesWebhookController } from "./rubies-webhook.controller";
 import { WhatsappModule } from "../whatsapp/whatsapp.module";
 import { AllowanceModule } from "../allowance/allowance.module";
+import { EmailModule } from "../email/email.module";
 
 @Module({
   // forwardRef: WhatsappModule already imports RubiesModule (for RubiesService),
@@ -18,6 +19,8 @@ import { AllowanceModule } from "../allowance/allowance.module";
     HttpModule,
     forwardRef(() => WhatsappModule),
     forwardRef(() => AllowanceModule),
+    // The webhook controller emails the user on an incoming credit.
+    forwardRef(() => EmailModule),
   ],
   controllers: [RubiesWebhookController],
   providers: [RubiesService, RubiesSignatureGuard],

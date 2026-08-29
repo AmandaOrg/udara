@@ -39,6 +39,10 @@ enum IncomePosture {
 enum OnboardingStage {
   DISCOVERY
   WELCOME
+  // Terms + consequences shown, waiting on explicit consent. Sits between the
+  // comprehension check and any data collection: nothing personal is asked
+  // for until the user has agreed to what they're agreeing to.
+  TERMS_CONSENT
   IDENTITY
   FREQUENCY_CHECK
   PLAN_PROPOSED
@@ -167,6 +171,7 @@ enum NudgeType {
   BORROW_WARNING
   SETTINGS_ELIGIBLE
   HABIT_FORMING_FOLLOWUP // onboarding script stage 13 — ~10h after onboarding completes, once ever
+  WEEKLY_REVIEW // Sunday in-chat spend recap + optional limit adjustment
   OTHER
 }
 
@@ -241,6 +246,20 @@ model User {
   // WhatsappMessage row that delivered it (see sensitive-fields.util.ts).
   // A 4-digit PIN is only a 10,000-key space, so pinFailedAttempts/
   // pinLockedUntil are the real defense, not the KDF.
+  // A one-week override of the derived daily limit, set from the Sunday
+  // weekly review. Scoped to a single WAT ISO week: AllowanceService ignores
+  // it once dailyLimitOverrideWeekStart is no longer the current week, so the
+  // plan automatically reverts to the 30%-of-income formula rather than
+  // silently persisting a one-off adjustment forever.
+  dailyLimitOverride          Decimal?  @db.Decimal(14, 2)
+  dailyLimitOverrideWeekStart DateTime?
+
+  // Explicit consent, captured at TERMS_CONSENT. Versioned so a future terms
+  // change is distinguishable from "never consented" rather than being
+  // silently grandfathered in.
+  termsAcceptedAt DateTime?
+  termsVersion    String?
+
   pinHash           String?
   pinSetAt          DateTime?
   pinFailedAttempts Int       @default(0)
@@ -262,6 +281,8 @@ model User {
   incomingCredits      IncomingCredit[]
   nudgeLogs            NudgeLog[]
   pinChallenges        PinChallenge[]
+  EmailLog             EmailLog[]
+  WeeklyReview         WeeklyReview[]
 }
 
 // One row per user per calendar day — the heart of the discipline engine.
@@ -531,6 +552,7 @@ model NudgeLog {
 enum PinChallengePurpose {
   SETUP
   TRANSFER_AUTH
+  RESET
 }
 
 // Binds one PIN-entry Flow send to one specific action, single-use. Without
@@ -544,11 +566,96 @@ model PinChallenge {
 
   flowToken     String              @unique
   purpose       PinChallengePurpose
-  transactionId String? // null for SETUP
+  transactionId String? // null for SETUP and RESET
+
+  // RESET only. The emailed one-time code, hashed with the same scrypt path
+  // as the PIN itself — a 6-digit code is a 1,000,000-key space, so it is
+  // never stored in the clear. otpAttempts bounds guessing: a wrong code
+  // carries the same hash forward onto a fresh single-use challenge (so the
+  // emailed code keeps working) with the count incremented, and the reset
+  // dies once the ceiling is hit.
+  otpHash     String?
+  otpAttempts Int     @default(0)
 
   expiresAt  DateTime
   consumedAt DateTime?
   createdAt  DateTime  @default(now())
 
   @@index([userId, purpose])
+}
+
+// ---------------------------------------------------------------------------
+// Email notifications (Resend)
+// ---------------------------------------------------------------------------
+
+enum EmailType {
+  PIN_RESET_OTP
+  MONEY_IN
+  MONEY_OUT
+  WINDOW_OPEN
+  WEEKLY_SUMMARY
+  MONTHLY_SUMMARY
+}
+
+enum EmailStatus {
+  SENT
+  FAILED
+  SKIPPED // no address on file, or email disabled for this environment
+}
+
+// One row per attempted send, successes and failures alike, so a missing
+// email is diagnosable after the fact rather than invisible.
+//
+// dedupeKey is the idempotency guard and carries the real "send once"
+// semantics — same pattern as Transaction.idempotencyKey and
+// WhatsappMessage.waMessageId. It encodes what the email is *about* (a
+// specific credit, a specific transaction, a specific user-week), so a
+// retried webhook or an overlapping scheduler tick collides on the unique
+// index instead of sending twice.
+model EmailLog {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  type       EmailType
+  toAddress  String
+  subject    String
+  status     EmailStatus
+  dedupeKey  String      @unique
+  providerId String? // Resend's message id, for tracing a delivery back
+  error      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, type, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Sunday weekly review (in-chat)
+// ---------------------------------------------------------------------------
+
+enum WeeklyReviewStatus {
+  SENT // recap delivered, waiting on the keep/adjust choice
+  AWAITING_LIMIT // user chose "adjust", next text is their new daily limit
+  COMPLETED // kept the same limits, or a new limit was accepted
+}
+
+// One review per user per WAT ISO week. The unique constraint is what makes
+// the Sunday scheduler safe to re-run: a second tick in the same week hits
+// the constraint rather than sending a duplicate recap.
+model WeeklyReview {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  weekStartDate DateTime // WAT ISO week the recap covers
+  status        WeeklyReviewStatus @default(SENT)
+  totalSpent    Decimal            @db.Decimal(14, 2)
+  newDailyLimit Decimal?           @db.Decimal(14, 2) // set only if they adjusted
+
+  createdAt   DateTime  @default(now())
+  respondedAt DateTime?
+
+  @@unique([userId, weekStartDate])
+  @@index([userId, status])
 }

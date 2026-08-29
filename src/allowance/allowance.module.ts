@@ -5,12 +5,13 @@ import { FeeCalculatorService } from "./fee-calculator.service";
 import { AllowanceScheduler } from "./allowance.scheduler";
 import { SpendSummaryService } from "./spend-summary.service";
 import { WhatsappModule } from "../whatsapp/whatsapp.module";
+import { EmailModule } from "../email/email.module";
 
 @Module({
   // forwardRef: WhatsappModule already imports AllowanceModule, and
   // AllowanceScheduler needs WhatsappService back for the window-open nudge
   // (PRD §13) — same circular pattern as Rubies/Manager, resolved the same way.
-  imports: [forwardRef(() => WhatsappModule)],
+  imports: [forwardRef(() => WhatsappModule), forwardRef(() => EmailModule)],
   providers: [
     AllowanceService,
     WindowService,

@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { AllowanceService } from "./allowance.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { EmailNotificationsService } from "../email/email-notifications.service";
 import { NudgeType, User } from "@prisma/client";
 import { getWatHour, startOfWatDayInstant } from "../common/wat-time.util";
 
@@ -26,6 +27,7 @@ export class AllowanceScheduler {
     private readonly allowance: AllowanceService,
     private readonly whatsapp: WhatsappService,
     private readonly config: ConfigService,
+    private readonly emailNotifications: EmailNotificationsService,
   ) {}
 
   /** "Active" here just means "has a Rubies account" — the only notion of an onboarded user this schema has. */
@@ -84,6 +86,9 @@ export class AllowanceScheduler {
           NudgeType.WINDOW_OPEN,
           "Your day is unlocked - today's allowance is ready to spend.",
         );
+        // Same once-per-day guarantee, independently keyed on EmailLog so a
+        // WhatsApp-side failure can't suppress the email or vice versa.
+        await this.emailNotifications.sendWindowOpen(user, now);
       } catch (err) {
         this.logger.error(
           `Failed to send window-open nudge to user ${user.id}: ${String(err)}`,

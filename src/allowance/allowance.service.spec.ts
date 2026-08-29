@@ -45,6 +45,8 @@ describe("AllowanceService", () => {
       windowEndHour: number;
       disciplineExitedAt: Date | null;
       monthlyIncome: number | null;
+      dailyLimitOverride: number | null;
+      dailyLimitOverrideWeekStart: Date | null;
     }> = {},
   ) {
     return {
@@ -53,6 +55,8 @@ describe("AllowanceService", () => {
       windowEndHour: 20,
       disciplineExitedAt: null,
       monthlyIncome: null,
+      dailyLimitOverride: null,
+      dailyLimitOverrideWeekStart: null,
       ...overrides,
     };
   }
@@ -414,6 +418,64 @@ describe("AllowanceService", () => {
       expect(prisma.dailyAllowance.findMany).toHaveBeenCalledWith({
         where: { userId, weekStartDate },
       });
+    });
+  });
+  describe("weekly daily-limit override", () => {
+    // 2026-01-08 is a Thursday; its WAT ISO week starts Monday 2026-01-05.
+    const thisWeek = new Date(Date.UTC(2026, 0, 5));
+    const lastWeek = new Date(Date.UTC(2025, 11, 29));
+
+    it("uses the override for the week it was set for", async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        makeUser({
+          monthlyIncome: 1_500_000,
+          dailyLimitOverride: 9_000,
+          dailyLimitOverrideWeekStart: thisWeek,
+        }),
+      );
+      prisma.dailyAllowance.findUnique.mockResolvedValue(null);
+      prisma.dailyAllowance.create.mockResolvedValue(makeAllowance());
+
+      await service.getOrCreateTodayAllowance(
+        userId,
+        new Date("2026-01-08T12:00:00Z"),
+      );
+
+      expect(prisma.dailyAllowance.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ amountAllocated: 9_000 }),
+        }),
+      );
+    });
+
+    it("lapses back to the derived plan once that week has passed", async () => {
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        makeUser({
+          monthlyIncome: 1_500_000,
+          dailyLimitOverride: 9_000,
+          dailyLimitOverrideWeekStart: lastWeek,
+        }),
+      );
+      prisma.dailyAllowance.findUnique.mockResolvedValue(null);
+      prisma.dailyAllowance.create.mockResolvedValue(makeAllowance());
+
+      await service.getOrCreateTodayAllowance(
+        userId,
+        new Date("2026-01-08T12:00:00Z"),
+      );
+
+      // 1.5M * 30% / 30 = 15,000, not the stale 9,000 override.
+      expect(prisma.dailyAllowance.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ amountAllocated: 15_000 }),
+        }),
+      );
+    });
+
+    it("computePlannedDailyAmount always reports the underlying plan, ignoring any override", () => {
+      expect(
+        service.computePlannedDailyAmount({ monthlyIncome: 1_500_000 } as any),
+      ).toBe(15_000);
     });
   });
 });

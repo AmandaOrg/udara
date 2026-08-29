@@ -10,8 +10,12 @@ describe("PinGateService", () => {
     verifyPin: jest.Mock;
     setPin: jest.Mock;
     isLocked: jest.Mock;
+    canRequestReset: jest.Mock;
+    createResetChallenge: jest.Mock;
+    verifyResetOtp: jest.Mock;
   };
   let whatsapp: { sendText: jest.Mock; sendFlow: jest.Mock };
+  let emailNotifications: { sendPinResetOtp: jest.Mock };
   let service: PinGateService;
 
   const user = {
@@ -30,7 +34,9 @@ describe("PinGateService", () => {
           ? "entry-flow"
           : key === "WHATSAPP_PIN_SETUP_FLOW_ID"
             ? "setup-flow"
-            : undefined,
+            : key === "WHATSAPP_PIN_RESET_FLOW_ID"
+              ? "reset-flow"
+              : undefined,
       ),
     };
     pin = {
@@ -41,16 +47,26 @@ describe("PinGateService", () => {
       verifyPin: jest.fn(),
       setPin: jest.fn(),
       isLocked: jest.fn().mockReturnValue(false),
+      canRequestReset: jest.fn().mockResolvedValue(true),
+      createResetChallenge: jest.fn().mockResolvedValue({
+        challenge: { id: "c-reset", flowToken: "tok-reset" },
+        otp: "123456",
+      }),
+      verifyResetOtp: jest.fn(),
     };
     whatsapp = {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "w1" }),
       sendFlow: jest.fn().mockResolvedValue({ waMessageId: "w2" }),
+    };
+    emailNotifications = {
+      sendPinResetOtp: jest.fn().mockResolvedValue(true),
     };
     service = new PinGateService(
       prisma as any,
       config as any,
       pin as any,
       whatsapp as any,
+      emailNotifications as any,
     );
   });
 
@@ -255,6 +271,224 @@ describe("PinGateService", () => {
       expect(whatsapp.sendFlow).toHaveBeenCalledWith(
         expect.objectContaining({ flowId: "setup-flow" }),
       );
+    });
+  });
+  describe("PIN reset", () => {
+    const resetUser = {
+      ...user,
+      pinHash: "scrypt$16384$8$1$c2FsdA==$aGFzaA==",
+      email: "daniel@example.com",
+    } as any;
+
+    /** Everything sent to the user this test. */
+    const sentText = () =>
+      whatsapp.sendText.mock.calls.map((c: any[]) => c[1]).join("\n");
+
+    describe("requesting a code", () => {
+      it("emails a code and sends the reset form bound to the challenge", async () => {
+        await service.requestPinReset(resetUser);
+
+        expect(emailNotifications.sendPinResetOtp).toHaveBeenCalledWith(
+          expect.objectContaining({
+            otp: "123456",
+            challengeId: "c-reset",
+            expiresInMinutes: 10,
+          }),
+        );
+        expect(whatsapp.sendFlow).toHaveBeenCalledWith(
+          expect.objectContaining({
+            flowId: "reset-flow",
+            flowToken: "tok-reset",
+          }),
+        );
+      });
+
+      it("masks the email address rather than printing it into the chat", async () => {
+        await service.requestPinReset(resetUser);
+
+        const text = sentText();
+        expect(text).toContain("da");
+        expect(text).toContain("@example.com");
+        expect(text).not.toContain("daniel@example.com");
+      });
+
+      it("works while the PIN is locked, since that's the way out of a lockout", async () => {
+        pin.isLocked.mockReturnValue(true);
+
+        await service.requestPinReset({
+          ...resetUser,
+          pinLockedUntil: new Date(Date.now() + 60_000),
+        });
+
+        expect(pin.createResetChallenge).toHaveBeenCalled();
+        expect(whatsapp.sendFlow).toHaveBeenCalled();
+      });
+
+      it("refuses when there's no email on file, since the email IS the second factor", async () => {
+        await service.requestPinReset({ ...resetUser, email: null });
+
+        expect(pin.createResetChallenge).not.toHaveBeenCalled();
+        expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+        expect(sentText()).toContain("no email address");
+      });
+
+      it("sends someone with no PIN to setup instead of minting a pointless code", async () => {
+        await service.requestPinReset({ ...resetUser, pinHash: null });
+
+        expect(pin.createResetChallenge).not.toHaveBeenCalled();
+        expect(pin.createChallenge).toHaveBeenCalledWith(
+          expect.objectContaining({ purpose: PinChallengePurpose.SETUP }),
+        );
+      });
+
+      it("refuses once the hourly issuance ceiling is hit", async () => {
+        pin.canRequestReset.mockResolvedValue(false);
+
+        await service.requestPinReset(resetUser);
+
+        expect(pin.createResetChallenge).not.toHaveBeenCalled();
+        expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+        expect(sentText()).toContain("give it an hour");
+      });
+
+      it("says so plainly when the code email could not be sent", async () => {
+        emailNotifications.sendPinResetOtp.mockResolvedValue(false);
+
+        await service.requestPinReset(resetUser);
+
+        expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+        expect(sentText()).toContain("couldn't send the reset code");
+      });
+    });
+
+    describe("submitting the form", () => {
+      function resetChallenge(overrides: any = {}) {
+        return {
+          id: "c-reset",
+          userId: "user-1",
+          purpose: PinChallengePurpose.RESET,
+          otpHash: "scrypt$hash",
+          otpAttempts: 0,
+          expiresAt: new Date(Date.now() + 600_000),
+          transactionId: null,
+          ...overrides,
+        };
+      }
+
+      it("sets the new PIN when the code is right", async () => {
+        pin.consumeChallenge.mockResolvedValue(resetChallenge());
+        pin.verifyResetOtp.mockResolvedValue({ ok: true });
+        pin.setPin.mockResolvedValue({ ok: true });
+
+        const outcome = await service.handlePinFlowReply(
+          resetUser,
+          { flow_token: "tok-reset" },
+          { otp: "123456", pin: "8317", pin_confirm: "8317" },
+        );
+
+        expect(pin.setPin).toHaveBeenCalledWith("user-1", "8317", "8317");
+        expect(outcome).toEqual({ action: "none" });
+        expect(sentText()).toContain("pin has been reset");
+      });
+
+      it("checks the code BEFORE the new PIN, so a wrong code reveals nothing about the PIN", async () => {
+        pin.consumeChallenge.mockResolvedValue(resetChallenge());
+        pin.verifyResetOtp.mockResolvedValue({
+          ok: false,
+          exhausted: false,
+          retryChallenge: { flowToken: "tok-retry" },
+          attemptsLeft: 4,
+        });
+
+        await service.handlePinFlowReply(
+          resetUser,
+          { flow_token: "tok-reset" },
+          { otp: "000000", pin: "1234", pin_confirm: "1234" }, // a weak PIN
+        );
+
+        expect(pin.setPin).not.toHaveBeenCalled();
+        expect(sentText()).not.toContain("too easy to guess");
+      });
+
+      it("re-sends the form on a wrong code, telling them how many tries remain", async () => {
+        pin.consumeChallenge.mockResolvedValue(resetChallenge());
+        pin.verifyResetOtp.mockResolvedValue({
+          ok: false,
+          exhausted: false,
+          retryChallenge: { flowToken: "tok-retry" },
+          attemptsLeft: 3,
+        });
+
+        await service.handlePinFlowReply(
+          resetUser,
+          { flow_token: "tok-reset" },
+          { otp: "000000", pin: "8317", pin_confirm: "8317" },
+        );
+
+        expect(sentText()).toContain("3 tries left");
+        expect(whatsapp.sendFlow).toHaveBeenCalledWith(
+          expect.objectContaining({ flowToken: "tok-retry" }),
+        );
+      });
+
+      it("abandons the reset once attempts are exhausted, leaving the PIN unchanged", async () => {
+        pin.consumeChallenge.mockResolvedValue(resetChallenge());
+        pin.verifyResetOtp.mockResolvedValue({ ok: false, exhausted: true });
+
+        await service.handlePinFlowReply(
+          resetUser,
+          { flow_token: "tok-reset" },
+          { otp: "000000", pin: "8317", pin_confirm: "8317" },
+        );
+
+        expect(pin.setPin).not.toHaveBeenCalled();
+        expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+        expect(sentText()).toContain("hasn't changed");
+      });
+
+      it("does not make them re-verify when the code was right but the PIN was weak", async () => {
+        pin.consumeChallenge.mockResolvedValue(resetChallenge());
+        pin.verifyResetOtp.mockResolvedValue({ ok: true });
+        pin.setPin.mockResolvedValue({
+          ok: false,
+          reason: "that pin is too easy to guess, don't use digits in a row.",
+        });
+        pin.createChallenge.mockResolvedValue({ flowToken: "tok-again" });
+
+        await service.handlePinFlowReply(
+          resetUser,
+          { flow_token: "tok-reset" },
+          { otp: "123456", pin: "1234", pin_confirm: "1234" },
+        );
+
+        expect(sentText()).toContain("too easy to guess");
+        // A successor challenge carrying the already-verified code forward.
+        expect(pin.createChallenge).toHaveBeenCalledWith(
+          expect.objectContaining({
+            purpose: PinChallengePurpose.RESET,
+            otpHash: "scrypt$hash",
+          }),
+        );
+        expect(whatsapp.sendFlow).toHaveBeenCalledWith(
+          expect.objectContaining({ flowToken: "tok-again" }),
+        );
+      });
+
+      it("never returns execute_transfer from a reset, whatever is submitted", async () => {
+        pin.consumeChallenge.mockResolvedValue(
+          resetChallenge({ transactionId: "txn-1" }),
+        );
+        pin.verifyResetOtp.mockResolvedValue({ ok: true });
+        pin.setPin.mockResolvedValue({ ok: true });
+
+        const outcome = await service.handlePinFlowReply(
+          resetUser,
+          { flow_token: "tok-reset" },
+          { otp: "123456", pin: "8317", pin_confirm: "8317" },
+        );
+
+        expect(outcome).toEqual({ action: "none" });
+      });
     });
   });
 });

@@ -2,15 +2,15 @@
  * Golden-dialogue offline runner shared by CLI `--golden` and unit tests.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import { ActionValidatorService } from '../orchestrator/action-validator.service';
-import { ProposedTurn } from '../orchestrator/orchestrator.types';
+import * as fs from "fs";
+import * as path from "path";
+import { ActionValidatorService } from "../orchestrator/action-validator.service";
+import { ProposedTurn } from "../orchestrator/orchestrator.types";
 import {
   SURFACE_REGISTRY,
   SurfaceDefinition,
-} from '../orchestrator/surface-registry';
-import { OnboardingStage } from '@prisma/client';
+} from "../orchestrator/surface-registry";
+import { OnboardingStage } from "@prisma/client";
 
 export interface GoldenCase {
   test_case_id: string;
@@ -18,7 +18,7 @@ export interface GoldenCase {
   mock_proposal: ProposedTurn;
   eligible_surfaces: string[];
   expected_surface: string | null;
-  expected_confidence: 'high' | 'medium' | null;
+  expected_confidence: "high" | "medium" | null;
   forbidden_surfaces: string[];
 }
 
@@ -33,13 +33,13 @@ export interface GoldenCaseResult {
 export function loadGoldenDialogues(
   fixturesPath = path.join(
     __dirname,
-    '..',
-    'orchestrator',
-    'evals',
-    'golden-dialogues.json',
+    "..",
+    "orchestrator",
+    "evals",
+    "golden-dialogues.json",
   ),
 ): GoldenCase[] {
-  return JSON.parse(fs.readFileSync(fixturesPath, 'utf8')) as GoldenCase[];
+  return JSON.parse(fs.readFileSync(fixturesPath, "utf8")) as GoldenCase[];
 }
 
 export function runGoldenCase(
@@ -47,9 +47,9 @@ export function runGoldenCase(
   c: GoldenCase,
 ): GoldenCaseResult {
   const user = {
-    id: 'cli-user',
+    id: "cli-user",
     onboardingStage: OnboardingStage.ACCOUNT_CREATED,
-    rubiesAccountNumber: '0123456789',
+    rubiesAccountNumber: "0123456789",
   } as any;
 
   const eligible: SurfaceDefinition[] = c.eligible_surfaces.map((key) => {
@@ -57,7 +57,7 @@ export function runGoldenCase(
     return (
       fromRegistry ?? {
         key,
-        kind: 'text' as const,
+        kind: "text" as const,
         description: key,
         isEligible: () => true,
       }
@@ -65,7 +65,7 @@ export function runGoldenCase(
   });
 
   const lastUser =
-    [...c.history].reverse().find((m) => m.role === 'user')?.content ?? '';
+    [...c.history].reverse().find((m) => m.role === "user")?.content ?? "";
   const result = validator.validate(c.mock_proposal, user, eligible, lastUser);
   const actual = result.surfaceKey ?? null;
   const passed = actual === c.expected_surface;

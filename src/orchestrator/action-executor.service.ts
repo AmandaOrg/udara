@@ -6,17 +6,16 @@
  * depends on WhatsApp send + account-action services.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
-import { User } from '@prisma/client';
-import { AccountActionsService } from '../whatsapp/account-actions.service';
-import { ChunkedMessengerService } from '../whatsapp/chunked-messenger.service';
-import { WhatsappService } from '../whatsapp/whatsapp.service';
-import { SpendSummaryService } from '../allowance/spend-summary.service';
-import {
-  OrchestratorResult,
-} from './orchestrator.types';
-import { TransferWizardHints } from './transfer-hints.util';
-import { sanitizeSurfaceLeadIn } from './sanitize-lead-in.util';
+import { Injectable, Logger } from "@nestjs/common";
+import { User } from "@prisma/client";
+import { AccountActionsService } from "../whatsapp/account-actions.service";
+import { ChunkedMessengerService } from "../whatsapp/chunked-messenger.service";
+import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { PinGateService } from "../whatsapp/pin-gate.service";
+import { SpendSummaryService } from "../allowance/spend-summary.service";
+import { OrchestratorResult } from "./orchestrator.types";
+import { TransferWizardHints } from "./transfer-hints.util";
+import { sanitizeSurfaceLeadIn } from "./sanitize-lead-in.util";
 
 @Injectable()
 export class ActionExecutorService {
@@ -27,6 +26,7 @@ export class ActionExecutorService {
     private readonly accountActions: AccountActionsService,
     private readonly spendSummary: SpendSummaryService,
     private readonly whatsapp: WhatsappService,
+    private readonly pinGate: PinGateService,
   ) {}
 
   async execute(user: User, result: OrchestratorResult): Promise<void> {
@@ -35,9 +35,9 @@ export class ActionExecutorService {
       return;
     }
 
-    const actionType = result.actionType ?? 'reply_only';
+    const actionType = result.actionType ?? "reply_only";
     const launchingSurface =
-      actionType === 'show_surface' && !!result.surfaceKey;
+      actionType === "show_surface" && !!result.surfaceKey;
 
     const leadIn = launchingSurface
       ? sanitizeSurfaceLeadIn(result.message, result.surfaceKey)
@@ -45,11 +45,7 @@ export class ActionExecutorService {
 
     if (leadIn) {
       if (launchingSurface) {
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
-          leadIn,
-          user.id,
-        );
+        await this.whatsapp.sendText(user.whatsappNumber, leadIn, user.id);
       } else {
         await this.chunkedMessenger.sendChunkedReply(
           user.whatsappNumber,
@@ -59,12 +55,12 @@ export class ActionExecutorService {
       }
     }
 
-    if (actionType === 'cancel_surface') {
+    if (actionType === "cancel_surface") {
       await this.accountActions.cancelActiveSurfaces(user);
       return;
     }
 
-    if (actionType === 'fill_wizard') {
+    if (actionType === "fill_wizard") {
       await this.accountActions.applyHintsToDraft(
         user,
         result.extractedHints ?? {},
@@ -72,10 +68,10 @@ export class ActionExecutorService {
       return;
     }
 
-    if (actionType === 'show_surface' && result.surfaceKey) {
+    if (actionType === "show_surface" && result.surfaceKey) {
       // Topic change away from the transfer wizard must drop the draft so
       // the next turn isn't trapped in an abandoned send-money flow.
-      if (result.surfaceKey !== 'transfer_wizard') {
+      if (result.surfaceKey !== "transfer_wizard") {
         await this.accountActions.cancelActiveSurfaces(user);
       }
       await this.dispatchSurface(
@@ -113,16 +109,16 @@ export class ActionExecutorService {
     hints?: TransferWizardHints,
   ): Promise<void> {
     switch (surfaceKey) {
-      case 'balance_read':
+      case "balance_read":
         await this.accountActions.sendBalance(user);
         break;
-      case 'limits_read':
+      case "limits_read":
         await this.accountActions.sendLimitsStatus(user);
         break;
-      case 'account_details':
+      case "account_details":
         await this.accountActions.sendAccountDetails(user);
         break;
-      case 'transfer_wizard': {
+      case "transfer_wizard": {
         const resumed = await this.accountActions.resumePendingTransfer(user);
         if (resumed) break;
         await this.accountActions.startTransferWizard(user, hints, {
@@ -130,10 +126,13 @@ export class ActionExecutorService {
         });
         break;
       }
-      case 'spending_menu':
+      case "spending_menu":
         await this.accountActions.sendMainMenu(user);
         break;
-      case 'spend_summary': {
+      case "pin_reset":
+        await this.pinGate.requestPinReset(user);
+        break;
+      case "spend_summary": {
         const summary = await this.spendSummary.getWeeklySummary(user.id);
         await this.whatsapp.sendText(
           user.whatsappNumber,

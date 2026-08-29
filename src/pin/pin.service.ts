@@ -1,5 +1,6 @@
 import {
   randomBytes,
+  randomInt,
   randomUUID,
   scrypt,
   ScryptOptions,
@@ -43,6 +44,18 @@ const KEY_LENGTH = 32;
 const SALT_LENGTH = 16;
 
 export const PIN_LENGTH = 4;
+export const OTP_LENGTH = 6;
+
+/**
+ * Reset OTP policy. The window is short and the guess budget small because
+ * the code is the *only* thing standing between someone holding the phone and
+ * a new PIN — the email account is the second factor, and a generous guess
+ * budget would erode it.
+ */
+const OTP_TTL_MS = 10 * 60 * 1000;
+const MAX_OTP_ATTEMPTS = 5;
+/** Ceiling on how many reset codes one user can trigger per hour. */
+const MAX_RESETS_PER_HOUR = 3;
 
 /**
  * Escalating lockout. This, not the KDF, is what actually protects a 4-digit
@@ -118,7 +131,7 @@ export class PinService {
   // =========================================================================
 
   /** `scrypt$N$r$p$saltB64$hashB64` — self-describing so params can change later. */
-  private async hashPin(pin: string): Promise<string> {
+  private async hashSecret(pin: string): Promise<string> {
     const salt = randomBytes(SALT_LENGTH);
     const derived = await scryptAsync(pin, salt, KEY_LENGTH, {
       N: SCRYPT_N,
@@ -147,7 +160,7 @@ export class PinService {
     const parts = stored.split("$");
     if (parts.length !== 6 || parts[0] !== "scrypt") {
       this.logger.error(
-        "Stored pinHash is not in the expected scrypt format — failing closed",
+        "Stored hash is not in the expected scrypt format — failing closed",
       );
       return false;
     }
@@ -157,7 +170,7 @@ export class PinService {
     const r = Number(rRaw);
     const p = Number(pRaw);
     if (!Number.isFinite(N) || !Number.isFinite(r) || !Number.isFinite(p)) {
-      this.logger.error("Stored pinHash has non-numeric scrypt params");
+      this.logger.error("Stored hash has non-numeric scrypt params");
       return false;
     }
 
@@ -228,7 +241,7 @@ export class PinService {
     const strength = this.validatePinStrength(pin, confirm);
     if (!strength.ok) return strength;
 
-    const pinHash = await this.hashPin(pin);
+    const pinHash = await this.hashSecret(pin);
     await this.prisma.user.update({
       where: { id: userId },
       data: {
@@ -335,7 +348,10 @@ export class PinService {
     userId: string;
     purpose: PinChallengePurpose;
     transactionId?: string;
+    otpHash?: string;
+    otpAttempts?: number;
     ttlMs?: number;
+    expiresAt?: Date;
     now?: Date;
   }): Promise<PinChallenge> {
     const now = params.now ?? new Date();
@@ -344,8 +360,14 @@ export class PinService {
         userId: params.userId,
         purpose: params.purpose,
         transactionId: params.transactionId,
+        otpHash: params.otpHash,
+        otpAttempts: params.otpAttempts ?? 0,
         flowToken: randomUUID(),
-        expiresAt: new Date(now.getTime() + (params.ttlMs ?? 5 * 60 * 1000)),
+        // An explicit expiresAt lets a retry inherit the ORIGINAL deadline
+        // rather than silently extending the window on every wrong guess.
+        expiresAt:
+          params.expiresAt ??
+          new Date(now.getTime() + (params.ttlMs ?? 5 * 60 * 1000)),
       },
     });
   }
@@ -402,6 +424,113 @@ export class PinService {
     }
 
     return challenge;
+  }
+  // =========================================================================
+  // PIN reset by emailed one-time code
+  // =========================================================================
+
+  /**
+   * Refuses when the user has already triggered too many codes in the last
+   * hour. Rate-limiting *issuance* matters as much as limiting guesses: an
+   * unbounded trigger is a way to spam someone's inbox, and it also lets an
+   * attacker keep minting fresh guess budgets.
+   */
+  async canRequestReset(
+    userId: string,
+    now: Date = new Date(),
+  ): Promise<boolean> {
+    const since = new Date(now.getTime() - 60 * 60 * 1000);
+    const recent = await this.prisma.pinChallenge.count({
+      where: {
+        userId,
+        purpose: PinChallengePurpose.RESET,
+        otpAttempts: 0, // only count freshly-issued codes, not retry hand-offs
+        createdAt: { gte: since },
+      },
+    });
+    return recent < MAX_RESETS_PER_HOUR;
+  }
+
+  /**
+   * Mints a reset challenge and returns the plaintext code for the caller to
+   * email. The plaintext is returned, never stored: only its scrypt hash is
+   * persisted. randomInt (not Math.random) because this is a credential.
+   */
+  async createResetChallenge(
+    userId: string,
+    now: Date = new Date(),
+  ): Promise<{ challenge: PinChallenge; otp: string }> {
+    const otp = String(randomInt(0, 10 ** OTP_LENGTH)).padStart(
+      OTP_LENGTH,
+      "0",
+    );
+    const otpHash = await this.hashSecret(otp);
+    const challenge = await this.createChallenge({
+      userId,
+      purpose: PinChallengePurpose.RESET,
+      otpHash,
+      ttlMs: OTP_TTL_MS,
+      now,
+    });
+    return { challenge, otp };
+  }
+
+  /**
+   * Verifies a submitted code against an already-consumed RESET challenge.
+   *
+   * On a wrong code this hands the same hash and deadline to a fresh
+   * single-use challenge with the attempt count incremented, so the emailed
+   * code keeps working for a genuine typo without the token itself ever being
+   * reusable. Once the attempt ceiling is reached no successor is issued and
+   * the reset is over.
+   */
+  async verifyResetOtp(
+    challenge: PinChallenge,
+    otp: string,
+    now: Date = new Date(),
+  ): Promise<
+    | { ok: true }
+    | { ok: false; exhausted: true }
+    | {
+        ok: false;
+        exhausted: false;
+        retryChallenge: PinChallenge;
+        attemptsLeft: number;
+      }
+  > {
+    if (!challenge.otpHash) {
+      this.logger.error(
+        `RESET challenge ${challenge.id} has no otpHash — failing closed`,
+      );
+      return { ok: false, exhausted: true };
+    }
+
+    if (await this.verifyAgainstHash(otp, challenge.otpHash)) {
+      return { ok: true };
+    }
+
+    const attempts = challenge.otpAttempts + 1;
+    if (attempts >= MAX_OTP_ATTEMPTS || challenge.expiresAt <= now) {
+      this.logger.warn(
+        `Reset OTP exhausted for user ${challenge.userId} after ${attempts} attempt(s)`,
+      );
+      return { ok: false, exhausted: true };
+    }
+
+    const retryChallenge = await this.createChallenge({
+      userId: challenge.userId,
+      purpose: PinChallengePurpose.RESET,
+      otpHash: challenge.otpHash,
+      otpAttempts: attempts,
+      expiresAt: challenge.expiresAt, // not extended by a wrong guess
+      now,
+    });
+    return {
+      ok: false,
+      exhausted: false,
+      retryChallenge,
+      attemptsLeft: MAX_OTP_ATTEMPTS - attempts,
+    };
   }
 }
 

@@ -14,6 +14,11 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   let transferConfirmation: Record<string, jest.Mock>;
   let accountActions: Record<string, jest.Mock>;
   let pinGate: { handlePinFlowReply: jest.Mock };
+  let weeklyReview: {
+    getReviewAwaitingLimit: jest.Mock;
+    handleChoice: jest.Mock;
+    handleLimitText: jest.Mock;
+  };
   let orchestrator: { handleMessage: jest.Mock };
   let actionExecutor: { execute: jest.Mock; sendSafeFallback: jest.Mock };
   let service: WhatsappRouterService;
@@ -63,6 +68,11 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       applyHintsToDraft: jest.fn().mockResolvedValue(undefined),
       cancelActiveSurfaces: jest.fn().mockResolvedValue(undefined),
     };
+    weeklyReview = {
+      getReviewAwaitingLimit: jest.fn().mockResolvedValue(null),
+      handleChoice: jest.fn().mockResolvedValue(undefined),
+      handleLimitText: jest.fn().mockResolvedValue(undefined),
+    };
     pinGate = { handlePinFlowReply: jest.fn() };
     orchestrator = { handleMessage: jest.fn() };
     actionExecutor = {
@@ -79,6 +89,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       pinGate as any,
       orchestrator as any,
       actionExecutor as any,
+      weeklyReview as any,
     );
   });
 
@@ -244,7 +255,9 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       expect(transferConfirmation.resumeAfterPinSetup).toHaveBeenCalledWith(
         "user-1",
       );
-      expect(transferConfirmation.executeVerifiedTransfer).not.toHaveBeenCalled();
+      expect(
+        transferConfirmation.executeVerifiedTransfer,
+      ).not.toHaveBeenCalled();
     });
   });
 });

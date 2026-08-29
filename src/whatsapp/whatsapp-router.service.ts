@@ -24,6 +24,10 @@ import {
 } from "./account-actions.service";
 import { User, WhatsappMessage, WhatsappMessageType } from "@prisma/client";
 import { PinGateService } from "./pin-gate.service";
+import {
+  WeeklyReviewService,
+  WEEKLY_REVIEW_PREFIX,
+} from "./weekly-review.service";
 import { SensitiveFields } from "./whatsapp-message.service";
 import { isMenuShortcut } from "./menu-shortcut.util";
 
@@ -47,6 +51,7 @@ export class WhatsappRouterService {
     private readonly pinGate: PinGateService,
     private readonly orchestrator: OrchestratorService,
     private readonly actionExecutor: ActionExecutorService,
+    private readonly weeklyReview: WeeklyReviewService,
   ) {}
 
   async route(
@@ -146,6 +151,11 @@ export class WhatsappRouterService {
       return;
     }
 
+    if (payload.startsWith(WEEKLY_REVIEW_PREFIX)) {
+      await this.weeklyReview.handleChoice(user, payload);
+      return;
+    }
+
     if (isPreAccountStage(user.onboardingStage)) {
       await this.onboarding.handleInboundButton(user, payload);
       return;
@@ -189,7 +199,11 @@ export class WhatsappRouterService {
     const responseJson =
       (message.flowResponseJson as Record<string, unknown> | null) ?? {};
 
-    if (sensitive.pin !== undefined || sensitive.pin_confirm !== undefined) {
+    if (
+      sensitive.pin !== undefined ||
+      sensitive.pin_confirm !== undefined ||
+      sensitive.otp !== undefined
+    ) {
       const outcome = await this.pinGate.handlePinFlowReply(
         user,
         responseJson,
@@ -228,6 +242,17 @@ export class WhatsappRouterService {
 
     if (isPreAccountStage(user.onboardingStage)) {
       await this.onboarding.handleInboundText(user, text);
+      return;
+    }
+
+    // An in-flight weekly-limit adjustment owns the next message: it's the
+    // answer to a question we just asked, not a new command for the
+    // orchestrator to classify.
+    const awaitingLimit = await this.weeklyReview.getReviewAwaitingLimit(
+      user.id,
+    );
+    if (awaitingLimit) {
+      await this.weeklyReview.handleLimitText(user, awaitingLimit, text);
       return;
     }
 

@@ -1,9 +1,13 @@
-import { OrchestratorService } from './orchestrator.service';
-import { ActionValidatorService } from './action-validator.service';
-import { LlmCallPurpose, OnboardingStage, TransactionStatus } from '@prisma/client';
-import { ORCHESTRATOR_LLM_TIMEOUT_MS } from './orchestrator.types';
+import { OrchestratorService } from "./orchestrator.service";
+import { ActionValidatorService } from "./action-validator.service";
+import {
+  LlmCallPurpose,
+  OnboardingStage,
+  TransactionStatus,
+} from "@prisma/client";
+import { ORCHESTRATOR_LLM_TIMEOUT_MS } from "./orchestrator.types";
 
-describe('OrchestratorService', () => {
+describe("OrchestratorService", () => {
   let prisma: any;
   let llm: { complete: jest.Mock };
   let llmLogger: { log: jest.Mock; markApplied: jest.Mock };
@@ -15,31 +19,33 @@ describe('OrchestratorService', () => {
   let service: OrchestratorService;
 
   const user = {
-    id: 'user-1',
-    whatsappNumber: '234801',
+    id: "user-1",
+    whatsappNumber: "234801",
     onboardingStage: OnboardingStage.ACCOUNT_CREATED,
-    rubiesAccountNumber: '0123456789',
+    rubiesAccountNumber: "0123456789",
     windowStartHour: 11,
     windowEndHour: 20,
     disciplineExitedAt: null,
-    name: 'Ada',
+    name: "Ada",
   } as any;
 
   beforeEach(() => {
     prisma = {
       conversationSession: {
         findFirst: jest.fn().mockResolvedValue({
-          id: 'sess-1',
+          id: "sess-1",
           messages: [],
         }),
         findUniqueOrThrow: jest.fn().mockResolvedValue({
-          id: 'sess-1',
+          id: "sess-1",
           messages: [],
         }),
         create: jest.fn(),
-        update: jest.fn().mockImplementation(({ data }) =>
-          Promise.resolve({ id: 'sess-1', messages: data.messages }),
-        ),
+        update: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: "sess-1", messages: data.messages }),
+          ),
       },
       transferDraft: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -51,7 +57,7 @@ describe('OrchestratorService', () => {
     };
     llm = { complete: jest.fn() };
     llmLogger = {
-      log: jest.fn().mockResolvedValue({ id: 'log-1' }),
+      log: jest.fn().mockResolvedValue({ id: "log-1" }),
       markApplied: jest.fn().mockResolvedValue(undefined),
     };
     allowance = {
@@ -78,29 +84,29 @@ describe('OrchestratorService', () => {
     jest.useRealTimers();
   });
 
-  it('validates a high-confidence surface proposal and marks applied', async () => {
+  it("validates a high-confidence surface proposal and marks applied", async () => {
     llm.complete.mockResolvedValue({
       toolCall: {
-        name: 'propose_turn',
+        name: "propose_turn",
         arguments: {
-          message: 'lets send that',
+          message: "lets send that",
           action: {
-            type: 'show_surface',
-            surface_key: 'transfer_wizard',
-            confidence: 'high',
+            type: "show_surface",
+            surface_key: "transfer_wizard",
+            confidence: "high",
             extracted_hints: { amount: 15000 },
           },
         },
       },
       latencyMs: 100,
-      provider: 'stub',
-      model: 'stub',
+      provider: "stub",
+      model: "stub",
     });
 
-    const result = await service.handleMessage(user, 'send 15k to landlord');
+    const result = await service.handleMessage(user, "send 15k to landlord");
 
     expect(result.ok).toBe(true);
-    expect(result.surfaceKey).toBe('transfer_wizard');
+    expect(result.surfaceKey).toBe("transfer_wizard");
     expect(result.extractedHints).toEqual({ amount: 15000 });
     expect(llm.complete).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -110,118 +116,118 @@ describe('OrchestratorService', () => {
       }),
     );
     expect(llmLogger.markApplied).toHaveBeenCalledWith(
-      'log-1',
+      "log-1",
       expect.objectContaining({
         proposed: expect.any(Object),
         validated: expect.objectContaining({
-          surfaceKey: 'transfer_wizard',
+          surfaceKey: "transfer_wizard",
         }),
       }),
       true,
     );
   });
 
-  it('returns ok:false on LLM timeout', async () => {
+  it("returns ok:false on LLM timeout", async () => {
     jest.useFakeTimers();
     llm.complete.mockReturnValue(new Promise(() => undefined));
 
-    const pending = service.handleMessage(user, 'hello');
+    const pending = service.handleMessage(user, "hello");
     await jest.advanceTimersByTimeAsync(ORCHESTRATOR_LLM_TIMEOUT_MS + 600);
-    await expect(pending).resolves.toEqual({ message: '', ok: false });
+    await expect(pending).resolves.toEqual({ message: "", ok: false });
 
     jest.useRealTimers();
   });
 
-  it('returns ok:false when tool call is missing', async () => {
+  it("returns ok:false when tool call is missing", async () => {
     llm.complete.mockResolvedValue({
-      text: 'oops plain text',
+      text: "oops plain text",
       latencyMs: 50,
-      provider: 'stub',
-      model: 'stub',
+      provider: "stub",
+      model: "stub",
     });
 
-    const result = await service.handleMessage(user, 'hi');
+    const result = await service.handleMessage(user, "hi");
 
     expect(result.ok).toBe(false);
     expect(llmLogger.markApplied).toHaveBeenCalledWith(
-      'log-1',
-      expect.objectContaining({ rejectionReason: 'parse_failed' }),
+      "log-1",
+      expect.objectContaining({ rejectionReason: "parse_failed" }),
       false,
     );
   });
 
-  it('includes Active mode: transfer_wizard in live facts when a draft is open', async () => {
+  it("includes Active mode: transfer_wizard in live facts when a draft is open", async () => {
     prisma.transferDraft.findFirst.mockResolvedValue({
-      id: 'draft-1',
-      step: 'AWAITING_AMOUNT',
+      id: "draft-1",
+      step: "AWAITING_AMOUNT",
       amount: null,
-      accountNumber: '8100368023',
-      bankName: 'Opay',
-      bankCode: '100004',
+      accountNumber: "8100368023",
+      bankName: "Opay",
+      bankCode: "100004",
     });
     llm.complete.mockResolvedValue({
       toolCall: {
-        name: 'propose_turn',
+        name: "propose_turn",
         arguments: {
-          message: 'got it',
+          message: "got it",
           action: {
-            type: 'fill_wizard',
-            confidence: 'high',
+            type: "fill_wizard",
+            confidence: "high",
             extracted_hints: { amount: 800 },
           },
         },
       },
       latencyMs: 80,
-      provider: 'stub',
-      model: 'stub',
+      provider: "stub",
+      model: "stub",
     });
 
-    const result = await service.handleMessage(user, '800');
+    const result = await service.handleMessage(user, "800");
 
     expect(result.ok).toBe(true);
-    expect(result.actionType).toBe('fill_wizard');
+    expect(result.actionType).toBe("fill_wizard");
     expect(result.extractedHints).toEqual({ amount: 800 });
     expect(llm.complete).toHaveBeenCalledWith(
       expect.objectContaining({
         messages: expect.arrayContaining([
           expect.objectContaining({
-            role: 'system',
-            content: expect.stringContaining('Active mode: transfer_wizard'),
+            role: "system",
+            content: expect.stringContaining("Active mode: transfer_wizard"),
           }),
         ]),
       }),
     );
   });
 
-  it('parses propose_turn when the model flattens action.type onto the root', async () => {
+  it("parses propose_turn when the model flattens action.type onto the root", async () => {
     llm.complete.mockResolvedValue({
       toolCall: {
-        name: 'propose_turn',
+        name: "propose_turn",
         arguments: {
-          message: 'hey',
-          type: 'reply_only',
+          message: "hey",
+          type: "reply_only",
         },
       },
       latencyMs: 40,
-      provider: 'stub',
-      model: 'stub',
+      provider: "stub",
+      model: "stub",
     });
 
-    const result = await service.handleMessage(user, 'Hello Udara');
+    const result = await service.handleMessage(user, "Hello Udara");
     expect(result.ok).toBe(true);
-    expect(result.actionType).toBe('reply_only');
+    expect(result.actionType).toBe("reply_only");
     expect(result.surfaceKey).toBeUndefined();
   });
 
-  it('treats a leftover draft as free after a later completed send', async () => {
-    const draftCreated = new Date('2026-08-26T15:00:00Z');
-    const sentAt = new Date('2026-08-26T16:14:00Z');
+  it("treats a leftover draft as free after a later completed send", async () => {
+    const draftCreated = new Date("2026-08-26T15:00:00Z");
+    const sentAt = new Date("2026-08-26T16:14:00Z");
     prisma.transferDraft.findFirst.mockResolvedValue({
-      id: 'draft-stale',
-      step: 'AWAITING_ACCOUNT_NUMBER',
+      id: "draft-stale",
+      step: "AWAITING_ACCOUNT_NUMBER",
       amount: 800,
       accountNumber: null,
-      bankName: 'Opay',
+      bankName: "Opay",
       createdAt: draftCreated,
     });
     prisma.transaction.findFirst.mockImplementation(
@@ -230,7 +236,7 @@ describe('OrchestratorService', () => {
           return {
             amount: 800,
             executedAt: sentAt,
-            recipient: { accountName: 'SAMUEL DAVID EGWU' },
+            recipient: { accountName: "SAMUEL DAVID EGWU" },
           };
         }
         return null;
@@ -238,31 +244,31 @@ describe('OrchestratorService', () => {
     );
     llm.complete.mockResolvedValue({
       toolCall: {
-        name: 'propose_turn',
+        name: "propose_turn",
         arguments: {
           message: "you're welcome",
-          action: { type: 'reply_only' },
+          action: { type: "reply_only" },
         },
       },
       latencyMs: 40,
-      provider: 'stub',
-      model: 'stub',
+      provider: "stub",
+      model: "stub",
     });
 
-    const result = await service.handleMessage(user, 'thank you');
+    const result = await service.handleMessage(user, "thank you");
 
     expect(result.ok).toBe(true);
-    expect(result.actionType).toBe('reply_only');
+    expect(result.actionType).toBe("reply_only");
     expect(prisma.transferDraft.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: 'draft-stale' }),
+        where: expect.objectContaining({ id: "draft-stale" }),
       }),
     );
     expect(llm.complete).toHaveBeenCalledWith(
       expect.objectContaining({
         messages: expect.arrayContaining([
           expect.objectContaining({
-            role: 'system',
+            role: "system",
             content: expect.stringMatching(
               /Active mode: free[\s\S]*Last completed transfer: ₦800 to SAMUEL DAVID EGWU/,
             ),
@@ -272,29 +278,29 @@ describe('OrchestratorService', () => {
     );
   });
 
-  it('does not open the wizard on a vague send; stores a spend check instead', async () => {
+  it("does not open the wizard on a vague send; stores a spend check instead", async () => {
     llm.complete.mockResolvedValue({
       toolCall: {
-        name: 'propose_turn',
+        name: "propose_turn",
         arguments: {
-          message: 'on it.',
+          message: "on it.",
           action: {
-            type: 'show_surface',
-            surface_key: 'transfer_wizard',
-            confidence: 'high',
-            extracted_hints: { amount: 800, bank_name: 'opay' },
+            type: "show_surface",
+            surface_key: "transfer_wizard",
+            confidence: "high",
+            extracted_hints: { amount: 800, bank_name: "opay" },
           },
         },
       },
       latencyMs: 40,
-      provider: 'stub',
-      model: 'stub',
+      provider: "stub",
+      model: "stub",
     });
 
-    const result = await service.handleMessage(user, 'send 800 to opay');
+    const result = await service.handleMessage(user, "send 800 to opay");
 
     expect(result.ok).toBe(true);
-    expect(result.actionType).toBe('reply_only');
+    expect(result.actionType).toBe("reply_only");
     expect(result.surfaceKey).toBeUndefined();
     expect(result.message).toMatch(/what's it actually for/i);
     expect(prisma.conversationSession.update).toHaveBeenCalledWith(

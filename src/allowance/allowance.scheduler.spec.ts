@@ -10,6 +10,7 @@ describe("AllowanceScheduler", () => {
   let allowance: { getOrCreateTodayAllowance: jest.Mock };
   let whatsapp: { sendText: jest.Mock; sendTemplate: jest.Mock };
   let config: { get: jest.Mock };
+  let emailNotifications: { sendWindowOpen: jest.Mock };
   let scheduler: AllowanceScheduler;
 
   function makeUser(overrides: Partial<Record<string, unknown>> = {}) {
@@ -41,12 +42,16 @@ describe("AllowanceScheduler", () => {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "wamid.1" }),
       sendTemplate: jest.fn().mockResolvedValue({ waMessageId: "wamid.2" }),
     };
+    emailNotifications = {
+      sendWindowOpen: jest.fn().mockResolvedValue(undefined),
+    };
     config = { get: jest.fn().mockReturnValue(undefined) };
     scheduler = new AllowanceScheduler(
       prisma as any,
       allowance as any,
       whatsapp as any,
       config as any,
+      emailNotifications as any,
     );
   });
 

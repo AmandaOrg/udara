@@ -5,10 +5,7 @@
 const NAIRA_OR_LONG_NUMBER = /₦[\d,]+(?:\.\d+)?|\b\d{3,}\b/;
 
 export function collapseToSingleBubble(text: string): string {
-  return text
-    .replace(/\n+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return text.replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 export function sanitizeSurfaceLeadIn(
@@ -16,20 +13,20 @@ export function sanitizeSurfaceLeadIn(
   surfaceKey?: string,
 ): string {
   const collapsed = collapseToSingleBubble(text);
-  if (!collapsed) return '';
+  if (!collapsed) return "";
 
   const readSurface =
-    surfaceKey === 'balance_read' ||
-    surfaceKey === 'limits_read' ||
-    surfaceKey === 'account_details' ||
-    surfaceKey === 'spend_summary';
+    surfaceKey === "balance_read" ||
+    surfaceKey === "limits_read" ||
+    surfaceKey === "account_details" ||
+    surfaceKey === "spend_summary";
 
   if (readSurface && NAIRA_OR_LONG_NUMBER.test(collapsed)) {
-    return 'pulling that up now.';
+    return "pulling that up now.";
   }
 
   if (collapsed.length > 160) {
-    return collapsed.slice(0, 157).trimEnd() + '…';
+    return collapsed.slice(0, 157).trimEnd() + "…";
   }
   return collapsed;
 }

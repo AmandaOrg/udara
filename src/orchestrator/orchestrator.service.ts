@@ -12,30 +12,30 @@
  * The orchestrator never calls WhatsApp APIs or financial services directly.
  */
 
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { CONVERSATION_LLM, LlmMessage, LlmService } from '../ai/llm.types';
-import { LlmCallLoggerService } from '../ai/llm-call-logger.service';
-import { AllowanceService } from '../allowance/allowance.service';
-import { WindowService } from '../allowance/window.service';
-import { ActionValidatorService } from './action-validator.service';
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { CONVERSATION_LLM, LlmMessage, LlmService } from "../ai/llm.types";
+import { LlmCallLoggerService } from "../ai/llm-call-logger.service";
+import { AllowanceService } from "../allowance/allowance.service";
+import { WindowService } from "../allowance/window.service";
+import { ActionValidatorService } from "./action-validator.service";
 import {
   buildOrchestratorSystemMessage,
   PROPOSE_TURN_TOOL,
-} from './prompts/orchestrator-system.prompt';
-import { getEligibleSurfaces } from './surface-registry';
+} from "./prompts/orchestrator-system.prompt";
+import { getEligibleSurfaces } from "./surface-registry";
 import {
   ProposedTurn,
   OrchestratorResult,
   ORCHESTRATOR_LLM_TIMEOUT_MS,
   ORCHESTRATOR_PARSE_RETRY_TIMEOUT_MS,
   ProposeActionType,
-} from './orchestrator.types';
-import { parseToolCallArguments } from '../ai/parse-tool-arguments.util';
+} from "./orchestrator.types";
+import { parseToolCallArguments } from "../ai/parse-tool-arguments.util";
 import {
   formatWatCalendarDate,
   formatWatClockTime,
-} from '../common/wat-time.util';
+} from "../common/wat-time.util";
 import {
   ConversationPersona,
   ConversationSession,
@@ -45,7 +45,7 @@ import {
   TransactionStatus,
   TransferDraftStatus,
   User,
-} from '@prisma/client';
+} from "@prisma/client";
 import {
   isSpendCheckAbortUtterance,
   isWeakSpendCheckMessage,
@@ -55,13 +55,13 @@ import {
   transferHintsFromContext,
   transferHintsToRaw,
   TransferWizardHints,
-} from './transfer-hints.util';
+} from "./transfer-hints.util";
 
 const ACTION_TYPES: ReadonlySet<string> = new Set([
-  'reply_only',
-  'show_surface',
-  'fill_wizard',
-  'cancel_surface',
+  "reply_only",
+  "show_surface",
+  "fill_wizard",
+  "cancel_surface",
 ]);
 
 @Injectable()
@@ -83,16 +83,13 @@ export class OrchestratorService {
    * handles sending and surface dispatch. On failure, returns `{ ok: false }`
    * — never throws.
    */
-  async handleMessage(
-    user: User,
-    text: string,
-  ): Promise<OrchestratorResult> {
+  async handleMessage(user: User, text: string): Promise<OrchestratorResult> {
     const session = await this.getOrCreateSession(user.id);
     const spendCheckPending = this.isSpendCheckPending(session);
     const storedHints = spendCheckPending
       ? transferHintsFromContext(this.sessionContext(session).spendCheck)
       : {};
-    const history = await this.appendAndBuildHistory(session, 'user', text);
+    const history = await this.appendAndBuildHistory(session, "user", text);
     const liveFacts = await this.buildLiveFacts(
       user,
       spendCheckPending ? storedHints : null,
@@ -157,7 +154,7 @@ export class OrchestratorService {
             {
               proposed: result.toolCall?.arguments ?? null,
               validated: null,
-              rejectionReason: 'parse_failed',
+              rejectionReason: "parse_failed",
             },
             false,
           );
@@ -196,19 +193,19 @@ export class OrchestratorService {
       );
 
       const launchedSurface =
-        validated.actionType === 'show_surface' && !!validated.surfaceKey;
+        validated.actionType === "show_surface" && !!validated.surfaceKey;
       const sideEffect =
-        validated.actionType === 'fill_wizard' ||
-        validated.actionType === 'cancel_surface' ||
+        validated.actionType === "fill_wizard" ||
+        validated.actionType === "cancel_surface" ||
         launchedSurface;
       const rejectionReason =
-        (proposal.action.type === 'show_surface' ||
-          proposal.action.type === 'fill_wizard' ||
-          proposal.action.type === 'cancel_surface') &&
+        (proposal.action.type === "show_surface" ||
+          proposal.action.type === "fill_wizard" ||
+          proposal.action.type === "cancel_surface") &&
         !sideEffect
-          ? proposal.action.confidence === 'high'
-            ? 'surface_ineligible_or_missing_key'
-            : 'confidence_not_high'
+          ? proposal.action.confidence === "high"
+            ? "surface_ineligible_or_missing_key"
+            : "confidence_not_high"
           : undefined;
 
       await this.llmLogger.markApplied(
@@ -228,13 +225,13 @@ export class OrchestratorService {
 
       this.logger.debug(
         `Orchestrator: user=${user.id} ` +
-          `proposed=${proposal.action.type}:${proposal.action.surface_key ?? 'none'} ` +
-          `validated=${validated.actionType ?? 'reply_only'}:${validated.surfaceKey ?? 'none'} ` +
-          `confidence=${proposal.action.confidence ?? 'missing→medium'} ` +
-          `reason="${proposal.action.reasoning ?? ''}"`,
+          `proposed=${proposal.action.type}:${proposal.action.surface_key ?? "none"} ` +
+          `validated=${validated.actionType ?? "reply_only"}:${validated.surfaceKey ?? "none"} ` +
+          `confidence=${proposal.action.confidence ?? "missing→medium"} ` +
+          `reason="${proposal.action.reasoning ?? ""}"`,
       );
 
-      await this.appendMessage(session.id, 'assistant', validated.message);
+      await this.appendMessage(session.id, "assistant", validated.message);
       return validated;
     } catch (err) {
       this.logger.error(
@@ -247,7 +244,7 @@ export class OrchestratorService {
             {
               proposed: null,
               validated: null,
-              rejectionReason: 'exception_or_timeout',
+              rejectionReason: "exception_or_timeout",
             },
             false,
           )
@@ -259,7 +256,7 @@ export class OrchestratorService {
 
   private failureResult(): OrchestratorResult {
     return {
-      message: '',
+      message: "",
       ok: false,
     };
   }
@@ -292,17 +289,17 @@ export class OrchestratorService {
     if (!a) return null;
 
     const actionRaw =
-      a.action && typeof a.action === 'object' && !Array.isArray(a.action)
+      a.action && typeof a.action === "object" && !Array.isArray(a.action)
         ? (a.action as Record<string, unknown>)
-        : typeof a.type === 'string'
+        : typeof a.type === "string"
           ? a
           : undefined;
-    if (!actionRaw || typeof actionRaw.type !== 'string') return null;
+    if (!actionRaw || typeof actionRaw.type !== "string") return null;
 
     const message =
-      typeof a.message === 'string' && a.message.trim()
+      typeof a.message === "string" && a.message.trim()
         ? a.message.trim().slice(0, 500)
-        : 'on it.';
+        : "on it.";
 
     if (!ACTION_TYPES.has(actionRaw.type)) {
       return null;
@@ -313,20 +310,20 @@ export class OrchestratorService {
       action: {
         type: actionRaw.type as ProposeActionType,
         surface_key:
-          typeof actionRaw.surface_key === 'string'
+          typeof actionRaw.surface_key === "string"
             ? actionRaw.surface_key
             : undefined,
         extracted_hints:
           actionRaw.extracted_hints &&
-          typeof actionRaw.extracted_hints === 'object'
+          typeof actionRaw.extracted_hints === "object"
             ? (actionRaw.extracted_hints as Record<string, unknown>)
             : undefined,
         confidence:
-          actionRaw.confidence === 'high' || actionRaw.confidence === 'medium'
+          actionRaw.confidence === "high" || actionRaw.confidence === "medium"
             ? actionRaw.confidence
             : undefined,
         reasoning:
-          typeof actionRaw.reasoning === 'string'
+          typeof actionRaw.reasoning === "string"
             ? actionRaw.reasoning
             : undefined,
       },
@@ -339,7 +336,7 @@ export class OrchestratorService {
   ): Promise<string> {
     const now = new Date();
     const lines = [
-      'Live facts, computed just now. These are real values, not estimates. Use these exact numbers and never guess or substitute your own:',
+      "Live facts, computed just now. These are real values, not estimates. Use these exact numbers and never guess or substitute your own:",
       `- Current date: ${formatWatCalendarDate(now)} (WAT)`,
       `- Current time: ${formatWatClockTime(now)} WAT`,
       `- Spending window: ${user.windowStartHour}:00 to ${user.windowEndHour}:00 WAT`,
@@ -348,7 +345,7 @@ export class OrchestratorService {
     const [draft, pending, lastSent, allowanceSummary] = await Promise.all([
       this.prisma.transferDraft.findFirst({
         where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
       this.prisma.transaction.findFirst({
         where: {
@@ -360,14 +357,14 @@ export class OrchestratorService {
             ],
           },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
       }),
       this.prisma.transaction.findFirst({
         where: {
           userId: user.id,
           status: TransactionStatus.EXECUTED,
         },
-        orderBy: { executedAt: 'desc' },
+        orderBy: { executedAt: "desc" },
         include: { recipient: true },
       }),
       this.allowance.getRemainingSummary(user.id).catch((err: unknown) => {
@@ -403,42 +400,42 @@ export class OrchestratorService {
         pendingConfirm.status === TransactionStatus.PENDING_PIN;
       lines.push(
         `- Active mode: awaiting_confirm`,
-        `- Pending ${waitingOnPin ? 'PIN' : 'confirm'}: amount ₦${Number(pendingConfirm.amount).toLocaleString('en-NG')} (do NOT start transfer_wizard. ${waitingOnPin ? 'They must enter PIN.' : 'Remind them to tap Confirm or Cancel.'})`,
+        `- Pending ${waitingOnPin ? "PIN" : "confirm"}: amount ₦${Number(pendingConfirm.amount).toLocaleString("en-NG")} (do NOT start transfer_wizard. ${waitingOnPin ? "They must enter PIN." : "Remind them to tap Confirm or Cancel."})`,
       );
     } else if (activeDraft) {
       lines.push(
-        '- Active mode: transfer_wizard',
+        "- Active mode: transfer_wizard",
         `- Draft step: ${activeDraft.step}`,
-        `- Draft amount: ${activeDraft.amount != null ? `₦${Number(activeDraft.amount).toLocaleString('en-NG')}` : 'missing'}`,
-        `- Draft account: ${activeDraft.accountNumber ?? 'missing'}`,
-        `- Draft bank: ${activeDraft.bankName ?? activeDraft.bankCode ?? 'missing'}`,
-        '- If the user is answering a missing field, use fill_wizard with extracted_hints. If they change topic, use cancel_surface or show_surface for the new intent.',
+        `- Draft amount: ${activeDraft.amount != null ? `₦${Number(activeDraft.amount).toLocaleString("en-NG")}` : "missing"}`,
+        `- Draft account: ${activeDraft.accountNumber ?? "missing"}`,
+        `- Draft bank: ${activeDraft.bankName ?? activeDraft.bankCode ?? "missing"}`,
+        "- If the user is answering a missing field, use fill_wizard with extracted_hints. If they change topic, use cancel_surface or show_surface for the new intent.",
       );
     } else if (spendCheck) {
       const raw = transferHintsToRaw(spendCheck);
       lines.push(
-        '- Active mode: spend_check',
-        `- Pending send hints: amount=${raw.amount ?? 'missing'}, account=${raw.account_number ?? 'missing'}, bank=${raw.bank_name ?? raw.bank_code ?? 'missing'}`,
-        '- Remaining allowance is not permission to skip this. Ask (or keep asking) what the send is for unless they already answered.',
-        '- If they gave a purpose, insisted, or still want to send → show_surface transfer_wizard with extracted_hints this turn. If they backed off → reply_only.',
+        "- Active mode: spend_check",
+        `- Pending send hints: amount=${raw.amount ?? "missing"}, account=${raw.account_number ?? "missing"}, bank=${raw.bank_name ?? raw.bank_code ?? "missing"}`,
+        "- Remaining allowance is not permission to skip this. Ask (or keep asking) what the send is for unless they already answered.",
+        "- If they gave a purpose, insisted, or still want to send → show_surface transfer_wizard with extracted_hints this turn. If they backed off → reply_only.",
       );
     } else {
-      lines.push('- Active mode: free');
+      lines.push("- Active mode: free");
     }
 
     if (lastSent) {
       const who =
         lastSent.recipient?.accountName ??
         lastSent.recipient?.accountNumber ??
-        'recipient';
+        "recipient";
       lines.push(
-        `- Last completed transfer: ₦${Number(lastSent.amount).toLocaleString('en-NG')} to ${who}. This already succeeded. Thanks or "you already sent it" → reply_only, do NOT start transfer_wizard again.`,
+        `- Last completed transfer: ₦${Number(lastSent.amount).toLocaleString("en-NG")} to ${who}. This already succeeded. Thanks or "you already sent it" → reply_only, do NOT start transfer_wizard again.`,
       );
     }
 
     if (user.disciplineExitedAt) {
       lines.push(
-        '- Restrictions: OFF. Spending window and override fees do not apply.',
+        "- Restrictions: OFF. Spending window and override fees do not apply.",
       );
     } else if (
       this.windowService.isWithinWindow(
@@ -447,9 +444,7 @@ export class OrchestratorService {
         now,
       )
     ) {
-      lines.push(
-        `- Window: OPEN, closes at ${user.windowEndHour}:00 WAT.`,
-      );
+      lines.push(`- Window: OPEN, closes at ${user.windowEndHour}:00 WAT.`);
     } else {
       const hoursUntil = this.windowService.hoursUntilWindowOpens(
         user.windowStartHour,
@@ -463,8 +458,8 @@ export class OrchestratorService {
     if (allowanceSummary) {
       const { remainingToday, remainingWeek } = allowanceSummary;
       lines.push(
-        `- Remaining allowance today: ₦${remainingToday.toLocaleString('en-NG')} (budget cap, not wallet balance)`,
-        `- Remaining allowance this week: ₦${remainingWeek.toLocaleString('en-NG')}`,
+        `- Remaining allowance today: ₦${remainingToday.toLocaleString("en-NG")} (budget cap, not wallet balance)`,
+        `- Remaining allowance this week: ₦${remainingWeek.toLocaleString("en-NG")}`,
       );
     } else {
       lines.push(
@@ -472,29 +467,30 @@ export class OrchestratorService {
       );
     }
 
-    return lines.join('\n');
+    return lines.join("\n");
   }
 
-  private sessionContext(session: ConversationSession): Record<string, unknown> {
+  private sessionContext(
+    session: ConversationSession,
+  ): Record<string, unknown> {
     const raw = session.contextData;
-    return raw && typeof raw === 'object' && !Array.isArray(raw)
+    return raw && typeof raw === "object" && !Array.isArray(raw)
       ? { ...(raw as Record<string, unknown>) }
       : {};
   }
 
   private isSpendCheckPending(session: ConversationSession): boolean {
     const ctx = this.sessionContext(session);
-    return ctx.spendCheck != null && typeof ctx.spendCheck === 'object';
+    return ctx.spendCheck != null && typeof ctx.spendCheck === "object";
   }
 
   private async writeSpendCheck(
     sessionId: string,
     spendCheck: TransferWizardHints | null,
   ): Promise<void> {
-    const session =
-      await this.prisma.conversationSession.findUniqueOrThrow({
-        where: { id: sessionId },
-      });
+    const session = await this.prisma.conversationSession.findUniqueOrThrow({
+      where: { id: sessionId },
+    });
     const ctx = this.sessionContext(session);
     if (spendCheck == null) {
       delete ctx.spendCheck;
@@ -519,12 +515,12 @@ export class OrchestratorService {
     wasPending: boolean,
   ): Promise<OrchestratorResult> {
     const launchedWizard =
-      validated.actionType === 'show_surface' &&
-      validated.surfaceKey === 'transfer_wizard';
+      validated.actionType === "show_surface" &&
+      validated.surfaceKey === "transfer_wizard";
     const topicChange =
-      validated.actionType === 'cancel_surface' ||
-      (validated.actionType === 'show_surface' &&
-        validated.surfaceKey !== 'transfer_wizard');
+      validated.actionType === "cancel_surface" ||
+      (validated.actionType === "show_surface" &&
+        validated.surfaceKey !== "transfer_wizard");
 
     if (isSpendCheckAbortUtterance(userText) || launchedWizard || topicChange) {
       if (wasPending || launchedWizard) {
@@ -534,7 +530,7 @@ export class OrchestratorService {
     }
 
     const paused =
-      validated.actionType === 'reply_only' &&
+      validated.actionType === "reply_only" &&
       shouldPauseForSpendCheck(userText, hints);
 
     if (paused) {
@@ -557,7 +553,7 @@ export class OrchestratorService {
         persona: ConversationPersona.KEDU,
         status: ConversationSessionStatus.ACTIVE,
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { updatedAt: "desc" },
     });
     if (existing) return existing;
 
@@ -573,16 +569,13 @@ export class OrchestratorService {
 
   private async appendMessage(
     sessionId: string,
-    role: 'user' | 'assistant',
+    role: "user" | "assistant",
     content: string,
   ) {
-    const session =
-      await this.prisma.conversationSession.findUniqueOrThrow({
-        where: { id: sessionId },
-      });
-    const messages = Array.isArray(session.messages)
-      ? session.messages
-      : [];
+    const session = await this.prisma.conversationSession.findUniqueOrThrow({
+      where: { id: sessionId },
+    });
+    const messages = Array.isArray(session.messages) ? session.messages : [];
     messages.push({ role, content, at: new Date().toISOString() });
     return this.prisma.conversationSession.update({
       where: { id: sessionId },
@@ -592,18 +585,16 @@ export class OrchestratorService {
 
   private async appendAndBuildHistory(
     session: ConversationSession,
-    role: 'user' | 'assistant',
+    role: "user" | "assistant",
     content: string,
   ): Promise<LlmMessage[]> {
     const updated = await this.appendMessage(session.id, role, content);
-    const messages = Array.isArray(updated.messages)
-      ? updated.messages
-      : [];
+    const messages = Array.isArray(updated.messages) ? updated.messages : [];
     return messages.slice(-12).map((raw) => {
       const m = raw as { role?: string; content?: string };
       return {
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: String(m.content ?? ''),
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: String(m.content ?? ""),
       } as LlmMessage;
     });
   }

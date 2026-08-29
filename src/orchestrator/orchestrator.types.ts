@@ -6,22 +6,16 @@
  * The ActionExecutor dispatches the validated result.
  */
 
-import { TransferWizardHints } from './transfer-hints.util';
+import { TransferWizardHints } from "./transfer-hints.util";
 
 export type SurfaceKind =
-  | 'text'
-  | 'list'
-  | 'buttons'
-  | 'whatsapp_flow'
-  | 'wizard';
+  "text" | "list" | "buttons" | "whatsapp_flow" | "wizard";
 
-export type ActiveMode = 'free' | 'transfer_wizard' | 'awaiting_confirm' | 'spend_check';
+export type ActiveMode =
+  "free" | "transfer_wizard" | "awaiting_confirm" | "spend_check";
 
 export type ProposeActionType =
-  | 'reply_only'
-  | 'show_surface'
-  | 'fill_wizard'
-  | 'cancel_surface';
+  "reply_only" | "show_surface" | "fill_wizard" | "cancel_surface";
 
 /**
  * Raw output from the LLM's `propose_turn` tool call, before validation.
@@ -32,7 +26,7 @@ export interface ProposedTurn {
     type: ProposeActionType;
     surface_key?: string;
     extracted_hints?: Record<string, unknown>;
-    confidence?: 'high' | 'medium';
+    confidence?: "high" | "medium";
     reasoning?: string;
   };
 }

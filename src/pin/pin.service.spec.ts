@@ -8,6 +8,7 @@ describe("PinService", () => {
       create: jest.Mock;
       findUnique: jest.Mock;
       updateMany: jest.Mock;
+      count: jest.Mock;
     };
   };
   let service: PinService;
@@ -35,6 +36,7 @@ describe("PinService", () => {
         create: jest.fn(async ({ data }: any) => ({ id: "c1", ...data })),
         findUnique: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        count: jest.fn().mockResolvedValue(0),
       },
     };
     service = new PinService(prisma as any);
@@ -334,6 +336,181 @@ describe("PinService", () => {
       const { data } = prisma.pinChallenge.create.mock.calls[0][0];
       expect(data.flowToken).toMatch(/^[0-9a-f-]{36}$/);
       expect(data.expiresAt).toEqual(new Date("2026-01-08T12:05:00Z"));
+    });
+  });
+  describe("PIN reset by emailed code", () => {
+    const now = new Date("2026-01-08T12:00:00Z");
+
+    describe("issuing a code", () => {
+      it("returns a 6-digit code and stores only its hash", async () => {
+        const { otp } = await service.createResetChallenge(userId, now);
+
+        expect(otp).toMatch(/^\d{6}$/);
+        const { data } = prisma.pinChallenge.create.mock.calls[0][0];
+        expect(data.otpHash).toBeDefined();
+        expect(data.otpHash).not.toContain(otp);
+        expect(data.purpose).toBe(PinChallengePurpose.RESET);
+      });
+
+      it("expires the code in 10 minutes", async () => {
+        await service.createResetChallenge(userId, now);
+        const { data } = prisma.pinChallenge.create.mock.calls[0][0];
+        expect(data.expiresAt).toEqual(new Date("2026-01-08T12:10:00Z"));
+      });
+
+      it("issues a different code each time", async () => {
+        const a = await service.createResetChallenge(userId, now);
+        const b = await service.createResetChallenge(userId, now);
+        // Not a strict inequality assertion on the code itself (1-in-a-million
+        // collision), but the salted hashes must always differ.
+        const hashes = prisma.pinChallenge.create.mock.calls.map(
+          (c: any[]) => c[0].data.otpHash,
+        );
+        expect(hashes[0]).not.toEqual(hashes[1]);
+        expect(a.otp).toMatch(/^\d{6}$/);
+        expect(b.otp).toMatch(/^\d{6}$/);
+      });
+
+      it("allows a reset when the user is under the hourly ceiling", async () => {
+        prisma.pinChallenge.count.mockResolvedValue(2);
+        await expect(service.canRequestReset(userId, now)).resolves.toBe(true);
+      });
+
+      it("refuses once the hourly ceiling is reached", async () => {
+        prisma.pinChallenge.count.mockResolvedValue(3);
+        await expect(service.canRequestReset(userId, now)).resolves.toBe(false);
+      });
+
+      it("counts only freshly-issued codes, not retry hand-offs", async () => {
+        await service.canRequestReset(userId, now);
+        expect(prisma.pinChallenge.count).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ otpAttempts: 0 }),
+          }),
+        );
+      });
+    });
+
+    describe("verifying a code", () => {
+      it("accepts the correct code", async () => {
+        const { otp } = await service.createResetChallenge(userId, now);
+        const { data } = prisma.pinChallenge.create.mock.calls[0][0];
+        const challenge = {
+          id: "c-1",
+          userId,
+          otpHash: data.otpHash,
+          otpAttempts: 0,
+          expiresAt: new Date("2026-01-08T12:10:00Z"),
+        } as any;
+
+        await expect(
+          service.verifyResetOtp(challenge, otp, now),
+        ).resolves.toEqual({ ok: true });
+      });
+
+      it("rejects a wrong code and hands the same hash to a fresh single-use challenge", async () => {
+        const { otp } = await service.createResetChallenge(userId, now);
+        const { data } = prisma.pinChallenge.create.mock.calls[0][0];
+        const challenge = {
+          id: "c-1",
+          userId,
+          otpHash: data.otpHash,
+          otpAttempts: 0,
+          expiresAt: new Date("2026-01-08T12:10:00Z"),
+        } as any;
+        const wrong = otp === "000000" ? "111111" : "000000";
+
+        prisma.pinChallenge.create.mockClear();
+        const result = await service.verifyResetOtp(challenge, wrong, now);
+
+        expect(result.ok).toBe(false);
+        if (!result.ok && !result.exhausted) {
+          expect(result.attemptsLeft).toBe(4);
+        }
+        const retry = prisma.pinChallenge.create.mock.calls[0][0].data;
+        expect(retry.otpHash).toBe(data.otpHash); // emailed code still works
+        expect(retry.otpAttempts).toBe(1);
+      });
+
+      it("does not extend the deadline on a wrong guess", async () => {
+        const { otp } = await service.createResetChallenge(userId, now);
+        const { data } = prisma.pinChallenge.create.mock.calls[0][0];
+        const expiresAt = new Date("2026-01-08T12:10:00Z");
+        const challenge = {
+          id: "c-1",
+          userId,
+          otpHash: data.otpHash,
+          otpAttempts: 0,
+          expiresAt,
+        } as any;
+
+        prisma.pinChallenge.create.mockClear();
+        await service.verifyResetOtp(
+          challenge,
+          otp === "000000" ? "111111" : "000000",
+          now,
+        );
+
+        expect(
+          prisma.pinChallenge.create.mock.calls[0][0].data.expiresAt,
+        ).toEqual(expiresAt);
+      });
+
+      it("gives up after the fifth wrong attempt, issuing no successor", async () => {
+        const { otp } = await service.createResetChallenge(userId, now);
+        const { data } = prisma.pinChallenge.create.mock.calls[0][0];
+        const challenge = {
+          id: "c-1",
+          userId,
+          otpHash: data.otpHash,
+          otpAttempts: 4, // this submission is the 5th
+          expiresAt: new Date("2026-01-08T12:10:00Z"),
+        } as any;
+
+        prisma.pinChallenge.create.mockClear();
+        const result = await service.verifyResetOtp(
+          challenge,
+          otp === "000000" ? "111111" : "000000",
+          now,
+        );
+
+        expect(result).toEqual({ ok: false, exhausted: true });
+        expect(prisma.pinChallenge.create).not.toHaveBeenCalled();
+      });
+
+      it("treats an expired challenge as exhausted rather than retryable", async () => {
+        const { otp } = await service.createResetChallenge(userId, now);
+        const { data } = prisma.pinChallenge.create.mock.calls[0][0];
+        const challenge = {
+          id: "c-1",
+          userId,
+          otpHash: data.otpHash,
+          otpAttempts: 0,
+          expiresAt: new Date("2026-01-08T11:00:00Z"), // already passed
+        } as any;
+
+        const result = await service.verifyResetOtp(
+          challenge,
+          otp === "000000" ? "111111" : "000000",
+          now,
+        );
+
+        expect(result).toEqual({ ok: false, exhausted: true });
+      });
+
+      it("fails closed on a RESET challenge with no stored hash", async () => {
+        const challenge = {
+          id: "c-1",
+          userId,
+          otpHash: null,
+          otpAttempts: 0,
+          expiresAt: new Date("2026-01-08T12:10:00Z"),
+        } as any;
+
+        await expect(
+          service.verifyResetOtp(challenge, "123456", now),
+        ).resolves.toEqual({ ok: false, exhausted: true });
+      });
     });
   });
 });

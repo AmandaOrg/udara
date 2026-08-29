@@ -1,0 +1,68 @@
+{
+  "version": "7.2",
+  "screens": [
+    {
+      "id": "PIN_RESET",
+      "title": "Reset your PIN",
+      "terminal": true,
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "pin_reset_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Reset your PIN"
+              },
+              {
+                "type": "TextBody",
+                "text": "Enter the 6-digit code we emailed you, then choose a new 4-digit PIN. The code expires 10 minutes after it was sent."
+              },
+              {
+                "type": "TextInput",
+                "name": "otp",
+                "label": "Code from your email",
+                "input-type": "passcode",
+                "min-chars": 6,
+                "max-chars": 6,
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "pin",
+                "label": "New PIN",
+                "input-type": "passcode",
+                "min-chars": 4,
+                "max-chars": 4,
+                "required": true
+              },
+              {
+                "type": "TextInput",
+                "name": "pin_confirm",
+                "label": "Confirm new PIN",
+                "input-type": "passcode",
+                "min-chars": 4,
+                "max-chars": 4,
+                "required": true
+              },
+              {
+                "type": "Footer",
+                "label": "Reset PIN",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "otp": "${form.otp}",
+                    "pin": "${form.pin}",
+                    "pin_confirm": "${form.pin_confirm}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

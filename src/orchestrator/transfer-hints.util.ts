@@ -1,10 +1,10 @@
-import { RecipientLabel } from '@prisma/client';
+import { RecipientLabel } from "@prisma/client";
 
 const LABEL_HINTS: ReadonlySet<string> = new Set([
-  'RENT',
-  'FOOD',
-  'VENDOR',
-  'OTHER',
+  "RENT",
+  "FOOD",
+  "VENDOR",
+  "OTHER",
 ]);
 
 /** Validated hints passed from the orchestrator into the transfer wizard. */
@@ -24,38 +24,35 @@ export function sanitizeTransferHints(
   raw?: Record<string, unknown>,
 ): TransferWizardHints {
   const hints: TransferWizardHints = {};
-  if (!raw || typeof raw !== 'object') return hints;
+  if (!raw || typeof raw !== "object") return hints;
 
   const amount = Number(raw.amount);
   if (Number.isFinite(amount) && amount > 0) {
     hints.amount = amount;
   }
 
-  if (typeof raw.account_number === 'string') {
-    const digits = raw.account_number.replace(/\D/g, '');
+  if (typeof raw.account_number === "string") {
+    const digits = raw.account_number.replace(/\D/g, "");
     if (digits.length === 10) {
       hints.accountNumber = digits;
     }
   }
 
-  if (typeof raw.bank_code === 'string') {
+  if (typeof raw.bank_code === "string") {
     const code = raw.bank_code.trim();
     if (/^\d{6}$/.test(code)) {
       hints.bankCode = code;
     }
   }
 
-  if (typeof raw.bank_name === 'string') {
+  if (typeof raw.bank_name === "string") {
     const name = raw.bank_name.trim();
     if (name.length > 0 && name.length <= 100) {
       hints.bankName = name;
     }
   }
 
-  if (
-    typeof raw.label_hint === 'string' &&
-    LABEL_HINTS.has(raw.label_hint)
-  ) {
+  if (typeof raw.label_hint === "string" && LABEL_HINTS.has(raw.label_hint)) {
     hints.labelHint = raw.label_hint as RecipientLabel;
   }
 
@@ -158,9 +155,9 @@ export function shouldPauseForSpendCheck(
   if (!isActiveSendUtterance(text)) return false;
   if (hasStatedSpendPurpose(text)) return false;
   if (
-    hints.labelHint === 'RENT' ||
-    hints.labelHint === 'FOOD' ||
-    hints.labelHint === 'VENDOR'
+    hints.labelHint === "RENT" ||
+    hints.labelHint === "FOOD" ||
+    hints.labelHint === "VENDOR"
   ) {
     return false;
   }
@@ -183,7 +180,7 @@ export function transferHintsToRaw(
 }
 
 export function transferHintsFromContext(raw: unknown): TransferWizardHints {
-  if (!raw || typeof raw !== 'object') return {};
+  if (!raw || typeof raw !== "object") return {};
   const o = raw as Record<string, unknown>;
   return sanitizeTransferHints({
     amount: o.amount,

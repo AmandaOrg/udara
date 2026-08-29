@@ -11,17 +11,17 @@
  *   History (dynamic, last 30)  ~1200 tok
  */
 
-import { JsonSchemaToolDef, LlmMessage } from '../../ai/llm.types';
+import { JsonSchemaToolDef, LlmMessage } from "../../ai/llm.types";
 import {
   KEDU_IDENTITY_ANCHOR,
   KEDU_VOICE_RULES,
-} from '../../ai/prompts/kedu-persona.prompts';
-import { formatDisplayFirstName } from '../../common/display-name.util';
+} from "../../ai/prompts/kedu-persona.prompts";
+import { formatDisplayFirstName } from "../../common/display-name.util";
 import {
   SurfaceDefinition,
   formatSurfacesForPrompt,
-} from '../surface-registry';
-import { User } from '@prisma/client';
+} from "../surface-registry";
+import { User } from "@prisma/client";
 
 const ORCHESTRATOR_ROLE = `You are Udara's dialogue orchestrator. On every turn you MUST call the propose_turn tool — never reply in plain text.
 
@@ -74,80 +74,80 @@ const GUARDRAILS = `Hard guardrails — violations are blocked automatically:
 - show_surface, fill_wizard, and cancel_surface require confidence: "high" or "medium". Missing confidence is treated as medium (text only).`;
 
 export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
-  name: 'propose_turn',
+  name: "propose_turn",
   description:
-    'Decide what to say and optionally which surface to show or how to update the transfer wizard. You MUST call this tool every turn.',
+    "Decide what to say and optionally which surface to show or how to update the transfer wizard. You MUST call this tool every turn.",
   schema: {
-    type: 'object',
-    required: ['message', 'action'],
+    type: "object",
+    required: ["message", "action"],
     properties: {
       message: {
-        type: 'string',
+        type: "string",
         description:
           "Your reply in Udara's voice. Always required. Max ~2–3 short sentences. Warm and firm, not rude. For read surfaces, short lead-in only — no numbers. Capitalize the user's name if you use it.",
       },
       action: {
-        type: 'object',
-        required: ['type'],
+        type: "object",
+        required: ["type"],
         properties: {
           type: {
-            type: 'string',
+            type: "string",
             enum: [
-              'reply_only',
-              'show_surface',
-              'fill_wizard',
-              'cancel_surface',
+              "reply_only",
+              "show_surface",
+              "fill_wizard",
+              "cancel_surface",
             ],
             description:
-              'reply_only: text only. show_surface: launch a surface. fill_wizard: merge extracted_hints into the active transfer draft. cancel_surface: cancel active wizard or pending confirm.',
+              "reply_only: text only. show_surface: launch a surface. fill_wizard: merge extracted_hints into the active transfer draft. cancel_surface: cancel active wizard or pending confirm.",
           },
           surface_key: {
-            type: 'string',
+            type: "string",
             description:
-              'Required when type is show_surface. Must be one of the eligible surface keys listed in the system prompt.',
+              "Required when type is show_surface. Must be one of the eligible surface keys listed in the system prompt.",
           },
           extracted_hints: {
-            type: 'object',
+            type: "object",
             description:
-              'Structured data from the user message (and clear history). Include every field you are confident about for transfers.',
+              "Structured data from the user message (and clear history). Include every field you are confident about for transfers.",
             properties: {
               amount: {
-                type: 'number',
-                description: 'Transfer amount in naira, if user mentioned one',
+                type: "number",
+                description: "Transfer amount in naira, if user mentioned one",
               },
               account_number: {
-                type: 'string',
+                type: "string",
                 description:
-                  'Recipient 10-digit NUBAN account number, if user gave one',
+                  "Recipient 10-digit NUBAN account number, if user gave one",
               },
               bank_name: {
-                type: 'string',
+                type: "string",
                 description:
-                  'Recipient bank name if stated (e.g. GTBank, Access, Opay, Zenith)',
+                  "Recipient bank name if stated (e.g. GTBank, Access, Opay, Zenith)",
               },
               bank_code: {
-                type: 'string',
+                type: "string",
                 description:
-                  'Recipient 6-digit CBN bank code, if user pasted one',
+                  "Recipient 6-digit CBN bank code, if user pasted one",
               },
               label_hint: {
-                type: 'string',
-                enum: ['RENT', 'FOOD', 'VENDOR', 'OTHER'],
+                type: "string",
+                enum: ["RENT", "FOOD", "VENDOR", "OTHER"],
                 description:
-                  'Recipient category if clearly stated (e.g. landlord → RENT)',
+                  "Recipient category if clearly stated (e.g. landlord → RENT)",
               },
             },
           },
           confidence: {
-            type: 'string',
-            enum: ['high', 'medium'],
+            type: "string",
+            enum: ["high", "medium"],
             description:
               "Required for show_surface, fill_wizard, cancel_surface. Use 'high' only when intent is clear.",
           },
           reasoning: {
-            type: 'string',
+            type: "string",
             description:
-              'One-sentence internal explanation for audit. Not shown to user.',
+              "One-sentence internal explanation for audit. Not shown to user.",
           },
         },
       },
@@ -163,19 +163,17 @@ export function buildOrchestratorSystemMessage(
   const displayName = formatDisplayFirstName(user.name);
   const userState = [
     `Onboarding: ${user.onboardingStage}`,
-    user.rubiesAccountNumber ? 'Account: active' : 'Account: none',
+    user.rubiesAccountNumber ? "Account: active" : "Account: none",
     displayName
       ? `Preferred name: ${displayName} (capitalize exactly when addressing them)`
       : null,
-    user.disciplineExitedAt
-      ? 'Restrictions: exited'
-      : 'Restrictions: active',
+    user.disciplineExitedAt ? "Restrictions: exited" : "Restrictions: active",
   ]
     .filter(Boolean)
-    .join(' | ');
+    .join(" | ");
 
   return {
-    role: 'system',
+    role: "system",
     content: [
       KEDU_IDENTITY_ANCHOR,
       KEDU_VOICE_RULES,
@@ -184,8 +182,8 @@ export function buildOrchestratorSystemMessage(
       formatSurfacesForPrompt(eligibleSurfaces),
       liveFacts,
       `User state: ${userState}`,
-      'Orchestrator override: ignore the blank-line chunking voice rule. message is a single bubble.',
+      "Orchestrator override: ignore the blank-line chunking voice rule. message is a single bubble.",
       GUARDRAILS,
-    ].join('\n\n---\n\n'),
+    ].join("\n\n---\n\n"),
   };
 }
