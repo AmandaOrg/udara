@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { firstValueFrom } from "rxjs";
 import { WhatsappMessageType } from "@prisma/client";
 import { WhatsappMessageService } from "./whatsapp-message.service";
+import { normalizeEnvString } from "../config/env-string.util";
 
 export interface InteractiveButton {
   id: string;
@@ -298,7 +299,8 @@ export class WhatsappService {
   /**
    * Meta two-step media download: GET /{media-id} for a short-lived URL,
    * then GET that URL with the same bearer. Do not log the URL (it can
-   * carry a signature). WHATSAPP_DRY_RUN skips the network.
+   * carry a signature). WHATSAPP_DRY_RUN only skips outbound sends, not
+   * inbound download — voice/photos cannot be understood without the bytes.
    */
   async downloadMedia(
     mediaId: string,
@@ -307,11 +309,13 @@ export class WhatsappService {
     if (!id) {
       throw new Error("media id required");
     }
-    if (this.config.get<string>("WHATSAPP_DRY_RUN") === "true") {
-      throw new Error("WHATSAPP_DRY_RUN: media download skipped");
-    }
 
-    const token = this.config.get<string>("WHATSAPP_ACCESS_TOKEN");
+    const token = normalizeEnvString(
+      this.config.get<string>("WHATSAPP_ACCESS_TOKEN"),
+    );
+    if (!token) {
+      throw new Error("WHATSAPP_ACCESS_TOKEN is not set");
+    }
     const headers = { Authorization: `Bearer ${token}` };
     const meta = await firstValueFrom(
       this.http.get<{ url?: string; mime_type?: string }>(

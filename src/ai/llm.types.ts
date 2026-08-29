@@ -1,4 +1,5 @@
 import { LlmCallPurpose } from "@prisma/client";
+import { normalizeEnvString } from "../config/env-string.util";
 
 export type { LlmCallPurpose };
 
@@ -74,5 +75,6 @@ export const CONVERSATION_LLM = "CONVERSATION_LLM";
 
 /** Gemini and Anthropic accept image parts this turn; stub/Bedrock/OpenRouter do not. */
 export function conversationProviderSupportsVision(provider: string): boolean {
-  return provider === "gemini" || provider === "anthropic";
+  const p = normalizeEnvString(provider).toLowerCase();
+  return p === "gemini" || p === "anthropic";
 }

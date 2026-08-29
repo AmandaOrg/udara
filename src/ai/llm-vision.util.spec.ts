@@ -7,6 +7,7 @@ import {
 describe("llm-vision.util", () => {
   it("supports vision only for gemini and anthropic", () => {
     expect(conversationProviderSupportsVision("gemini")).toBe(true);
+    expect(conversationProviderSupportsVision('"gemini"')).toBe(true);
     expect(conversationProviderSupportsVision("anthropic")).toBe(true);
     expect(conversationProviderSupportsVision("bedrock")).toBe(false);
     expect(conversationProviderSupportsVision("stub")).toBe(false);

@@ -117,6 +117,7 @@ export class OrchestratorService {
       {
         hasImage: !!options.image,
         imageVisible,
+        lastPhoto: this.lastPhotoFromContext(session),
       },
     );
     const eligibleSurfaces = getEligibleSurfaces(user);
@@ -216,6 +217,13 @@ export class OrchestratorService {
         sanitizeTransferHints(proposal.action.extracted_hints),
         spendCheckPending,
       );
+
+      if (imageVisible) {
+        await this.writeLastPhoto(
+          session.id,
+          sanitizeTransferHints(proposal.action.extracted_hints),
+        );
+      }
 
       const launchedSurface =
         validated.actionType === "show_surface" && !!validated.surfaceKey;
@@ -358,7 +366,11 @@ export class OrchestratorService {
   private async buildLiveFacts(
     user: User,
     spendCheck: TransferWizardHints | null,
-    media: { hasImage: boolean; imageVisible: boolean } = {
+    media: {
+      hasImage: boolean;
+      imageVisible: boolean;
+      lastPhoto?: TransferWizardHints | null;
+    } = {
       hasImage: false,
       imageVisible: false,
     },
@@ -515,13 +527,21 @@ export class OrchestratorService {
     if (media.hasImage) {
       if (media.imageVisible) {
         lines.push(
-          "- User attached a photo this turn. Use it for spend context (receipt, payee screenshot, what the money is for). If it looks like a government ID, reply_only and tell them to use the official KYC flow. Never extract NIN, BVN, or date of birth. Account numbers in a photo are hints only.",
+          "- User attached a photo THIS turn and you can see it. Read the text in the image. If it is a payee screenshot, you MAY repeat the account number and bank from the photo when they ask what it says. That is not their Udara wallet account. Do not invent a name from the user's profile if the photo does not show it. If it looks like a government ID, reply_only and tell them to use the official KYC flow. Never extract NIN, BVN, or date of birth.",
         );
       } else {
         lines.push(
-          "- User attached a photo this turn but it is not visible to the model. Do not claim you saw it. Ask them to type what it shows.",
+          "- User attached a photo this turn but it is not visible to the model. Do not claim you saw it. Do not guess names from their profile. Ask them to type what it shows.",
         );
       }
+    } else if (
+      media.lastPhoto &&
+      (media.lastPhoto.accountNumber || media.lastPhoto.bankName)
+    ) {
+      const raw = transferHintsToRaw(media.lastPhoto);
+      lines.push(
+        `- Last photo in this chat (hints only, not their wallet): account=${raw.account_number ?? "missing"}, bank=${raw.bank_name ?? raw.bank_code ?? "missing"}. If they ask what the photo said, you may repeat those hint digits. Do not invent extra digits.`,
+      );
     }
 
     return lines.join("\n");
@@ -534,6 +554,32 @@ export class OrchestratorService {
     return raw && typeof raw === "object" && !Array.isArray(raw)
       ? { ...(raw as Record<string, unknown>) }
       : {};
+  }
+
+  private lastPhotoFromContext(
+    session: ConversationSession,
+  ): TransferWizardHints | null {
+    const raw = this.sessionContext(session).lastPhoto;
+    if (!raw || typeof raw !== "object") return null;
+    return transferHintsFromContext(raw);
+  }
+
+  private async writeLastPhoto(
+    sessionId: string,
+    hints: TransferWizardHints,
+  ): Promise<void> {
+    if (!hints.accountNumber && !hints.bankName && !hints.bankCode) {
+      return;
+    }
+    const session = await this.prisma.conversationSession.findUniqueOrThrow({
+      where: { id: sessionId },
+    });
+    const ctx = this.sessionContext(session);
+    ctx.lastPhoto = hints;
+    await this.prisma.conversationSession.update({
+      where: { id: sessionId },
+      data: { contextData: ctx as Prisma.InputJsonValue },
+    });
   }
 
   private isSpendCheckPending(session: ConversationSession): boolean {

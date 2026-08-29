@@ -41,7 +41,7 @@ const AUDIO_TYPE_INSTEAD =
 const AUDIO_COULDNT_HEAR = "I couldn't hear that clearly, could you type it?";
 const IMAGE_COULDNT_OPEN =
   "I couldn't open that photo, could you type what you meant?";
-const VISION_MAX_BYTES = 4 * 1024 * 1024;
+const VISION_MAX_BYTES = 16 * 1024 * 1024;
 
 /**
  * Top-level inbound router.
@@ -122,6 +122,9 @@ export class WhatsappRouterService {
     message: WhatsappMessage,
   ): Promise<void> {
     if (!this.deepgram.isConfigured()) {
+      this.logger.warn(
+        "Voice note ignored: DEEPGRAM_API_KEY is not set on this process",
+      );
       await this.whatsapp.sendText(
         message.fromNumber,
         AUDIO_TYPE_INSTEAD,

@@ -8,6 +8,7 @@
 
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { normalizeEnvString } from "../config/env-string.util";
 
 const DEEPGRAM_LISTEN_URL = "https://api.deepgram.com/v1/listen";
 const STT_TIMEOUT_MS = 20_000;
@@ -44,7 +45,7 @@ export class DeepgramService {
   }
 
   private apiKey(): string {
-    return this.config.get<string>("DEEPGRAM_API_KEY", "").trim();
+    return normalizeEnvString(this.config.get<string>("DEEPGRAM_API_KEY"));
   }
 
   private sttModel(): string {
