@@ -14,6 +14,7 @@ import { IntentRouterService } from "./intent-router.service";
 import { PinGateService } from "./pin-gate.service";
 import { WeeklyReviewService } from "./weekly-review.service";
 import { WeeklyReviewScheduler } from "./weekly-review.scheduler";
+import { DeepgramService } from "./deepgram.service";
 import { EmailModule } from "../email/email.module";
 import { ActionExecutorService } from "../orchestrator/action-executor.service";
 import { OrchestratorModule } from "../orchestrator/orchestrator.module";
@@ -64,6 +65,7 @@ import { AiModule } from "../ai/ai.module";
     ActionExecutorService,
     WeeklyReviewService,
     WeeklyReviewScheduler,
+    DeepgramService,
   ],
   exports: [
     WhatsappService,

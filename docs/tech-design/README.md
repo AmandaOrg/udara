@@ -15,6 +15,7 @@ Engineer-readable **how** for a feature. Architecture, types, files, env, and te
 | --- | --- |
 | [TRANSFER_INTENT_GROUNDING_TECH.md](TRANSFER_INTENT_GROUNDING_TECH.md) | [transfer-intent-grounding](../../initiatives/transfer-intent-grounding/plan.md) |
 | [SPEND_CHECK_BEFORE_SEND_TECH.md](SPEND_CHECK_BEFORE_SEND_TECH.md) | [spend-check-before-send](../../initiatives/spend-check-before-send/plan.md) |
+| [WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_TECH.md](WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_TECH.md) | [whatsapp-media-and-spend-pushback](../../initiatives/whatsapp-media-and-spend-pushback/plan.md) |
 
 ## New design
 

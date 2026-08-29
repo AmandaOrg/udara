@@ -7,6 +7,7 @@
  */
 
 import { TransferWizardHints } from "./transfer-hints.util";
+import { LlmImagePart } from "../ai/llm.types";
 
 export type SurfaceKind =
   "text" | "list" | "buttons" | "whatsapp_flow" | "wizard";
@@ -16,6 +17,10 @@ export type ActiveMode =
 
 export type ProposeActionType =
   "reply_only" | "show_surface" | "fill_wizard" | "cancel_surface";
+
+export type OrchestratorTurnOptions = {
+  image?: LlmImagePart;
+};
 
 /**
  * Raw output from the LLM's `propose_turn` tool call, before validation.

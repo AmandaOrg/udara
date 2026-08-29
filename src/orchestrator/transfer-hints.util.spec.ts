@@ -89,15 +89,11 @@ describe("isActiveSendUtterance", () => {
 });
 
 describe("shouldPauseForSpendCheck", () => {
-  it("pauses a vague send and skips when purpose is already stated", () => {
+  it("pauses any first active send, including when purpose is already stated", () => {
     expect(
-      shouldPauseForSpendCheck("send 800 to opay", {
-        amount: 800,
-        bankName: "opay",
-      }),
+      shouldPauseForSpendCheck("send 800 to opay"),
     ).toBe(true);
-    expect(
-      shouldPauseForSpendCheck("send 5k to my landlord", { amount: 5000 }),
-    ).toBe(false);
+    expect(shouldPauseForSpendCheck("send 5k to my landlord")).toBe(true);
+    expect(shouldPauseForSpendCheck("thanks")).toBe(false);
   });
 });

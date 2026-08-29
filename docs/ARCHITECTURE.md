@@ -10,7 +10,8 @@ How inbound events become outbound WhatsApp messages and database writes.
 | Language | TypeScript (`strictNullChecks`, `noImplicitAny`) |
 | Database | PostgreSQL 16 via Prisma 5 |
 | HTTP | Controllers under `whatsapp/` and `rubies/` |
-| LLM | Pluggable `AI_PROVIDER` (stub default) |
+| LLM | Pluggable `AI_PROVIDER` (stub default); Gemini/Anthropic may receive one image per turn |
+| Speech-to-text | Deepgram listen (`DEEPGRAM_API_KEY`); no TTS |
 | Time | WAT helpers in `src/common/wat-time.util.ts` |
 | Default port | 3000 |
 
@@ -77,9 +78,10 @@ Prisma models (see [`prisma/schema.prisma`](../prisma/schema.prisma)): `User`, `
 
 | System | Role | Local |
 | --- | --- | --- |
-| WhatsApp Cloud API | Inbound webhook + outbound Graph sends | `WHATSAPP_DRY_RUN=true` records fake wamids |
+| WhatsApp Cloud API | Inbound webhook + outbound Graph sends + media download | `WHATSAPP_DRY_RUN=true` records fake wamids; media download skipped |
 | Rubies BaaS | Wallet, name enquiry, transfers, inbound credit | `RUBIES_DRY_RUN=true` returns fakes |
-| LLM providers | Onboarding extraction + orchestrator turns | `AI_PROVIDER=stub` |
+| Deepgram | Inbound voice-note transcription | unset `DEEPGRAM_API_KEY` → type-instead copy |
+| LLM providers | Onboarding extraction + orchestrator turns (Gemini/Anthropic may see one image) | `AI_PROVIDER=stub` |
 
 ## CLI
 

@@ -127,6 +127,14 @@ class EnvironmentVariables {
   @IsString()
   BEDROCK_MODEL?: string;
 
+  @IsOptional()
+  @IsString()
+  DEEPGRAM_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  DEEPGRAM_STT_MODEL?: string;
+
   @IsInt()
   @Min(0)
   @Max(23)

@@ -13,8 +13,14 @@
  */
 
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
-import { CONVERSATION_LLM, LlmMessage, LlmService } from "../ai/llm.types";
+import {
+  CONVERSATION_LLM,
+  LlmMessage,
+  LlmService,
+  conversationProviderSupportsVision,
+} from "../ai/llm.types";
 import { LlmCallLoggerService } from "../ai/llm-call-logger.service";
 import { AllowanceService } from "../allowance/allowance.service";
 import { WindowService } from "../allowance/window.service";
@@ -27,6 +33,7 @@ import { getEligibleSurfaces } from "./surface-registry";
 import {
   ProposedTurn,
   OrchestratorResult,
+  OrchestratorTurnOptions,
   ORCHESTRATOR_LLM_TIMEOUT_MS,
   ORCHESTRATOR_PARSE_RETRY_TIMEOUT_MS,
   ProposeActionType,
@@ -75,6 +82,7 @@ export class OrchestratorService {
     private readonly allowance: AllowanceService,
     private readonly windowService: WindowService,
     private readonly validator: ActionValidatorService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -83,16 +91,33 @@ export class OrchestratorService {
    * handles sending and surface dispatch. On failure, returns `{ ok: false }`
    * — never throws.
    */
-  async handleMessage(user: User, text: string): Promise<OrchestratorResult> {
+  async handleMessage(
+    user: User,
+    text: string,
+    options: OrchestratorTurnOptions = {},
+  ): Promise<OrchestratorResult> {
     const session = await this.getOrCreateSession(user.id);
     const spendCheckPending = this.isSpendCheckPending(session);
     const storedHints = spendCheckPending
       ? transferHintsFromContext(this.sessionContext(session).spendCheck)
       : {};
     const history = await this.appendAndBuildHistory(session, "user", text);
+    const provider = this.config.get<string>("AI_PROVIDER", "stub");
+    const imageVisible =
+      !!options.image && conversationProviderSupportsVision(provider);
+    if (imageVisible && options.image) {
+      const last = history[history.length - 1];
+      if (last?.role === "user") {
+        last.images = [options.image];
+      }
+    }
     const liveFacts = await this.buildLiveFacts(
       user,
       spendCheckPending ? storedHints : null,
+      {
+        hasImage: !!options.image,
+        imageVisible,
+      },
     );
     const eligibleSurfaces = getEligibleSurfaces(user);
 
@@ -333,6 +358,10 @@ export class OrchestratorService {
   private async buildLiveFacts(
     user: User,
     spendCheck: TransferWizardHints | null,
+    media: { hasImage: boolean; imageVisible: boolean } = {
+      hasImage: false,
+      imageVisible: false,
+    },
   ): Promise<string> {
     const now = new Date();
     const lines = [
@@ -416,7 +445,7 @@ export class OrchestratorService {
       lines.push(
         "- Active mode: spend_check",
         `- Pending send hints: amount=${raw.amount ?? "missing"}, account=${raw.account_number ?? "missing"}, bank=${raw.bank_name ?? raw.bank_code ?? "missing"}`,
-        "- Remaining allowance is not permission to skip this. Ask (or keep asking) what the send is for unless they already answered.",
+        "- Remaining allowance is not permission to skip this. Challenge the send (why / is it needed), even if they would pay a fee. Do not invent ₦ figures.",
         "- If they gave a purpose, insisted, or still want to send → show_surface transfer_wizard with extracted_hints this turn. If they backed off → reply_only.",
       );
     } else {
@@ -465,6 +494,34 @@ export class OrchestratorService {
       lines.push(
         "- Allowance figures unavailable this turn. If asked, say you can't pull it up right now. Do NOT estimate.",
       );
+    }
+
+    if (spendCheck?.amount && spendCheck.amount > 0) {
+      const evalResult = await this.allowance
+        .evaluateSpend(user.id, spendCheck.amount)
+        .catch((err: unknown) => {
+          this.logger.warn(
+            `Could not evaluate pending send for user ${user.id}: ${String(err)}`,
+          );
+          return null;
+        });
+      if (evalResult && evalResult.type !== "NORMAL") {
+        lines.push(
+          `- Pending send would be ${evalResult.type} (fee path). Push back in chat. Do not quote fee naira from memory.`,
+        );
+      }
+    }
+
+    if (media.hasImage) {
+      if (media.imageVisible) {
+        lines.push(
+          "- User attached a photo this turn. Use it for spend context (receipt, payee screenshot, what the money is for). If it looks like a government ID, reply_only and tell them to use the official KYC flow. Never extract NIN, BVN, or date of birth. Account numbers in a photo are hints only.",
+        );
+      } else {
+        lines.push(
+          "- User attached a photo this turn but it is not visible to the model. Do not claim you saw it. Ask them to type what it shows.",
+        );
+      }
     }
 
     return lines.join("\n");
@@ -531,10 +588,13 @@ export class OrchestratorService {
 
     const paused =
       validated.actionType === "reply_only" &&
-      shouldPauseForSpendCheck(userText, hints);
+      shouldPauseForSpendCheck(userText);
 
     if (paused) {
-      await this.writeSpendCheck(sessionId, hints);
+      await this.writeSpendCheck(sessionId, {
+        ...hints,
+        spendReason: userText.trim().slice(0, 200) || undefined,
+      });
       if (isWeakSpendCheckMessage(validated.message)) {
         return { ...validated, message: SPEND_CHECK_FALLBACK_MESSAGE };
       }

@@ -14,6 +14,8 @@ export interface TransferWizardHints {
   bankCode?: string;
   bankName?: string;
   labelHint?: RecipientLabel;
+  /** User's stated why, stored on the spend-check session only. */
+  spendReason?: string;
 }
 
 /**
@@ -148,24 +150,12 @@ export function isSpendCheckProceedUtterance(text: string): boolean {
   return /^(ok|okay|yes|yeah|yep|please)[\s!.]*$/i.test(t);
 }
 
-export function shouldPauseForSpendCheck(
-  text: string,
-  hints: TransferWizardHints,
-): boolean {
-  if (!isActiveSendUtterance(text)) return false;
-  if (hasStatedSpendPurpose(text)) return false;
-  if (
-    hints.labelHint === "RENT" ||
-    hints.labelHint === "FOOD" ||
-    hints.labelHint === "VENDOR"
-  ) {
-    return false;
-  }
-  return true;
+export function shouldPauseForSpendCheck(text: string): boolean {
+  return isActiveSendUtterance(text);
 }
 
 export const SPEND_CHECK_FALLBACK_MESSAGE =
-  "having room today isn't the same as this being a smart send. what's it actually for?";
+  "having room today isn't the same as this being a smart send. what's it actually for, and do you need it right now?";
 
 export function transferHintsToRaw(
   hints: TransferWizardHints,

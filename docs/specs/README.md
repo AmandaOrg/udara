@@ -16,6 +16,7 @@ Stakeholder-visible behavior for a feature. **What** happens and **why**, not cl
 | --- | --- |
 | [TRANSFER_INTENT_GROUNDING_SPEC.md](TRANSFER_INTENT_GROUNDING_SPEC.md) | [transfer-intent-grounding](../../initiatives/transfer-intent-grounding/plan.md) |
 | [SPEND_CHECK_BEFORE_SEND_SPEC.md](SPEND_CHECK_BEFORE_SEND_SPEC.md) | [spend-check-before-send](../../initiatives/spend-check-before-send/plan.md) |
+| [WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md](WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md) | [whatsapp-media-and-spend-pushback](../../initiatives/whatsapp-media-and-spend-pushback/plan.md) |
 
 ## New spec
 

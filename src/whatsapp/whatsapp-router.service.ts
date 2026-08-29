@@ -28,8 +28,20 @@ import {
   WeeklyReviewService,
   WEEKLY_REVIEW_PREFIX,
 } from "./weekly-review.service";
-import { SensitiveFields } from "./whatsapp-message.service";
+import {
+  SensitiveFields,
+  WhatsappMessageService,
+} from "./whatsapp-message.service";
 import { isMenuShortcut } from "./menu-shortcut.util";
+import { DeepgramService } from "./deepgram.service";
+import { OrchestratorTurnOptions } from "../orchestrator/orchestrator.types";
+
+const AUDIO_TYPE_INSTEAD =
+  "I can't listen to voice notes yet, could you type that instead?";
+const AUDIO_COULDNT_HEAR = "I couldn't hear that clearly, could you type it?";
+const IMAGE_COULDNT_OPEN =
+  "I couldn't open that photo, could you type what you meant?";
+const VISION_MAX_BYTES = 4 * 1024 * 1024;
 
 /**
  * Top-level inbound router.
@@ -52,6 +64,8 @@ export class WhatsappRouterService {
     private readonly orchestrator: OrchestratorService,
     private readonly actionExecutor: ActionExecutorService,
     private readonly weeklyReview: WeeklyReviewService,
+    private readonly deepgram: DeepgramService,
+    private readonly inboundMessages: WhatsappMessageService,
   ) {}
 
   async route(
@@ -71,6 +85,7 @@ export class WhatsappRouterService {
       case WhatsappMessageType.TEXT:
         return this.handleText(user, message);
       case WhatsappMessageType.IMAGE:
+        return this.handleImage(user, message);
       case WhatsappMessageType.DOCUMENT:
       case WhatsappMessageType.LOCATION:
         return this.handleUnsupportedMedia(user, message);
@@ -106,11 +121,86 @@ export class WhatsappRouterService {
     user: User,
     message: WhatsappMessage,
   ): Promise<void> {
-    await this.whatsapp.sendText(
-      message.fromNumber,
-      "I can't listen to voice notes yet, could you type that instead?",
-      user.id,
-    );
+    if (!this.deepgram.isConfigured()) {
+      await this.whatsapp.sendText(
+        message.fromNumber,
+        AUDIO_TYPE_INSTEAD,
+        user.id,
+      );
+      return;
+    }
+    const mediaId = message.mediaId ?? "";
+    if (!mediaId) {
+      await this.whatsapp.sendText(
+        message.fromNumber,
+        AUDIO_COULDNT_HEAR,
+        user.id,
+      );
+      return;
+    }
+    try {
+      const { buffer, mimeType } = await this.whatsapp.downloadMedia(mediaId);
+      const heard = await this.deepgram.transcribe(buffer, mimeType);
+      if (!heard.ok || !heard.text) {
+        await this.whatsapp.sendText(
+          message.fromNumber,
+          AUDIO_COULDNT_HEAR,
+          user.id,
+        );
+        return;
+      }
+      await this.inboundMessages.updateTextBody(message.id, heard.text);
+      await this.handleUserUtterance(user, heard.text);
+    } catch (err) {
+      this.logger.warn(`Audio download/STT failed: ${String(err)}`);
+      await this.whatsapp.sendText(
+        message.fromNumber,
+        AUDIO_COULDNT_HEAR,
+        user.id,
+      );
+    }
+  }
+
+  private async handleImage(
+    user: User,
+    message: WhatsappMessage,
+  ): Promise<void> {
+    const caption = (message.textBody ?? "").trim();
+    if (isPreAccountStage(user.onboardingStage)) {
+      await this.onboarding.handleInboundText(
+        user,
+        caption || "(user sent a photo)",
+      );
+      return;
+    }
+    const mediaId = message.mediaId ?? "";
+    if (!mediaId) {
+      await this.whatsapp.sendText(
+        message.fromNumber,
+        IMAGE_COULDNT_OPEN,
+        user.id,
+      );
+      return;
+    }
+    try {
+      const { buffer, mimeType } = await this.whatsapp.downloadMedia(mediaId);
+      const text = caption || "(user sent a photo)";
+      let image: OrchestratorTurnOptions["image"];
+      if (buffer.length > 0 && buffer.length <= VISION_MAX_BYTES) {
+        image = {
+          mimeType: mimeType || "image/jpeg",
+          data: buffer.toString("base64"),
+        };
+      }
+      await this.handleUserUtterance(user, text, { image });
+    } catch (err) {
+      this.logger.warn(`Image download failed: ${String(err)}`);
+      await this.whatsapp.sendText(
+        message.fromNumber,
+        IMAGE_COULDNT_OPEN,
+        user.id,
+      );
+    }
   }
 
   private async handleButtonReply(
@@ -238,16 +328,19 @@ export class WhatsappRouterService {
     user: User,
     message: WhatsappMessage,
   ): Promise<void> {
-    const text = message.textBody ?? "";
+    await this.handleUserUtterance(user, message.textBody ?? "");
+  }
 
+  private async handleUserUtterance(
+    user: User,
+    text: string,
+    options: OrchestratorTurnOptions = {},
+  ): Promise<void> {
     if (isPreAccountStage(user.onboardingStage)) {
       await this.onboarding.handleInboundText(user, text);
       return;
     }
 
-    // An in-flight weekly-limit adjustment owns the next message: it's the
-    // answer to a question we just asked, not a new command for the
-    // orchestrator to classify.
     const awaitingLimit = await this.weeklyReview.getReviewAwaitingLimit(
       user.id,
     );
@@ -266,7 +359,7 @@ export class WhatsappRouterService {
       return;
     }
 
-    const result = await this.orchestrator.handleMessage(user, text);
+    const result = await this.orchestrator.handleMessage(user, text, options);
     await this.actionExecutor.execute(user, result);
   }
 

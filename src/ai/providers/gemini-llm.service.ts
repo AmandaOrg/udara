@@ -6,6 +6,7 @@ import {
   LlmMessage,
   LlmService,
 } from "../llm.types";
+import { geminiPartsForMessage } from "../llm-vision.util";
 
 type JsonSchemaLike = Record<string, unknown>;
 
@@ -137,7 +138,7 @@ export class GeminiLlmService implements LlmService {
       )
       .map((m) => ({
         role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
+        parts: geminiPartsForMessage(m),
       }));
 
     const body: Record<string, unknown> = {

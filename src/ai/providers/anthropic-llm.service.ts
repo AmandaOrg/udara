@@ -7,6 +7,7 @@ import {
   LlmService,
   LlmMessage,
 } from "../llm.types";
+import { anthropicContentForMessage } from "../llm-vision.util";
 
 /**
  * Real Anthropic implementation. Two instances are built by AiModule's
@@ -62,7 +63,10 @@ export class AnthropicLlmService implements LlmService {
         (m): m is LlmMessage & { role: "user" | "assistant" } =>
           m.role !== "system",
       )
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({
+        role: m.role,
+        content: anthropicContentForMessage(m),
+      }));
 
     const start = Date.now();
     const response = await client.messages.create({

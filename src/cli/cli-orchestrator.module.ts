@@ -28,6 +28,7 @@ const FIXED_ALLOWANCE = {
     remainingToday: 5000,
     remainingWeek: 20000,
   }),
+  evaluateSpend: async () => ({ type: "NORMAL" }),
 };
 
 function conversationLlmProvider(): Provider {

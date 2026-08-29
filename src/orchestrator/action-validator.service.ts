@@ -3,9 +3,9 @@
  * boundary — "the model proposes, code disposes."
  *
  * Validation rules:
- * 1. reply_only → text only, unless this is an active send that already
- *    states a purpose (or a spend-check is in progress) and hints name a send
- * 2. Vague first sends pause for a spend check (no transfer_wizard)
+ * 1. reply_only → text only, unless a spend-check is in progress and they
+ *    proceed and hints name a send
+ * 2. First active sends pause for a spend check (no transfer_wizard)
  * 3. show_surface → surface_key must exist and be eligible; high confidence
  * 4. fill_wizard / cancel_surface → high confidence only; sanitize hints for fill
  * 5. Missing or medium confidence → downgrade to reply_only (safe default)
@@ -48,7 +48,7 @@ export class ActionValidatorService {
     const closedSend = isClosedTransferUtterance(userText);
     const aborting = isSpendCheckAbortUtterance(userText);
     const pause =
-      !options.spendCheckPending && shouldPauseForSpendCheck(userText, hints);
+      !options.spendCheckPending && shouldPauseForSpendCheck(userText);
     const mayPromote =
       transferOk &&
       hasActionableTransferHints(hints) &&

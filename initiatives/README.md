@@ -47,5 +47,6 @@ Do not delete completed folders. Set status `completed` (or `deleted` if abandon
 | --- | --- | --- | --- |
 | [transfer-intent-grounding](transfer-intent-grounding/plan.md) | in progress | [SPEC](../docs/specs/TRANSFER_INTENT_GROUNDING_SPEC.md) | [TECH](../docs/tech-design/TRANSFER_INTENT_GROUNDING_TECH.md) |
 | [spend-check-before-send](spend-check-before-send/plan.md) | in progress | [SPEC](../docs/specs/SPEND_CHECK_BEFORE_SEND_SPEC.md) | [TECH](../docs/tech-design/SPEND_CHECK_BEFORE_SEND_TECH.md) |
+| [whatsapp-media-and-spend-pushback](whatsapp-media-and-spend-pushback/plan.md) | in progress | [SPEC](../docs/specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md) | [TECH](../docs/tech-design/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_TECH.md) |
 
 Update this table whenever you add a folder or change status. `npm run docs:check` enforces registration.

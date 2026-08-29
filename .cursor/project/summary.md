@@ -1,6 +1,6 @@
 # Udara project summary
 
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 Quick orientation for agents. Full behavior: `docs/PRODUCT_BEHAVIOR.md`. Full flow: `docs/ARCHITECTURE.md`. Working rules: `AGENTS.md`.
 
@@ -34,7 +34,7 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 
 ## 4. Routing
 
-Structured payloads → deterministic handlers. Pre-account text → onboarding. Menu shortcuts → list. Post-onboarding text → orchestrator.
+Structured payloads → deterministic handlers. Pre-account text (and transcribed voice) → onboarding. Menu shortcuts → list. Post-onboarding text, transcripts, and images → orchestrator.
 
 Surfaces: `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `spending_menu`, `spend_summary`.
 
@@ -46,7 +46,7 @@ User, DailyAllowance, Recipient, Transaction, OverrideHistory, SettingsChangeReq
 
 ## 6. Integrations
 
-WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), LLM (`AI_PROVIDER=stub|anthropic|openrouter|gemini|bedrock`).
+WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), Deepgram STT (`DEEPGRAM_API_KEY`), LLM (`AI_PROVIDER=stub|anthropic|openrouter|gemini|bedrock`).
 
 ## 7. Commands
 
@@ -75,5 +75,6 @@ WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), LLM (`AI_PRO
 
 ## 10. Active initiatives
 
-- `initiatives/spend-check-before-send` — vague sends get one coaching question before the wizard; remaining allowance is not a skip.
+- `initiatives/spend-check-before-send` — first chat send gets one coaching question before the wizard; remaining allowance is not a skip.
+- `initiatives/whatsapp-media-and-spend-pushback` — Deepgram STT, inbound images, first-send pause including purpose/fee-path; text replies only.
 - `initiatives/transfer-intent-grounding` — closed-send utterances must not relaunch the wizard; completed sends are written into chat history.

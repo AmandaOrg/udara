@@ -21,7 +21,7 @@ When someone asks to send money and they still have remaining daily allowance, U
 ## Scope
 
 - One chat beat (spend check) before `transfer_wizard` when the send has no stated purpose.
-- Same-turn wizard when purpose is already in the message (rent, landlord, food, …) or a non-OTHER label hint.
+- Purpose on the first send no longer skips the pause (see whatsapp-media-and-spend-pushback).
 - After the check, answering / insisting still opens the wizard (hints kept on the session).
 - Prompt, validator, goldens, PRODUCT_BEHAVIOR.
 
@@ -50,7 +50,7 @@ When someone asks to send money and they still have remaining daily allowance, U
 ### Acceptance tests
 
 - [ ] “send 800 to opay” with no why → `reply_only` (no wizard)
-- [ ] “send 5k to my landlord for rent” → wizard same turn
+- [ ] “send 5k to my landlord for rent” → still paused (amended 2026-08-29)
 - [ ] After the check, “it’s for food” / “just send it” → wizard
 - [ ] Closed-send / thanks still must not relaunch
 
@@ -75,4 +75,4 @@ When someone asks to send money and they still have remaining daily allowance, U
 
 ## Decisions
 
-Remaining daily access is not a skip condition for the check. Purpose already in the utterance is.
+Remaining daily access is not a skip. Purpose on the first utterance is not a skip either (2026-08-29).

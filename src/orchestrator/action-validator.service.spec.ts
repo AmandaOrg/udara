@@ -72,6 +72,7 @@ describe("ActionValidatorService", () => {
       user,
       eligible,
       sendNow,
+      { spendCheckPending: true },
     );
     expect(result.ok).toBe(true);
     expect(result.actionType).toBe("show_surface");
@@ -98,6 +99,7 @@ describe("ActionValidatorService", () => {
       user,
       eligible,
       sendNow,
+      { spendCheckPending: true },
     );
     expect(result.extractedHints).toEqual({
       amount: 5000,
@@ -105,7 +107,7 @@ describe("ActionValidatorService", () => {
     });
   });
 
-  it("launches the wizard when reply_only still extracted a ready send", () => {
+  it("pauses a ready first send even when purpose is already in the message", () => {
     const result = validator.validate(
       {
         message: "let's get that ₦200 transfer to Opay ready.",
@@ -122,16 +124,11 @@ describe("ActionValidatorService", () => {
       eligible,
       "lets make a trasfer of 200 to 8100368023, opay, for food",
     );
-    expect(result.actionType).toBe("show_surface");
-    expect(result.surfaceKey).toBe("transfer_wizard");
-    expect(result.extractedHints).toEqual({
-      amount: 200,
-      accountNumber: "8100368023",
-      bankName: "opay",
-    });
+    expect(result.actionType).toBe("reply_only");
+    expect(result.surfaceKey).toBeUndefined();
   });
 
-  it("does not drop a ready transfer just because confidence is medium", () => {
+  it("does not promote a first send just because confidence is medium", () => {
     const result = validator.validate(
       proposal({
         surface_key: "transfer_wizard",
@@ -147,8 +144,8 @@ describe("ActionValidatorService", () => {
       eligible,
       "i want to transfer 200 to 8100368023, opay for rent",
     );
-    expect(result.surfaceKey).toBe("transfer_wizard");
-    expect(result.actionType).toBe("show_surface");
+    expect(result.actionType).toBe("reply_only");
+    expect(result.surfaceKey).toBeUndefined();
   });
 
   it("accepts fill_wizard with sanitized hints", () => {
@@ -297,6 +294,22 @@ describe("ActionValidatorService", () => {
     );
     expect(result.actionType).toBe("show_surface");
     expect(result.surfaceKey).toBe("transfer_wizard");
+  });
+
+  it("pauses a purpose-stated first send for a spend check", () => {
+    const result = validator.validate(
+      proposal({
+        surface_key: "transfer_wizard",
+        confidence: "high",
+        extracted_hints: { amount: 5000, label_hint: "RENT" },
+        message: "on it.",
+      }),
+      user,
+      eligible,
+      "send 5k to my landlord",
+    );
+    expect(result.actionType).toBe("reply_only");
+    expect(result.surfaceKey).toBeUndefined();
   });
 
   it("pauses a vague send for a spend check instead of launching the wizard", async () => {

@@ -19,8 +19,8 @@ No migration. `ConversationSession.contextData` JSON:
 
 Helpers on [`src/orchestrator/transfer-hints.util.ts`](../../src/orchestrator/transfer-hints.util.ts):
 
-- `hasStatedSpendPurpose(text)` — skip-check heuristic (not a transfer parser)
-- `shouldPauseForSpendCheck(text, hints)`
+- `hasStatedSpendPurpose(text)` — proceed-after-check heuristic (not a transfer parser; not a first-turn skip)
+- `shouldPauseForSpendCheck(text)` — true for any first active send utterance
 - `isSpendCheckProceedUtterance(text)` / `isSpendCheckAbortUtterance(text)`
 
 ## Control flow
@@ -29,7 +29,7 @@ Helpers on [`src/orchestrator/transfer-hints.util.ts`](../../src/orchestrator/tr
 2. Live facts: if pending, `Active mode: spend_check` plus stored hints.
 3. `ActionValidatorService.validate(..., userText, { spendCheckPending })`:
    - Closed or abort → no wizard.
-   - `shouldPauseForSpendCheck` and not pending → no promote; `show_surface transfer_wizard` becomes `reply_only`.
+   - `shouldPauseForSpendCheck` (any first active send) and not pending → no promote; `show_surface transfer_wizard` becomes `reply_only`.
    - Pending + proceed / still sending / high-confidence wizard → may launch.
 4. Orchestrator: on a paused first send, persist sanitized hints and replace a lead-in (“on it.”) with a fixed challenge if the model did not actually ask.
 5. On launch or abort, clear `spendCheck`.
@@ -44,7 +44,7 @@ Helpers on [`src/orchestrator/transfer-hints.util.ts`](../../src/orchestrator/tr
 ## Tests
 
 - Unit: `transfer-hints.util.spec.ts`, `action-validator.service.spec.ts`, `orchestrator.service.spec.ts`
-- Golden: vague send → `expected_surface` null; purpose send still wizard; proceed-after-check wizard
+- Golden: first send (vague or purpose) → `expected_surface` null; proceed-after-check wizard
 - Commands: `npx jest src/orchestrator` and `npm run orchestrator:golden`
 
 ## Rollout / risk
@@ -56,3 +56,5 @@ Purpose keyword list is English/Nigerian-English and incomplete on purpose. Pref
 | Date | Change |
 | --- | --- |
 | 2026-08-27 | Initial |
+| 2026-08-29 | Purpose/label no longer skip the first-send pause |
+| 2026-08-29 | First-send pause includes purpose-stated sends |

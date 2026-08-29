@@ -30,7 +30,9 @@ Internal package/DB naming still uses `kedu` / `ConversationPersona.KEDU`. User-
 | WhatsApp Flow reply (KYC or PIN) | `PinGateService` or onboarding Flow handler |
 | Pre-account free text | Onboarding stage machine |
 | Exact menu shortcuts (`menu`, `help`, …) | Main menu, no LLM |
-| Post-onboarding free text | Orchestrator `propose_turn` → `ActionValidatorService` → `ActionExecutorService` |
+| Post-onboarding free text, transcribed voice, or image + caption | Orchestrator `propose_turn` → `ActionValidatorService` → `ActionExecutorService` |
+| Voice note | Deepgram transcript, then the same path as free text (text replies only) |
+| Image | Download + orchestrator (vision when the conversation model supports it) |
 
 There is **no** regex product path that extracts transfer fields from free text. The LLM proposes; the validator disposes.
 
@@ -66,7 +68,7 @@ Fee amounts are shown and stored even if `RUBIES_FEES_ACCOUNT_NUMBER` is unset; 
 1. Send-money wizard is a `TransferDraft` step machine, **separate** from `ConversationSession`.
 2. Steps: amount → account number → bank selection → label (new recipients only).
 3. Orchestrator may start or fill the wizard via `show_surface transfer_wizard` / `fill_wizard` with sanitized hints (amount > 0, 10-digit account, 6-digit bank code, label in RENT/FOOD/VENDOR/OTHER).
-4. A vague send (no stated purpose) gets one spend-check question in chat before the wizard. Remaining daily allowance is not permission to skip that. Purpose already in the message (rent, landlord, food, …) can still open the wizard the same turn. See [specs/SPEND_CHECK_BEFORE_SEND_SPEC.md](specs/SPEND_CHECK_BEFORE_SEND_SPEC.md).
+4. A first send in chat gets one spend-check question before the wizard, even if they already named a purpose or would pay a fee. Remaining daily allowance is not permission to skip that. After they answer or insist, the wizard may open. See [specs/SPEND_CHECK_BEFORE_SEND_SPEC.md](specs/SPEND_CHECK_BEFORE_SEND_SPEC.md) and [specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md](specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md).
 5. Every send still goes through confirm buttons, then PIN via WhatsApp Flow (`PENDING_PIN` until verified). Money does not move on confirm alone.
 6. Thanks / “you already sent it” must not relaunch the wizard. See [specs/TRANSFER_INTENT_GROUNDING_SPEC.md](specs/TRANSFER_INTENT_GROUNDING_SPEC.md).
 
@@ -120,14 +122,17 @@ The [Canonical Onboarding Script](✅-Kedu-Onboarding-Script.pdf) is committed, 
 
 - PIN setup/entry and KYC only via WhatsApp Flows ([whatsapp-flows/](whatsapp-flows/)).
 - Persist redacted message bodies (`sensitive-fields.util` / WhatsApp message service).
+- Inbound voice transcripts and image captions may be stored as `textBody`. Audio and image bytes are not persisted.
 - HMAC on webhooks uses raw request bytes (`main.ts` `rawBody: true`).
 - Unsigned WhatsApp/Rubies webhooks are accepted only when the corresponding secret is blank (local/e2e). Production must set secrets.
 
 ---
 
-## Voice
+## Voice and inbound media
 
-**Verified.** The shipped voice is [`src/ai/prompts/kedu-persona.prompts.ts`](../src/ai/prompts/kedu-persona.prompts.ts): lowercase friendly texting, strict on rules, chunked bubbles, no em dashes, no corporate-bank voice. The [Character & Tone System Prompt](✅-Kedu-Character-Tone-Prompt.pdf) it was derived from is committed as background.
+**Verified.** The shipped writing voice is [`src/ai/prompts/kedu-persona.prompts.ts`](../src/ai/prompts/kedu-persona.prompts.ts): lowercase friendly texting, strict on rules, chunked bubbles, no em dashes, no corporate-bank voice. The [Character & Tone System Prompt](✅-Kedu-Character-Tone-Prompt.pdf) it was derived from is committed as background.
+
+Inbound WhatsApp voice notes are transcribed (Deepgram) and handled as text. Replies stay text. Photos may be understood this turn when the conversation model supports vision; they are not a KYC path. See [specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md](specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md).
 
 ---
 

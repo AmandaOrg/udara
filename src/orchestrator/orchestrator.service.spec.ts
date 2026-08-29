@@ -11,7 +11,7 @@ describe("OrchestratorService", () => {
   let prisma: any;
   let llm: { complete: jest.Mock };
   let llmLogger: { log: jest.Mock; markApplied: jest.Mock };
-  let allowance: { getRemainingSummary: jest.Mock };
+  let allowance: { getRemainingSummary: jest.Mock; evaluateSpend: jest.Mock };
   let windowService: {
     isWithinWindow: jest.Mock;
     hoursUntilWindowOpens: jest.Mock;
@@ -64,6 +64,7 @@ describe("OrchestratorService", () => {
       getRemainingSummary: jest
         .fn()
         .mockResolvedValue({ remainingToday: 5000, remainingWeek: 20000 }),
+      evaluateSpend: jest.fn().mockResolvedValue({ type: "NORMAL" }),
     };
     windowService = {
       isWithinWindow: jest.fn().mockReturnValue(true),
@@ -77,6 +78,7 @@ describe("OrchestratorService", () => {
       allowance as any,
       windowService as any,
       new ActionValidatorService(),
+      { get: () => "stub" } as any,
     );
   });
 
@@ -92,9 +94,8 @@ describe("OrchestratorService", () => {
           message: "lets send that",
           action: {
             type: "show_surface",
-            surface_key: "transfer_wizard",
+            surface_key: "balance_read",
             confidence: "high",
-            extracted_hints: { amount: 15000 },
           },
         },
       },
@@ -103,11 +104,10 @@ describe("OrchestratorService", () => {
       model: "stub",
     });
 
-    const result = await service.handleMessage(user, "send 15k to landlord");
+    const result = await service.handleMessage(user, "what's my balance");
 
     expect(result.ok).toBe(true);
-    expect(result.surfaceKey).toBe("transfer_wizard");
-    expect(result.extractedHints).toEqual({ amount: 15000 });
+    expect(result.surfaceKey).toBe("balance_read");
     expect(llm.complete).toHaveBeenCalledWith(
       expect.objectContaining({
         purpose: LlmCallPurpose.ORCHESTRATOR_TURN,
@@ -120,7 +120,7 @@ describe("OrchestratorService", () => {
       expect.objectContaining({
         proposed: expect.any(Object),
         validated: expect.objectContaining({
-          surfaceKey: "transfer_wizard",
+          surfaceKey: "balance_read",
         }),
       }),
       true,
@@ -310,6 +310,58 @@ describe("OrchestratorService", () => {
             spendCheck: expect.objectContaining({ amount: 800 }),
           }),
         }),
+      }),
+    );
+  });
+
+  it("does not open the wizard on a purpose-stated first send", async () => {
+    llm.complete.mockResolvedValue({
+      toolCall: {
+        name: "propose_turn",
+        arguments: {
+          message: "on it.",
+          action: {
+            type: "show_surface",
+            surface_key: "transfer_wizard",
+            confidence: "high",
+            extracted_hints: { amount: 5000, label_hint: "RENT" },
+          },
+        },
+      },
+      latencyMs: 40,
+      provider: "stub",
+      model: "stub",
+    });
+
+    const result = await service.handleMessage(user, "send 5k to my landlord");
+
+    expect(result.actionType).toBe("reply_only");
+    expect(result.surfaceKey).toBeUndefined();
+  });
+
+  it("attaches a photo only when the conversation provider can see it", async () => {
+    llm.complete.mockResolvedValue({
+      toolCall: {
+        name: "propose_turn",
+        arguments: { message: "got the photo", action: { type: "reply_only" } },
+      },
+      latencyMs: 20,
+      provider: "stub",
+      model: "stub",
+    });
+
+    await service.handleMessage(user, "this receipt", {
+      image: { mimeType: "image/jpeg", data: "abc" },
+    });
+
+    expect(llm.complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: "system",
+            content: expect.stringMatching(/not visible to the model/),
+          }),
+        ]),
       }),
     );
   });
