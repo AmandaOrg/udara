@@ -4,12 +4,12 @@
  * Any other access throws — CLI must never touch real DB / money tables.
  */
 
-import { Injectable } from '@nestjs/common';
+import { Injectable } from "@nestjs/common";
 import {
   ConversationPersona,
   ConversationSessionStatus,
   Prisma,
-} from '@prisma/client';
+} from "@prisma/client";
 
 type SessionRow = {
   id: string;
@@ -34,7 +34,7 @@ export class CliPrismaStub {
         persona: ConversationPersona;
         status: ConversationSessionStatus;
       };
-      orderBy?: { updatedAt: 'desc' | 'asc' };
+      orderBy?: { updatedAt: "desc" | "asc" };
     }): Promise<SessionRow | null> => {
       const matches = [...this.sessions.values()].filter(
         (s) =>
@@ -43,7 +43,9 @@ export class CliPrismaStub {
           s.status === args.where.status,
       );
       matches.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
-      return matches[0] ? { ...matches[0], messages: [...matches[0].messages] } : null;
+      return matches[0]
+        ? { ...matches[0], messages: [...matches[0].messages] }
+        : null;
     },
 
     create: async (args: {
@@ -85,7 +87,10 @@ export class CliPrismaStub {
 
     update: async (args: {
       where: { id: string };
-      data: { messages?: Prisma.InputJsonValue; contextData?: Prisma.InputJsonValue };
+      data: {
+        messages?: Prisma.InputJsonValue;
+        contextData?: Prisma.InputJsonValue;
+      };
     }): Promise<SessionRow> => {
       const row = this.sessions.get(args.where.id);
       if (!row) {

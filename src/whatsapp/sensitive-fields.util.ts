@@ -37,6 +37,7 @@ export const REDACTED = "[redacted]";
 export const SENSITIVE_FLOW_FIELDS = [
   "pin",
   "pin_confirm",
+  "otp",
   "new_pin",
   "current_pin",
   "id_number",

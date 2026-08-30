@@ -4,6 +4,8 @@
 Initiative: [initiatives/spend-check-before-send/plan.md](../../initiatives/spend-check-before-send/plan.md)  
 Tech design: [../tech-design/SPEND_CHECK_BEFORE_SEND_TECH.md](../tech-design/SPEND_CHECK_BEFORE_SEND_TECH.md)
 
+Amended by [WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md](WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md): purpose on the first send is no longer a same-turn skip.
+
 The original PRD is committed in `docs/` but is historical background, not spec. Rules below are verified against identity copy plus this implementation.
 
 ## Problem
@@ -12,28 +14,26 @@ Users who still have remaining daily allowance can say they want to send money a
 
 ## Goals
 
-- A vague send (amount and/or destination, no purpose) gets **one** in-character question before the send-money wizard.
-- Remaining allowance is not permission to skip that question.
-- A send that already states a purpose can still open the wizard in the same turn.
+- A first send in chat gets **one** in-character question before the send-money wizard (vague or with a purpose).
+- Remaining allowance is not permission to skip that question. Paying early-access or borrow fees is not a skip either.
 - After the question, answering or insisting still prepares the send (does not loop forever).
 - The user's free-text answer is classified into `RENT | FOOD | VENDOR | OTHER` and stored on the transaction as `purposeLabel`.
 
 ## Non-goals
 
-- Refusing a send that fits today’s allowance.
+- Hard-blocking a send that fits today’s allowance after they insist.
 - New wizard steps, buttons, or PIN changes.
 - A long counselling script.
 
 ## User-visible behavior
 
-1. **Vague send** (for example `send 800 to opay`, `I want to send money now`, `lets make a transfer of 200 to …` with no why): Udara replies in chat only. It asks what the money is for (or whether it is actually needed). It does **not** open send money on that turn.
-2. **Purpose already stated** (for example `send 5k to my landlord for rent`, `pay food`): send money may open immediately, same as today.
-3. **After the check:** if they give a purpose, say send it anyway, or otherwise still want the send, Udara opens the wizard that turn using details already collected. If they back off (`never mind`, `don't send`), it stays chat-only and does not open the wizard.
-4. Mid-wizard field answers, confirm, and PIN are unchanged. Thanks / “you already sent it” still must not start a send (see transfer-intent grounding).
+1. **First send** (for example `send 800 to opay`, `send 5k to my landlord for rent`): Udara replies in chat only. It asks what the money is for / whether it is actually needed. It does **not** open send money on that turn.
+2. **After the check:** if they give a purpose, say send it anyway, or otherwise still want the send, Udara opens the wizard that turn using details already collected. If they back off (`never mind`, `don't send`), it stays chat-only and does not open the wizard.
+3. Mid-wizard field answers, confirm, and PIN are unchanged. Thanks / “you already sent it” still must not start a send (see transfer-intent grounding).
 
 ## Edge cases
 
-- Label hint `RENT` / `FOOD` / `VENDOR` counts as purpose; `OTHER` does not skip the check by itself.
+- Label hints do not skip the first-send pause. They still help resume after the check.
 - Window closed: do not open the wizard; the spend check does not override the window lock.
 - Bare `yes` after the check may proceed; bare `yes` with no check in progress still does not invent a new send by itself.
 - `purposeLabel` on the transaction may differ from `Recipient.label` when sending to someone tagged on an earlier transfer.
@@ -45,7 +45,7 @@ No new collection of PIN, BVN, or NIN. Purpose is free text in the existing chat
 ## Acceptance (observable)
 
 - Vague Opay/amount send → no `transfer_wizard` on that turn.
-- Landlord/rent (or similar) send → `transfer_wizard` allowed same turn.
+- Landlord/rent (or similar) first send → no `transfer_wizard` on that turn.
 - After a spend-check question, a purpose or “just send it” → `transfer_wizard` allowed with `labelHint` when stated.
 - Executed transaction row includes `purposeLabel` when classification was provided.
 
@@ -55,3 +55,4 @@ No new collection of PIN, BVN, or NIN. Purpose is free text in the existing chat
 | --- | --- |
 | 2026-08-27 | Initial |
 | 2026-08-28 | Phase 2: purposeLabel persistence + spend-check classification |
+| 2026-08-29 | Purpose no longer skips the first-send pause |

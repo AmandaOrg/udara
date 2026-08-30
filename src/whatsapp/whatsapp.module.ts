@@ -12,6 +12,10 @@ import { KeduChatService } from "./kedu-chat.service";
 import { AccountActionsService } from "./account-actions.service";
 import { IntentRouterService } from "./intent-router.service";
 import { PinGateService } from "./pin-gate.service";
+import { WeeklyReviewService } from "./weekly-review.service";
+import { WeeklyReviewScheduler } from "./weekly-review.scheduler";
+import { DeepgramService } from "./deepgram.service";
+import { EmailModule } from "../email/email.module";
 import { ActionExecutorService } from "../orchestrator/action-executor.service";
 import { OrchestratorModule } from "../orchestrator/orchestrator.module";
 import { PinModule } from "../pin/pin.module";
@@ -28,6 +32,7 @@ import { AiModule } from "../ai/ai.module";
     AiModule,
     OrchestratorModule,
     PinModule,
+    forwardRef(() => EmailModule),
     // forwardRef: AllowanceModule's AllowanceScheduler needs WhatsappService back
     // (window-open nudge, Phase 9) — see allowance.module.ts for the other half.
     forwardRef(() => AllowanceModule),
@@ -58,6 +63,9 @@ import { AiModule } from "../ai/ai.module";
     PinGateService,
     // Needs WhatsApp/account deps — provided here, not in OrchestratorModule.
     ActionExecutorService,
+    WeeklyReviewService,
+    WeeklyReviewScheduler,
+    DeepgramService,
   ],
   exports: [
     WhatsappService,

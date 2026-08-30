@@ -73,6 +73,7 @@ describe("isPreAccountStage", () => {
   it.each([
     OnboardingStage.DISCOVERY,
     OnboardingStage.WELCOME,
+    OnboardingStage.TERMS_CONSENT,
     OnboardingStage.IDENTITY,
     OnboardingStage.FREQUENCY_CHECK,
     OnboardingStage.PLAN_PROPOSED,
@@ -222,7 +223,7 @@ describe("OnboardingService", () => {
       );
     });
 
-    it("on 'Yes, I understand': advances to IDENTITY and sends the four quick questions", async () => {
+    it("on 'Yes, I understand': shows the terms before collecting anything, not the quick questions", async () => {
       const user = build(
         makeUser({ onboardingStage: OnboardingStage.WELCOME }),
       );
@@ -230,12 +231,19 @@ describe("OnboardingService", () => {
       await service.handleInboundButton(user as any, "intro:yes");
 
       expect(prisma._users.get("user-1")?.onboardingStage).toBe(
-        OnboardingStage.IDENTITY,
+        OnboardingStage.TERMS_CONSENT,
       );
       expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
         "234801",
-        expect.stringContaining("4 quick things"),
+        expect.stringContaining("what you're agreeing to"),
         "user-1",
+      );
+      // Nothing personal is asked for until consent is given.
+      const sent = chunkedMessenger.sendChunkedReply.mock.calls.map(
+        (c: any[]) => c[1],
+      );
+      expect(sent.some((t: string) => t.includes("4 quick things"))).toBe(
+        false,
       );
     });
 
@@ -1051,6 +1059,102 @@ describe("OnboardingService", () => {
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
         expect.stringContaining("doesn't apply"),
+        "user-1",
+      );
+    });
+  });
+  describe("TERMS_CONSENT", () => {
+    it("states the restrictions, the fees, and the cooling-off period, not just benefits", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.WELCOME }),
+      );
+      await service.handleInboundButton(user as any, "intro:yes");
+
+      const terms = chunkedMessenger.sendChunkedReply.mock.calls
+        .map((c: any[]) => c[1])
+        .join("\n");
+
+      expect(terms).toContain("11am and 8pm");
+      expect(terms).toContain("override fee");
+      expect(terms).toContain("7 day cooling-off");
+      expect(terms).toContain("rubies microfinance bank");
+      expect(terms).toContain("not a licensed financial adviser");
+    });
+
+    it("asks for consent with an explicit agree button", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.WELCOME }),
+      );
+      await service.handleInboundButton(user as any, "intro:yes");
+
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("do you agree"),
+        expect.arrayContaining([
+          expect.objectContaining({ id: "terms:agree" }),
+          expect.objectContaining({ id: "terms:detail" }),
+        ]),
+        "user-1",
+      );
+    });
+
+    it("records consent with a version, then continues to the quick questions", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.TERMS_CONSENT }),
+      );
+
+      await service.handleInboundButton(user as any, "terms:agree");
+
+      const stored = prisma._users.get("user-1")!;
+      expect(stored.termsAcceptedAt).toBeInstanceOf(Date);
+      expect(stored.termsVersion).toBe("2026-08-v1");
+      expect(stored.onboardingStage).toBe(OnboardingStage.IDENTITY);
+      expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("4 quick things"),
+        "user-1",
+      );
+    });
+
+    it("reading the consequences is NOT consent: stays put and re-asks", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.TERMS_CONSENT }),
+      );
+
+      await service.handleInboundButton(user as any, "terms:detail");
+
+      const stored = prisma._users.get("user-1")!;
+      expect(stored.termsAcceptedAt).toBeUndefined();
+      expect(stored.onboardingStage).toBe(OnboardingStage.TERMS_CONSENT);
+      expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("the transfer is refused"),
+        "user-1",
+      );
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("do you agree"),
+        expect.any(Array),
+        "user-1",
+      );
+    });
+
+    it("free text does not count as consent, it re-asks with the buttons", async () => {
+      build(makeUser({ onboardingStage: OnboardingStage.TERMS_CONSENT }));
+
+      await service.handleInboundText(
+        makeUser({ onboardingStage: OnboardingStage.TERMS_CONSENT }) as any,
+        "yeah sure whatever",
+      );
+
+      const stored = prisma._users.get("user-1")!;
+      expect(stored.termsAcceptedAt).toBeUndefined();
+      expect(stored.onboardingStage).toBe(OnboardingStage.TERMS_CONSENT);
+      expect(llm.complete).not.toHaveBeenCalled();
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("do you agree"),
+        expect.any(Array),
         "user-1",
       );
     });

@@ -12,9 +12,10 @@
       }
     },
     "eligible_surfaces": ["transfer_wizard", "balance_read", "limits_read", "spending_menu", "account_details", "spend_summary"],
-    "expected_surface": "transfer_wizard",
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
     "expected_confidence": "high",
-    "forbidden_surfaces": ["balance_read", "limits_read"]
+    "forbidden_surfaces": ["transfer_wizard", "balance_read", "limits_read"]
   },
   {
     "test_case_id": "tx_intent_02_medium",
@@ -478,9 +479,10 @@
       }
     },
     "eligible_surfaces": ["transfer_wizard", "limits_read"],
-    "expected_surface": "transfer_wizard",
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
     "expected_confidence": "high",
-    "forbidden_surfaces": ["limits_read"]
+    "forbidden_surfaces": ["transfer_wizard", "limits_read"]
   },
   {
     "test_case_id": "tx_full_details_high",
@@ -500,9 +502,10 @@
       }
     },
     "eligible_surfaces": ["transfer_wizard", "balance_read"],
-    "expected_surface": "transfer_wizard",
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
     "expected_confidence": "high",
-    "forbidden_surfaces": ["balance_read"]
+    "forbidden_surfaces": ["transfer_wizard", "balance_read"]
   },
   {
     "test_case_id": "tx_natural_of_amount_opay",

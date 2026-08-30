@@ -36,6 +36,8 @@ WHATSAPP_WEBHOOK_VERIFY_TOKEN=e2e-verify-token
 
 Leave `WHATSAPP_APP_SECRET` and `RUBIES_SECRET_KEY` blank only for unsigned local acceptance. Set them before pointing a real number or production Rubies webhooks at this process.
 
+Inbound voice notes need `DEEPGRAM_API_KEY` on the **same process that receives the WhatsApp webhook** (local `.env` does not apply to Railway). Optional `DEEPGRAM_STT_MODEL` defaults to `nova-3`. Without the key, Udara asks the user to type. `WHATSAPP_DRY_RUN=true` still skips outbound Graph sends; inbound media download still runs so voice and photos can be understood.
+
 ## Migrations
 
 Schema changes go through Prisma:

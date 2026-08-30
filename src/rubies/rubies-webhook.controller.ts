@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { TransferConfirmationService } from "../whatsapp/transfer-confirmation.service";
 import { AllowanceService } from "../allowance/allowance.service";
+import { EmailNotificationsService } from "../email/email-notifications.service";
 import { displayFirstNameOrThere } from "../common/display-name.util";
 import { RubiesSignatureGuard } from "./rubies-signature.guard";
 import { mapRubiesResponseCode } from "./rubies.service";
@@ -49,6 +50,7 @@ export class RubiesWebhookController {
     private readonly whatsapp: WhatsappService,
     private readonly transferConfirmation: TransferConfirmationService,
     private readonly allowance: AllowanceService,
+    private readonly emailNotifications: EmailNotificationsService,
   ) {}
 
   @UseGuards(RubiesSignatureGuard)
@@ -131,6 +133,16 @@ export class RubiesWebhookController {
         sourceNarration: payload.narration,
         creditedAt: new Date(),
       },
+    });
+
+    // Best-effort, keyed on the Rubies reference so a redelivered webhook
+    // can't double-send. Never awaited for its result beyond completion:
+    // EmailNotificationsService swallows its own failures.
+    await this.emailNotifications.sendMoneyIn({
+      user,
+      amount,
+      rubiesReference: payload.paymentReference,
+      senderName: payload.originatorName ?? null,
     });
 
     const completesOnboarding =

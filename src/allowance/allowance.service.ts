@@ -34,25 +34,54 @@ export class AllowanceService {
    * evaluateSpend still works, it just won't allow any NORMAL spend until a
    * plan exists.
    */
-  private computeDailyAmount(user: Pick<User, "monthlyIncome">): number {
+  computePlannedDailyAmount(user: Pick<User, "monthlyIncome">): number {
     if (!user.monthlyIncome) return 0;
     const WANTS_ALLOCATION_PCT = 0.3;
     return (Number(user.monthlyIncome) * WANTS_ALLOCATION_PCT) / 30;
   }
 
-  /** Fetch or lazily create today's allowance row for a user. */
-  async getOrCreateTodayAllowance(userId: string) {
+  /**
+   * The daily figure actually in force: the derived plan above, unless the
+   * user set a one-week override at their Sunday review (see
+   * WeeklyReviewService). The override is honoured only for the WAT ISO week
+   * it was set for, so it lapses on its own rather than quietly becoming the
+   * new normal.
+   */
+  private computeDailyAmount(
+    user: Pick<
+      User,
+      "monthlyIncome" | "dailyLimitOverride" | "dailyLimitOverrideWeekStart"
+    >,
+    now: Date = new Date(),
+  ): number {
+    if (user.dailyLimitOverride != null && user.dailyLimitOverrideWeekStart) {
+      const currentWeek = startOfWatIsoWeekBucketKey(now);
+      if (
+        user.dailyLimitOverrideWeekStart.getTime() === currentWeek.getTime()
+      ) {
+        return Number(user.dailyLimitOverride);
+      }
+    }
+    return this.computePlannedDailyAmount(user);
+  }
+
+  /**
+   * Fetch or lazily create today's allowance row for a user. `now` is taken
+   * once and threaded through, so the day bucket and the weekly-override
+   * check can't disagree if the call straddles a WAT midnight.
+   */
+  async getOrCreateTodayAllowance(userId: string, now: Date = new Date()) {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
     });
-    const today = watDateBucketKey(new Date());
+    const today = watDateBucketKey(now);
 
     const existing = await this.prisma.dailyAllowance.findUnique({
       where: { userId_date: { userId, date: today } },
     });
     if (existing) return existing;
 
-    const dailyAmount = this.computeDailyAmount(user);
+    const dailyAmount = this.computeDailyAmount(user, now);
 
     // today is a UTC-midnight bucket key (see watDateBucketKey) — step it
     // back a calendar day via the UTC setter, not the local one, or this

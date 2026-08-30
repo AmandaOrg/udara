@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { firstValueFrom } from "rxjs";
 import { WhatsappMessageType } from "@prisma/client";
 import { WhatsappMessageService } from "./whatsapp-message.service";
+import { normalizeEnvString } from "../config/env-string.util";
 
 export interface InteractiveButton {
   id: string;
@@ -296,19 +297,51 @@ export class WhatsappService {
   }
 
   /**
-   * TODO (post-v0 fast-follow, not built now): download a media object's
-   * bytes via Meta's two-step media API — GET /{media-id} for a short-lived
-   * URL, then GET that URL with the same bearer token. Typed now so the audio
-   * transcription fast-follow has a real seam to plug into.
-   * WhatsappRouterService's AUDIO branch does not call this yet — it replies
-   * with a static "please type that instead" fallback (deliberate v0 scope
-   * decision, see the build-out plan).
+   * Meta two-step media download: GET /{media-id} for a short-lived URL,
+   * then GET that URL with the same bearer. Do not log the URL (it can
+   * carry a signature). WHATSAPP_DRY_RUN only skips outbound sends, not
+   * inbound download — voice/photos cannot be understood without the bytes.
    */
   async downloadMedia(
-    _mediaId: string,
+    mediaId: string,
   ): Promise<{ buffer: Buffer; mimeType: string }> {
-    throw new Error(
-      "Not implemented — audio/media download is a post-v0 fast-follow",
+    const id = mediaId.trim();
+    if (!id) {
+      throw new Error("media id required");
+    }
+
+    const token = normalizeEnvString(
+      this.config.get<string>("WHATSAPP_ACCESS_TOKEN"),
     );
+    if (!token) {
+      throw new Error("WHATSAPP_ACCESS_TOKEN is not set");
+    }
+    const headers = { Authorization: `Bearer ${token}` };
+    const meta = await firstValueFrom(
+      this.http.get<{ url?: string; mime_type?: string }>(
+        `https://graph.facebook.com/v19.0/${id}`,
+        { headers, timeout: 15_000 },
+      ),
+    );
+    const url = meta.data.url;
+    if (!url) {
+      throw new Error("media url missing");
+    }
+    const file = await firstValueFrom(
+      this.http.get<ArrayBuffer>(url, {
+        headers,
+        responseType: "arraybuffer",
+        timeout: 20_000,
+        maxContentLength: 16 * 1024 * 1024,
+      }),
+    );
+    const buffer = Buffer.from(file.data);
+    if (buffer.length > 16 * 1024 * 1024) {
+      throw new Error("media too large");
+    }
+    return {
+      buffer,
+      mimeType: meta.data.mime_type ?? "application/octet-stream",
+    };
   }
 }

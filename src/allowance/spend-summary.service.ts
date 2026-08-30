@@ -4,9 +4,11 @@ import { RecipientLabel, TransactionStatus } from "@prisma/client";
 import {
   getWatDateParts,
   startOfWatIsoWeekInstant,
+  startOfWatMonthInstant,
 } from "../common/wat-time.util";
 
 export interface WeeklySpendSummary {
+  /** Start of the period the summary covers (ISO-week Monday, or month 1st). */
   weekStartDate: Date;
   totalSpent: number;
   byDay: { date: string; amount: number }[];
@@ -38,7 +40,26 @@ export class SpendSummaryService {
     userId: string,
     now: Date = new Date(),
   ): Promise<WeeklySpendSummary> {
-    const weekStartDate = startOfWatIsoWeekInstant(now);
+    return this.summarizeSince(userId, startOfWatIsoWeekInstant(now));
+  }
+
+  /**
+   * Same aggregation over the WAT calendar month to date. Shares
+   * summarizeSince with the weekly view so the two can never disagree about
+   * how a transaction is bucketed or labelled.
+   */
+  async getMonthlySummary(
+    userId: string,
+    now: Date = new Date(),
+  ): Promise<WeeklySpendSummary> {
+    return this.summarizeSince(userId, startOfWatMonthInstant(now));
+  }
+
+  private async summarizeSince(
+    userId: string,
+    periodStart: Date,
+  ): Promise<WeeklySpendSummary> {
+    const weekStartDate = periodStart;
 
     const transactions = await this.prisma.transaction.findMany({
       where: {

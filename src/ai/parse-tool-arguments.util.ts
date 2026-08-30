@@ -6,17 +6,17 @@
 export function parseToolCallArguments(
   raw: unknown,
 ): Record<string, unknown> | undefined {
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     return raw as Record<string, unknown>;
   }
-  if (typeof raw !== 'string') return undefined;
+  if (typeof raw !== "string") return undefined;
 
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
 
   try {
     const parsed: unknown = JSON.parse(trimmed);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
   } catch {

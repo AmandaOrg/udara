@@ -89,6 +89,28 @@ export function watDateBucketKey(date: Date): Date {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
+/**
+ * The true UTC instant of WAT midnight on the 1st of the WAT calendar month
+ * a given instant falls on. The month-summary counterpart to
+ * startOfWatIsoWeekInstant, for real DateTime comparisons.
+ */
+export function startOfWatMonthInstant(date: Date): Date {
+  const { year, month } = getWatDateParts(date);
+  return watMidnightInstant({ year, month, day: 1 });
+}
+
+/**
+ * The WAT calendar month a given instant falls on, as a display label like
+ * "January 2026".
+ */
+export function formatWatMonthLabel(date: Date): string {
+  return new Intl.DateTimeFormat("en-NG", {
+    timeZone: WAT_TIME_ZONE,
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
 /** Monday of the WAT ISO week a given instant falls on, as WatDateParts. */
 function watIsoWeekStartParts(date: Date): WatDateParts {
   const bucketKey = watDateBucketKey(date);

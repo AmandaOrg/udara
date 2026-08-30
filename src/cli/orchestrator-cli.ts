@@ -9,20 +9,20 @@
  * Never boots WhatsApp / Rubies / ActionExecutor. Print-only.
  */
 
-import 'reflect-metadata';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as readline from 'readline';
-import { NestFactory } from '@nestjs/core';
-import { OnboardingStage } from '@prisma/client';
-import { CliOrchestratorModule } from './cli-orchestrator.module';
-import { FixtureLlmService } from './fixture-llm.service';
-import { CliNoopLlmLogger } from './cli-noop-llm-logger';
-import { printTurn } from './print-executor';
-import { runAllGoldenCases } from './golden-runner';
-import { OrchestratorService } from '../orchestrator/orchestrator.service';
-import { ProposedTurn } from '../orchestrator/orchestrator.types';
-import { getEligibleSurfaces } from '../orchestrator/surface-registry';
+import "reflect-metadata";
+import * as fs from "fs";
+import * as path from "path";
+import * as readline from "readline";
+import { NestFactory } from "@nestjs/core";
+import { OnboardingStage } from "@prisma/client";
+import { CliOrchestratorModule } from "./cli-orchestrator.module";
+import { FixtureLlmService } from "./fixture-llm.service";
+import { CliNoopLlmLogger } from "./cli-noop-llm-logger";
+import { printTurn } from "./print-executor";
+import { runAllGoldenCases } from "./golden-runner";
+import { OrchestratorService } from "../orchestrator/orchestrator.service";
+import { ProposedTurn } from "../orchestrator/orchestrator.types";
+import { getEligibleSurfaces } from "../orchestrator/surface-registry";
 
 type CliArgs = {
   message?: string;
@@ -45,29 +45,31 @@ function parseArgs(argv: string[]): CliArgs {
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--help' || a === '-h') args.help = true;
-    else if (a === '--golden') args.golden = true;
-    else if (a === '--no-account') args.noAccount = true;
-    else if (a === '--json') args.json = true;
-    else if (a === '--verbose') args.verbose = true;
-    else if (a === '--message' || a === '-m') {
+    if (a === "--help" || a === "-h") args.help = true;
+    else if (a === "--golden") args.golden = true;
+    else if (a === "--no-account") args.noAccount = true;
+    else if (a === "--json") args.json = true;
+    else if (a === "--verbose") args.verbose = true;
+    else if (a === "--message" || a === "-m") {
       args.message = argv[++i];
-    } else if (a === '--fixture' || a === '-f') {
+    } else if (a === "--fixture" || a === "-f") {
       args.fixture = argv[++i];
-    } else if (a.startsWith('--message=')) {
-      args.message = a.slice('--message='.length);
-    } else if (a.startsWith('--fixture=')) {
-      args.fixture = a.slice('--fixture='.length);
+    } else if (a.startsWith("--message=")) {
+      args.message = a.slice("--message=".length);
+    } else if (a.startsWith("--fixture=")) {
+      args.fixture = a.slice("--fixture=".length);
     }
   }
 
   // Env fallbacks — Windows npm/PowerShell often drops flags after `npm run`.
-  if (process.env.ORCHESTRATOR_GOLDEN === '1') args.golden = true;
-  if (process.env.ORCHESTRATOR_MESSAGE) args.message = process.env.ORCHESTRATOR_MESSAGE;
-  if (process.env.ORCHESTRATOR_FIXTURE) args.fixture = process.env.ORCHESTRATOR_FIXTURE;
-  if (process.env.ORCHESTRATOR_NO_ACCOUNT === '1') args.noAccount = true;
-  if (process.env.ORCHESTRATOR_JSON === '1') args.json = true;
-  if (process.env.ORCHESTRATOR_VERBOSE === '1') args.verbose = true;
+  if (process.env.ORCHESTRATOR_GOLDEN === "1") args.golden = true;
+  if (process.env.ORCHESTRATOR_MESSAGE)
+    args.message = process.env.ORCHESTRATOR_MESSAGE;
+  if (process.env.ORCHESTRATOR_FIXTURE)
+    args.fixture = process.env.ORCHESTRATOR_FIXTURE;
+  if (process.env.ORCHESTRATOR_NO_ACCOUNT === "1") args.noAccount = true;
+  if (process.env.ORCHESTRATOR_JSON === "1") args.json = true;
+  if (process.env.ORCHESTRATOR_VERBOSE === "1") args.verbose = true;
 
   return args;
 }
@@ -107,17 +109,17 @@ DRY-RUN — no WhatsApp, no Rubies, no transfers.
 
 function printBanner() {
   // eslint-disable-next-line no-console
-  console.error('DRY-RUN — no WhatsApp, no Rubies, no transfers');
+  console.error("DRY-RUN — no WhatsApp, no Rubies, no transfers");
 }
 
 function makeUser(noAccount: boolean) {
   return {
-    id: 'cli-user-1',
-    whatsappNumber: '2348000000001',
+    id: "cli-user-1",
+    whatsappNumber: "2348000000001",
     onboardingStage: OnboardingStage.ACCOUNT_CREATED,
-    rubiesAccountNumber: noAccount ? null : '0123456789',
-    rubiesAccountName: noAccount ? null : 'CLI Test User',
-    name: 'CLI',
+    rubiesAccountNumber: noAccount ? null : "0123456789",
+    rubiesAccountName: noAccount ? null : "CLI Test User",
+    name: "CLI",
     windowStartHour: 11,
     windowEndHour: 20,
     disciplineExitedAt: null,
@@ -126,7 +128,7 @@ function makeUser(noAccount: boolean) {
 
 function loadFixtureFile(filePath: string): ProposedTurn {
   const abs = path.resolve(filePath);
-  const raw = JSON.parse(fs.readFileSync(abs, 'utf8'));
+  const raw = JSON.parse(fs.readFileSync(abs, "utf8"));
   // Accept either a bare ProposedTurn or a golden case with mock_proposal
   const proposal = raw.mock_proposal ?? raw;
   if (!proposal?.message || !proposal?.action?.type) {
@@ -143,12 +145,18 @@ async function runGolden(asJson: boolean): Promise<number> {
 
   if (asJson) {
     // eslint-disable-next-line no-console
-    console.log(JSON.stringify({ total: results.length, failed: failed.length, results }, null, 2));
+    console.log(
+      JSON.stringify(
+        { total: results.length, failed: failed.length, results },
+        null,
+        2,
+      ),
+    );
   } else {
     // eslint-disable-next-line no-console
     console.log(`Golden validator replay — ${results.length} cases\n`);
     for (const r of results) {
-      const mark = r.passed ? 'PASS' : 'FAIL';
+      const mark = r.passed ? "PASS" : "FAIL";
       // eslint-disable-next-line no-console
       console.log(
         `  [${mark}] ${r.test_case_id}  expected=${JSON.stringify(r.expected_surface)} actual=${JSON.stringify(r.actual_surface)}`,
@@ -167,7 +175,7 @@ async function runOrchestratorSession(args: CliArgs): Promise<number> {
   const useFixture = !!args.fixture;
   const app = await NestFactory.createApplicationContext(
     CliOrchestratorModule.forRoot({ useFixtureLlm: useFixture }),
-    { logger: args.verbose ? ['error', 'warn', 'log', 'debug'] : ['error'] },
+    { logger: args.verbose ? ["error", "warn", "log", "debug"] : ["error"] },
   );
 
   try {
@@ -184,14 +192,16 @@ async function runOrchestratorSession(args: CliArgs): Promise<number> {
 
     // eslint-disable-next-line no-console
     console.error(
-      `User: account=${user.rubiesAccountNumber ? 'yes' : 'no'}  eligible surfaces: ${getEligibleSurfaces(user)
+      `User: account=${user.rubiesAccountNumber ? "yes" : "no"}  eligible surfaces: ${getEligibleSurfaces(
+        user,
+      )
         .map((s) => s.key)
-        .join(', ')}`,
+        .join(", ")}`,
     );
-    if (!useFixture && (process.env.AI_PROVIDER ?? 'stub') === 'stub') {
+    if (!useFixture && (process.env.AI_PROVIDER ?? "stub") === "stub") {
       // eslint-disable-next-line no-console
       console.error(
-        'AI_PROVIDER=stub — expect ok:false unless you pass --fixture or set a real provider.',
+        "AI_PROVIDER=stub — expect ok:false unless you pass --fixture or set a real provider.",
       );
     }
 
@@ -215,9 +225,9 @@ async function runOrchestratorSession(args: CliArgs): Promise<number> {
 
     const prompt = (): Promise<void> =>
       new Promise((resolve) => {
-        rl.question('you> ', async (line) => {
+        rl.question("you> ", async (line) => {
           const text = line.trim();
-          if (!text || text === 'quit' || text === 'exit') {
+          if (!text || text === "quit" || text === "exit") {
             rl.close();
             resolve();
             return;
@@ -226,10 +236,10 @@ async function runOrchestratorSession(args: CliArgs): Promise<number> {
             await runOnce(text);
           } catch (err) {
             // eslint-disable-next-line no-console
-            console.error('Error:', err);
+            console.error("Error:", err);
           }
           // eslint-disable-next-line no-console
-          console.log('');
+          console.log("");
           await prompt();
           resolve();
         });

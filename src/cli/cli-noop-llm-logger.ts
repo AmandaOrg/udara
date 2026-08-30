@@ -2,9 +2,9 @@
  * No-op LLM audit logger for CLI dry-run — never writes to Postgres.
  */
 
-import { Injectable } from '@nestjs/common';
-import { LlmCompleteResult } from '../ai/llm.types';
-import { LlmCallPurpose } from '@prisma/client';
+import { Injectable } from "@nestjs/common";
+import { LlmCompleteResult } from "../ai/llm.types";
+import { LlmCallPurpose } from "@prisma/client";
 
 @Injectable()
 export class CliNoopLlmLogger {

@@ -1,10 +1,18 @@
 import { LlmCallPurpose } from "@prisma/client";
+import { normalizeEnvString } from "../config/env-string.util";
 
 export type { LlmCallPurpose };
+
+export interface LlmImagePart {
+  mimeType: string;
+  /** Raw base64, no data: URL prefix. Never persist; one turn only. */
+  data: string;
+}
 
 export interface LlmMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  images?: LlmImagePart[];
 }
 
 export interface JsonSchemaToolDef {
@@ -64,3 +72,9 @@ export interface LlmService {
 
 export const CLASSIFIER_LLM = "CLASSIFIER_LLM";
 export const CONVERSATION_LLM = "CONVERSATION_LLM";
+
+/** Gemini and Anthropic accept image parts this turn; stub/Bedrock/OpenRouter do not. */
+export function conversationProviderSupportsVision(provider: string): boolean {
+  const p = normalizeEnvString(provider).toLowerCase();
+  return p === "gemini" || p === "anthropic";
+}

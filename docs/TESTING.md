@@ -56,6 +56,7 @@ CI does not run e2e. Run the relevant subset locally (`npm run e2e:smoke` or a n
 | Fee / window / allowance math | Required | — | Optional smoke |
 | Router / webhook / HMAC | Required | — | Required relevant scenarios |
 | Orchestrator validator / hints | Required | Required | Optional stub failure SOP |
+| Inbound voice/image | Required (mocked Meta/Deepgram) | If spend-check gating | Optional |
 | Transfer wizard / confirm / PIN | Required | If intent gating | Transfer scenarios |
 | Docs-only | `npm run docs:check` | — | — |
 

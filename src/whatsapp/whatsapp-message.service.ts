@@ -74,7 +74,11 @@ export class WhatsappMessageService {
           type: parsed.type,
           fromNumber: parsed.from,
           textBody:
-            parsed.type === WhatsappMessageType.TEXT ? parsed.text : undefined,
+            parsed.type === WhatsappMessageType.TEXT
+              ? parsed.text
+              : parsed.type === WhatsappMessageType.IMAGE
+                ? parsed.caption
+                : undefined,
           buttonPayload:
             parsed.type === WhatsappMessageType.BUTTON_REPLY
               ? parsed.buttonId
@@ -115,6 +119,13 @@ export class WhatsappMessageService {
     return this.prisma.whatsappMessage.update({
       where: { id },
       data: { status, processedAt: new Date() },
+    });
+  }
+
+  async updateTextBody(id: string, textBody: string) {
+    return this.prisma.whatsappMessage.update({
+      where: { id },
+      data: { textBody },
     });
   }
 

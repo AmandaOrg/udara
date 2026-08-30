@@ -21,6 +21,12 @@ import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { RubiesService } from "../rubies/rubies.service";
 import { displayFirstNameOrThere } from "../common/display-name.util";
 import {
+  TERMS_CONSENT_QUESTION,
+  TERMS_CONSEQUENCES_DETAIL,
+  TERMS_SUMMARY,
+  TERMS_VERSION,
+} from "./terms.data";
+import {
   STRUCTURED_QUESTIONS,
   STRICTNESS_LEVEL_BY_SQ2_ID,
 } from "./structured-questions.data";
@@ -36,6 +42,7 @@ export function isPreAccountStage(stage: OnboardingStage): boolean {
   return (
     stage === OnboardingStage.DISCOVERY ||
     stage === OnboardingStage.WELCOME ||
+    stage === OnboardingStage.TERMS_CONSENT ||
     stage === OnboardingStage.IDENTITY ||
     stage === OnboardingStage.FREQUENCY_CHECK ||
     stage === OnboardingStage.PLAN_PROPOSED ||
@@ -53,6 +60,13 @@ const INTRO_NO = "intro:no";
 const INTRO_BUTTONS = [
   { id: INTRO_YES, title: "Yes, I understand" },
   { id: INTRO_NO, title: "No, explain more" },
+];
+
+const TERMS_AGREE = "terms:agree";
+const TERMS_DETAIL = "terms:detail";
+const TERMS_BUTTONS = [
+  { id: TERMS_AGREE, title: "I agree" },
+  { id: TERMS_DETAIL, title: "What if I break it?" },
 ];
 
 const FREQ_WEEKLY = "freq:weekly";
@@ -164,6 +178,14 @@ export class OnboardingService {
       case OnboardingStage.IDENTITY:
       case OnboardingStage.MONEY_STORY:
         return this.runAiTurn(user, session.id, user.onboardingStage);
+      case OnboardingStage.TERMS_CONSENT:
+        await this.whatsapp.sendInteractiveButtons(
+          user.whatsappNumber,
+          TERMS_CONSENT_QUESTION,
+          TERMS_BUTTONS,
+          user.id,
+        );
+        return;
       case OnboardingStage.FREQUENCY_CHECK:
         await this.whatsapp.sendText(
           user.whatsappNumber,
@@ -193,6 +215,8 @@ export class OnboardingService {
     switch (user.onboardingStage) {
       case OnboardingStage.WELCOME:
         return this.handleIntroConfirmation(user, buttonId);
+      case OnboardingStage.TERMS_CONSENT:
+        return this.handleTermsConsent(user, buttonId);
       case OnboardingStage.FREQUENCY_CHECK:
         return this.handleFrequencyAnswer(user, buttonId);
       case OnboardingStage.MONEY_STORY:
@@ -354,12 +378,82 @@ export class OnboardingService {
     }
 
     if (buttonId === INTRO_YES) {
+      await this.advanceStage(session.id, OnboardingStage.TERMS_CONSENT);
+      await this.sendTerms(user, session.id);
+      return;
+    }
+
+    await this.nudgeIntroButtons(user);
+  }
+
+  // =========================================================================
+  // TERMS_CONSENT — the terms and their consequences, then explicit consent.
+  // Deliberately before IDENTITY: nothing personal is collected until the
+  // user has agreed to what they're agreeing to.
+  // =========================================================================
+
+  private async sendTerms(user: User, sessionId: string): Promise<void> {
+    for (const part of TERMS_SUMMARY) {
+      await this.appendMessage(sessionId, "assistant", part);
+    }
+    await this.chunkedMessenger.sendChunkedReply(
+      user.whatsappNumber,
+      TERMS_SUMMARY.join("\n\n"),
+      user.id,
+    );
+    await this.askForConsent(user, sessionId);
+  }
+
+  private async askForConsent(user: User, sessionId: string): Promise<void> {
+    await this.appendMessage(sessionId, "assistant", TERMS_CONSENT_QUESTION);
+    await this.whatsapp.sendInteractiveButtons(
+      user.whatsappNumber,
+      TERMS_CONSENT_QUESTION,
+      TERMS_BUTTONS,
+      user.id,
+    );
+  }
+
+  private async handleTermsConsent(
+    user: User,
+    buttonId: string,
+  ): Promise<void> {
+    const session = await this.getOrStartSession(user.id);
+
+    if (buttonId === TERMS_DETAIL) {
+      const detail = TERMS_CONSEQUENCES_DETAIL.join("\n\n");
+      await this.appendMessage(session.id, "assistant", detail);
+      await this.chunkedMessenger.sendChunkedReply(
+        user.whatsappNumber,
+        detail,
+        user.id,
+      );
+      await this.askForConsent(user, session.id);
+      return; // stays on TERMS_CONSENT — consent is not implied by reading more
+    }
+
+    if (buttonId === TERMS_AGREE) {
+      // Recorded with a version so a later terms change is distinguishable
+      // from never having consented at all.
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { termsAcceptedAt: new Date(), termsVersion: TERMS_VERSION },
+      });
+      await this.mergeExtractedData(session.id, {
+        termsVersion: TERMS_VERSION,
+      });
+
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "noted, and thank you for actually reading it. let's get you set up.",
+        user.id,
+      );
       await this.advanceStage(session.id, OnboardingStage.IDENTITY);
       await this.sendQuickQuestions(user, session.id);
       return;
     }
 
-    await this.nudgeIntroButtons(user);
+    await this.askForConsent(user, session.id);
   }
 
   // =========================================================================

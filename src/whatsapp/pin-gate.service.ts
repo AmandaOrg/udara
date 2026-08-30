@@ -1,8 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { PinChallengePurpose, User } from "@prisma/client";
+import { PinChallenge, PinChallengePurpose, User } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { PinService } from "../pin/pin.service";
+import { PinService, OTP_LENGTH } from "../pin/pin.service";
+import { EmailNotificationsService } from "../email/email-notifications.service";
 import { WhatsappService } from "./whatsapp.service";
 import { SensitiveFields } from "./whatsapp-message.service";
 
@@ -38,6 +39,7 @@ export class PinGateService {
     private readonly config: ConfigService,
     private readonly pin: PinService,
     private readonly whatsapp: WhatsappService,
+    private readonly emailNotifications: EmailNotificationsService,
   ) {}
 
   // =========================================================================
@@ -83,6 +85,96 @@ export class PinGateService {
         "Choose a 4-digit PIN. You'll enter it to approve every transfer, so pick something you'll remember but others can't guess.",
       ctaText: "Set PIN",
       envVar: "WHATSAPP_PIN_SETUP_FLOW_ID",
+    });
+  }
+
+  /**
+   * Starts a PIN reset: emails a one-time code to the address on file, then
+   * sends the WhatsApp form that takes the code and the new PIN together.
+   *
+   * The email address is the second factor and the whole basis of this flow's
+   * safety. It is the KYC address captured at account creation, and it is
+   * deliberately NOT something the user can change from chat — otherwise
+   * someone holding the phone could point the reset at their own inbox and
+   * the factor would be worthless.
+   *
+   * Works while the PIN is locked. That is the point: lockout exists to stop
+   * guessing, and someone who can read the account's email has proven more
+   * than a guesser could. A successful reset clears the lockout.
+   */
+  async requestPinReset(user: User): Promise<void> {
+    if (!user.pinHash) {
+      // Nothing to reset — send them down the setup path instead of minting
+      // a code for a PIN that doesn't exist.
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "you don't have a pin yet, so there's nothing to reset. let's set one now.",
+        user.id,
+      );
+      await this.requestPinSetup(user);
+      return;
+    }
+
+    if (!user.email) {
+      this.logger.warn(
+        `User ${user.id} asked for a PIN reset with no email on file`,
+      );
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "i can't reset your pin because there's no email address on your account. that email is how i check it's really you, so i can't skip it. message us and we'll sort it out properly.",
+        user.id,
+      );
+      return;
+    }
+
+    if (!(await this.pin.canRequestReset(user.id))) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "you've asked for a few reset codes already. give it an hour, then try again. check your email in the meantime, the last code may still be valid.",
+        user.id,
+      );
+      return;
+    }
+
+    const { challenge, otp } = await this.pin.createResetChallenge(user.id);
+
+    // Unlike the other emails, this one is NOT best-effort: with no code
+    // there is no reset, so a failure has to be said out loud rather than
+    // leaving the user waiting on a form they can't complete.
+    const sent = await this.emailNotifications.sendPinResetOtp({
+      user,
+      otp,
+      challengeId: challenge.id,
+      expiresInMinutes: 10,
+    });
+    if (!sent) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "i couldn't send the reset code to your email just now. try again in a few minutes, and if it keeps failing, message us.",
+        user.id,
+      );
+      return;
+    }
+
+    await this.whatsapp.sendText(
+      user.whatsappNumber,
+      `i've sent a ${OTP_LENGTH}-digit code to ${maskEmail(user.email)}. it expires in 10 minutes.\n\nopen the form below and enter that code along with your new pin.`,
+      user.id,
+    );
+    await this.sendResetFlow(user, challenge.flowToken);
+  }
+
+  /** Sends the reset form for an existing challenge (initial send and retries). */
+  private async sendResetFlow(user: User, flowToken: string): Promise<void> {
+    await this.sendPinFlow(user, {
+      flowId: this.config.get<string>("WHATSAPP_PIN_RESET_FLOW_ID"),
+      flowToken,
+      screenId: "PIN_RESET",
+      headerText: "Reset your PIN",
+      bodyText:
+        "Enter the code from your email, then choose a new 4-digit PIN.",
+      ctaText: "Reset PIN",
+      envVar: "WHATSAPP_PIN_RESET_FLOW_ID",
     });
   }
 
@@ -166,6 +258,11 @@ export class PinGateService {
       return { action: "none" };
     }
 
+    if (challenge.purpose === PinChallengePurpose.RESET) {
+      await this.handleResetSubmission(user, challenge, sensitive);
+      return { action: "none" };
+    }
+
     if (challenge.purpose === PinChallengePurpose.SETUP) {
       const ok = await this.handleSetupSubmission(user, sensitive);
       return ok ? { action: "pin_setup_complete" } : { action: "none" };
@@ -198,6 +295,67 @@ export class PinGateService {
       user.id,
     );
     return true;
+  }
+
+  /**
+   * Verifies the emailed code, then applies the new PIN. Order matters: the
+   * code is checked FIRST, so a wrong code never reveals anything about
+   * whether the proposed PIN would have been acceptable.
+   */
+  private async handleResetSubmission(
+    user: User,
+    challenge: PinChallenge,
+    sensitive: SensitiveFields,
+  ): Promise<void> {
+    const otp = sensitive.otp ?? "";
+    const verdict = await this.pin.verifyResetOtp(challenge, otp);
+
+    if (!verdict.ok) {
+      if (verdict.exhausted) {
+        await this.whatsapp.sendText(
+          user.whatsappNumber,
+          "that code was wrong too many times, so i've cancelled this reset. your pin hasn't changed. ask me to reset it again when you're ready and i'll send a fresh code.",
+          user.id,
+        );
+        return;
+      }
+
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        `that code isn't right. ${verdict.attemptsLeft} ${verdict.attemptsLeft === 1 ? "try" : "tries"} left. the code is in your email, and it's still the same one.`,
+        user.id,
+      );
+      await this.sendResetFlow(user, verdict.retryChallenge.flowToken);
+      return;
+    }
+
+    const result = await this.pin.setPin(
+      user.id,
+      sensitive.pin ?? "",
+      sensitive.pin_confirm ?? "",
+    );
+    if (!result.ok) {
+      // The code was right, so don't make them re-verify: issue a successor
+      // challenge carrying the same verified code forward.
+      await this.whatsapp.sendText(user.whatsappNumber, result.reason, user.id);
+      const retry = await this.pin.createChallenge({
+        userId: user.id,
+        purpose: PinChallengePurpose.RESET,
+        otpHash: challenge.otpHash ?? undefined,
+        otpAttempts: challenge.otpAttempts,
+        expiresAt: challenge.expiresAt,
+      });
+      await this.sendResetFlow(user, retry.flowToken);
+      return;
+    }
+
+    // setPin clears pinFailedAttempts and pinLockedUntil, so a reset is also
+    // the way out of a lockout.
+    await this.whatsapp.sendText(
+      user.whatsappNumber,
+      "your pin has been reset. use the new one to approve your next transfer.",
+      user.id,
+    );
   }
 
   private async handleTransferSubmission(
@@ -260,4 +418,15 @@ export class PinGateService {
       user.id,
     );
   }
+}
+
+/**
+ * Shows enough of the address to confirm which inbox to check, without
+ * printing it in full into a chat that someone holding the phone can read.
+ */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return "your email";
+  const shown = local.slice(0, 2);
+  return `${shown}${"*".repeat(Math.max(local.length - 2, 1))}@${domain}`;
 }

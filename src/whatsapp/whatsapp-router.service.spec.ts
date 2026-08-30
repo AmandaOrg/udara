@@ -9,13 +9,20 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   let prisma: {
     user: { findUnique: jest.Mock; update: jest.Mock; create: jest.Mock };
   };
-  let whatsapp: { sendText: jest.Mock };
+  let whatsapp: { sendText: jest.Mock; downloadMedia: jest.Mock };
   let onboarding: Record<string, jest.Mock>;
   let transferConfirmation: Record<string, jest.Mock>;
   let accountActions: Record<string, jest.Mock>;
   let pinGate: { handlePinFlowReply: jest.Mock };
+  let weeklyReview: {
+    getReviewAwaitingLimit: jest.Mock;
+    handleChoice: jest.Mock;
+    handleLimitText: jest.Mock;
+  };
   let orchestrator: { handleMessage: jest.Mock };
   let actionExecutor: { execute: jest.Mock; sendSafeFallback: jest.Mock };
+  let deepgram: { isConfigured: jest.Mock; transcribe: jest.Mock };
+  let inboundMessages: { updateTextBody: jest.Mock };
   let service: WhatsappRouterService;
 
   const user = {
@@ -40,7 +47,10 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         create: jest.fn().mockResolvedValue(user),
       },
     };
-    whatsapp = { sendText: jest.fn().mockResolvedValue({ waMessageId: "w1" }) };
+    whatsapp = {
+      sendText: jest.fn().mockResolvedValue({ waMessageId: "w1" }),
+      downloadMedia: jest.fn(),
+    };
     onboarding = {
       handleInboundText: jest.fn(),
       handleInboundButton: jest.fn(),
@@ -63,11 +73,24 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       applyHintsToDraft: jest.fn().mockResolvedValue(undefined),
       cancelActiveSurfaces: jest.fn().mockResolvedValue(undefined),
     };
+    weeklyReview = {
+      getReviewAwaitingLimit: jest.fn().mockResolvedValue(null),
+      handleChoice: jest.fn().mockResolvedValue(undefined),
+      handleLimitText: jest.fn().mockResolvedValue(undefined),
+    };
     pinGate = { handlePinFlowReply: jest.fn() };
     orchestrator = { handleMessage: jest.fn() };
     actionExecutor = {
       execute: jest.fn().mockResolvedValue(undefined),
       sendSafeFallback: jest.fn().mockResolvedValue(undefined),
+    };
+
+    deepgram = {
+      isConfigured: jest.fn().mockReturnValue(false),
+      transcribe: jest.fn(),
+    };
+    inboundMessages = {
+      updateTextBody: jest.fn().mockResolvedValue(undefined),
     };
 
     service = new WhatsappRouterService(
@@ -79,6 +102,9 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       pinGate as any,
       orchestrator as any,
       actionExecutor as any,
+      weeklyReview as any,
+      deepgram as any,
+      inboundMessages as any,
     );
   });
 
@@ -96,6 +122,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     expect(orchestrator.handleMessage).toHaveBeenCalledWith(
       user,
       "hey what's my balance right now?",
+      {},
     );
     expect(actionExecutor.execute).toHaveBeenCalledWith(user, orchResult);
     expect(accountActions.sendBalance).not.toHaveBeenCalled();
@@ -161,7 +188,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     await service.route(makeMessage("800"));
 
     expect(accountActions.handleWizardText).not.toHaveBeenCalled();
-    expect(orchestrator.handleMessage).toHaveBeenCalledWith(user, "800");
+    expect(orchestrator.handleMessage).toHaveBeenCalledWith(user, "800", {});
     expect(actionExecutor.execute).toHaveBeenCalled();
   });
 
@@ -244,7 +271,92 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       expect(transferConfirmation.resumeAfterPinSetup).toHaveBeenCalledWith(
         "user-1",
       );
-      expect(transferConfirmation.executeVerifiedTransfer).not.toHaveBeenCalled();
+      expect(
+        transferConfirmation.executeVerifiedTransfer,
+      ).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("audio and images", () => {
+    it("asks the user to type when Deepgram is not configured", async () => {
+      await service.route({
+        id: "m-audio",
+        type: WhatsappMessageType.AUDIO,
+        fromNumber: "234801",
+        mediaId: "media-1",
+      } as any);
+
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringMatching(/type that instead/i),
+        "user-1",
+      );
+      expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    });
+
+    it("transcribes a voice note and routes it like text", async () => {
+      deepgram.isConfigured.mockReturnValue(true);
+      whatsapp.downloadMedia.mockResolvedValue({
+        buffer: Buffer.from("ogg"),
+        mimeType: "audio/ogg",
+      });
+      deepgram.transcribe.mockResolvedValue({
+        ok: true,
+        text: "what's my balance",
+      });
+      orchestrator.handleMessage.mockResolvedValue({
+        message: "pulling that up",
+        actionType: "reply_only",
+        ok: true,
+      });
+
+      await service.route({
+        id: "m-audio",
+        type: WhatsappMessageType.AUDIO,
+        fromNumber: "234801",
+        mediaId: "media-1",
+      } as any);
+
+      expect(inboundMessages.updateTextBody).toHaveBeenCalledWith(
+        "m-audio",
+        "what's my balance",
+      );
+      expect(orchestrator.handleMessage).toHaveBeenCalledWith(
+        user,
+        "what's my balance",
+        {},
+      );
+    });
+
+    it("passes a downloaded image into the orchestrator", async () => {
+      whatsapp.downloadMedia.mockResolvedValue({
+        buffer: Buffer.from("jpeg-bytes"),
+        mimeType: "image/jpeg",
+      });
+      orchestrator.handleMessage.mockResolvedValue({
+        message: "got it",
+        actionType: "reply_only",
+        ok: true,
+      });
+
+      await service.route({
+        id: "m-img",
+        type: WhatsappMessageType.IMAGE,
+        fromNumber: "234801",
+        mediaId: "img-1",
+        textBody: "this receipt",
+      } as any);
+
+      expect(orchestrator.handleMessage).toHaveBeenCalledWith(
+        user,
+        "this receipt",
+        {
+          image: {
+            mimeType: "image/jpeg",
+            data: Buffer.from("jpeg-bytes").toString("base64"),
+          },
+        },
+      );
     });
   });
 });

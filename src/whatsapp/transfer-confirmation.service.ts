@@ -7,6 +7,7 @@ import { RubiesService, RUBIES_MFB_BANK_CODE } from "../rubies/rubies.service";
 import { TaggingService } from "../tagging/tagging.service";
 import { WhatsappService } from "./whatsapp.service";
 import { PinGateService } from "./pin-gate.service";
+import { EmailNotificationsService } from "../email/email-notifications.service";
 import {
   ConversationPersona,
   ConversationSessionStatus,
@@ -89,6 +90,7 @@ export class TransferConfirmationService {
     private readonly tagging: TaggingService,
     private readonly whatsapp: WhatsappService,
     private readonly pinGate: PinGateService,
+    private readonly emailNotifications: EmailNotificationsService,
   ) {}
 
   async initiateTransfer(params: {
@@ -549,6 +551,19 @@ export class TransferConfirmationService {
       });
       await this.recordCompletedTransferInChat(transaction);
       await this.tagging.touchRecipientUsed(transaction.recipientId);
+
+      // Best-effort, keyed on the transaction id so the webhook path and the
+      // reconciliation scheduler can't both send for the same transfer.
+      await this.emailNotifications.sendMoneyOut({
+        user: transaction.user,
+        transactionId: transaction.id,
+        amount: Number(transaction.amount),
+        feeAmount: Number(transaction.feeAmount),
+        recipientName:
+          transaction.recipient.accountName ??
+          transaction.recipient.accountNumber,
+        recipientAccount: transaction.recipient.accountNumber,
+      });
 
       const isFirstTransactionOfOnboarding =
         transaction.user.onboardingStage === OnboardingStage.ACCOUNT_CREATED ||

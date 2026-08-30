@@ -6,7 +6,11 @@ import { RubiesService } from "../rubies/rubies.service";
 import { TaggingService } from "../tagging/tagging.service";
 import { WhatsappService } from "./whatsapp.service";
 import { TransferConfirmationService } from "./transfer-confirmation.service";
-import { BankInfo, BankMatchResult, matchBanks } from "../common/bank-match.util";
+import {
+  BankInfo,
+  BankMatchResult,
+  matchBanks,
+} from "../common/bank-match.util";
 import { TransferWizardHints } from "../orchestrator/transfer-hints.util";
 import {
   ConversationPersona,
@@ -308,10 +312,11 @@ export class AccountActionsService {
     hints: TransferWizardHints,
     existing: TransferDraft | null,
   ): Promise<void> {
-    let amount =
+    const amount =
       hints.amount ??
       (existing?.amount != null ? Number(existing.amount) : undefined);
-    let accountNumber = hints.accountNumber ?? existing?.accountNumber ?? undefined;
+    const accountNumber =
+      hints.accountNumber ?? existing?.accountNumber ?? undefined;
     let bankCode = hints.bankCode ?? existing?.bankCode ?? undefined;
     let bankName = hints.bankName ?? existing?.bankName ?? undefined;
     const labelHint = hints.labelHint ?? existing?.label ?? undefined;
@@ -654,12 +659,7 @@ export class AccountActionsService {
       const updated = await this.prisma.transferDraft.findUniqueOrThrow({
         where: { id: draft.id },
       });
-      await this.resolveBank(
-        user,
-        updated,
-        draft.bankCode,
-        draft.bankName,
-      );
+      await this.resolveBank(user, updated, draft.bankCode, draft.bankName);
       return;
     }
 
@@ -700,12 +700,7 @@ export class AccountActionsService {
     });
 
     if (updated.bankCode && updated.bankName) {
-      await this.resolveBank(
-        user,
-        updated,
-        updated.bankCode,
-        updated.bankName,
-      );
+      await this.resolveBank(user, updated, updated.bankCode, updated.bankName);
       return;
     }
 
@@ -783,10 +778,7 @@ export class AccountActionsService {
     await this.promptBankList(user, result.banks);
   }
 
-  private async promptBankList(
-    user: User,
-    banks: BankInfo[],
-  ): Promise<void> {
+  private async promptBankList(user: User, banks: BankInfo[]): Promise<void> {
     await this.whatsapp.sendListMessage(
       user.whatsappNumber,
       "a few banks match, which one?",

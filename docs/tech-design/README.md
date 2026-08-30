@@ -17,6 +17,7 @@ Engineer-readable **how** for a feature. Architecture, types, files, env, and te
 | [SPEND_CHECK_BEFORE_SEND_TECH.md](SPEND_CHECK_BEFORE_SEND_TECH.md) | [spend-check-before-send](../../initiatives/spend-check-before-send/plan.md) |
 | [BENEFICIARY_PREFILL_TECH.md](BENEFICIARY_PREFILL_TECH.md) | [beneficiary-prefill](../../initiatives/beneficiary-prefill/plan.md) |
 | [BILL_PAYMENTS_SPIKE.md](BILL_PAYMENTS_SPIKE.md) | [bill-payments](../../initiatives/bill-payments/plan.md) |
+| [WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_TECH.md](WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_TECH.md) | [whatsapp-media-and-spend-pushback](../../initiatives/whatsapp-media-and-spend-pushback/plan.md) |
 
 ## New design
 

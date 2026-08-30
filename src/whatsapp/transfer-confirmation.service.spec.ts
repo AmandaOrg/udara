@@ -13,12 +13,12 @@ import { TransactionType } from "../common/enums/transaction-type.enum";
 
 describe("formatSpendFeeLine", () => {
   it("uses plain language instead of enum names", () => {
+    expect(formatSpendFeeLine(TransactionType.BORROWED, 1020, false)).toContain(
+      "borrowing from future allowance",
+    );
     expect(
       formatSpendFeeLine(TransactionType.BORROWED, 1020, false),
-    ).toContain("borrowing from future allowance");
-    expect(formatSpendFeeLine(TransactionType.BORROWED, 1020, false)).not.toContain(
-      "BORROWED",
-    );
+    ).not.toContain("BORROWED");
     expect(
       formatSpendFeeLine(TransactionType.EARLY_ACCESS, 1020, false),
     ).toContain("outside spending window");
@@ -68,6 +68,7 @@ describe("TransferConfirmationService", () => {
     isLocked: jest.Mock;
     notifyLocked: jest.Mock;
   };
+  let emailNotifications: { sendMoneyOut: jest.Mock };
   let service: TransferConfirmationService;
 
   const user = {
@@ -157,6 +158,9 @@ describe("TransferConfirmationService", () => {
     // dev-mode behavior. Individual tests override this to exercise the sweep.
     config = { get: jest.fn((_key: string, fallback?: unknown) => fallback) };
 
+    emailNotifications = {
+      sendMoneyOut: jest.fn().mockResolvedValue(undefined),
+    };
     pinGate = {
       requestTransferPin: jest.fn().mockResolvedValue(undefined),
       requestPinSetup: jest.fn().mockResolvedValue(undefined),
@@ -172,6 +176,7 @@ describe("TransferConfirmationService", () => {
       tagging as any,
       whatsapp as any,
       pinGate as any,
+      emailNotifications as any,
     );
   });
 
