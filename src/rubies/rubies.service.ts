@@ -38,6 +38,22 @@ export interface RubiesBank {
   bankName: string;
 }
 
+export interface RubiesVasPurchaseResult {
+  requestReference: string;
+  reference: string;
+  status: "SUCCESS" | "FAILED" | "PENDING";
+  responseCode: string;
+  responseMessage?: string;
+  vendorToken?: string;
+}
+
+export interface RubiesVasCustomerLookupResult {
+  ok: boolean;
+  customerName?: string;
+  responseCode: string;
+  responseMessage?: string;
+}
+
 /**
  * Rubies MFB's own CBN bank code — constant across every wallet Rubies
  * provisions. Exported so callers sending money to another Rubies-hosted
@@ -106,8 +122,6 @@ export class RubiesService {
     return this.config.get<string>("RUBIES_DRY_RUN", "false") === "true";
   }
 
-  // Return type is T & RubiesApiResponse (not just T) so every call site's response
-  // has responseCode/responseMessage available without repeating them in every T.
   private async post<T>(
     path: string,
     body: Record<string, unknown>,
@@ -132,6 +146,26 @@ export class RubiesService {
         return axiosErr.response.data;
       }
       this.logger.error(`Rubies request to ${path} failed: ${String(err)}`);
+      throw new Error("Could not reach Rubies. Please try again.");
+    }
+  }
+
+  private async get<T>(path: string): Promise<T & RubiesApiResponse> {
+    const url = `${this.baseUrl}/${this.stage}${path}`;
+    type Response = T & RubiesApiResponse;
+    try {
+      const response = await firstValueFrom(
+        this.http.get<Response>(url, {
+          headers: { Authorization: this.authHeader },
+        }),
+      );
+      return response.data;
+    } catch (err) {
+      const axiosErr = err as AxiosError<Response>;
+      if (axiosErr.response?.data) {
+        return axiosErr.response.data;
+      }
+      this.logger.error(`Rubies GET to ${path} failed: ${String(err)}`);
       throw new Error("Could not reach Rubies. Please try again.");
     }
   }
@@ -401,4 +435,146 @@ export class RubiesService {
       bankName: r.bankName ?? "",
     }));
   }
+
+  /**
+   * POST /{stage}/baas-vas/purchase — airtime/data/bills. Debits accountNumber
+   * (user wallet). Server-to-server API key auth bypasses Rubies PIN/OTP.
+   */
+  async purchaseVas(params: {
+    accountNumber: string;
+    billerCustomerId: string;
+    productCode: string;
+    amount: number;
+    requestReference: string;
+    customerName?: string;
+  }): Promise<RubiesVasPurchaseResult> {
+    if (this.dryRun) {
+      return {
+        requestReference: params.requestReference,
+        reference: params.requestReference,
+        status: "SUCCESS",
+        responseCode: "00",
+        vendorToken: "1234-5678-9012-3456-7890",
+      };
+    }
+
+    const response = await this.post<{
+      requestReference?: string;
+      reference?: string;
+      token?: string;
+      rechargeToken?: string;
+      vendorToken?: string;
+      extraData?: { token?: string; rechargeToken?: string };
+    }>("/baas-vas/purchase", {
+      reference: params.requestReference,
+      accountNumber: params.accountNumber,
+      billerCustomerId: params.billerCustomerId,
+      productCode: params.productCode,
+      amount: `${params.amount}.0`,
+      customerName: params.customerName,
+    });
+
+    return {
+      requestReference:
+        response.requestReference ?? params.requestReference,
+      reference: response.reference ?? params.requestReference,
+      status: mapRubiesResponseCode(response.responseCode),
+      responseCode: response.responseCode ?? "",
+      responseMessage: response.responseMessage,
+      vendorToken: extractVasToken(response),
+    };
+  }
+
+  /**
+   * POST /{stage}/baas-vas/customerEnquiry — meter / customer lookup before
+   * electricity purchase (billerValidation: YES billers).
+   */
+  async validateVasCustomer(params: {
+    billerCode: string;
+    productCode: string;
+    billerCustomerId: string;
+  }): Promise<RubiesVasCustomerLookupResult> {
+    if (this.dryRun) {
+      return {
+        ok: true,
+        customerName: "DRY RUN CUSTOMER",
+        responseCode: "00",
+      };
+    }
+
+    const response = await this.post<{
+      customerName?: string;
+      name?: string;
+      data?: { customerName?: string; name?: string };
+    }>("/baas-vas/customerEnquiry", {
+      billerCode: params.billerCode,
+      productCode: params.productCode,
+      billerCustomerId: params.billerCustomerId,
+    });
+
+    const customerName =
+      response.customerName ??
+      response.name ??
+      response.data?.customerName ??
+      response.data?.name;
+
+    const ok =
+      response.responseCode === "00" &&
+      typeof customerName === "string" &&
+      customerName.trim().length > 0;
+
+    return {
+      ok,
+      customerName: customerName?.trim(),
+      responseCode: response.responseCode ?? "",
+      responseMessage: response.responseMessage,
+    };
+  }
+
+  /** GET /{stage}/baas-vas/transaction-query/{reference} — use requestReference. */
+  async queryVasTransaction(
+    requestReference: string,
+  ): Promise<RubiesVasPurchaseResult> {
+    if (this.dryRun) {
+      return {
+        requestReference,
+        reference: requestReference,
+        status: "SUCCESS",
+        responseCode: "00",
+      };
+    }
+
+    const response = await this.get<{
+      requestReference?: string;
+      reference?: string;
+      token?: string;
+      rechargeToken?: string;
+      vendorToken?: string;
+      extraData?: { token?: string; rechargeToken?: string };
+    }>(`/baas-vas/transaction-query/${encodeURIComponent(requestReference)}`);
+
+    return {
+      requestReference,
+      reference: response.reference ?? requestReference,
+      status: mapRubiesResponseCode(response.responseCode),
+      responseCode: response.responseCode ?? "",
+      responseMessage: response.responseMessage,
+      vendorToken: extractVasToken(response),
+    };
+  }
+}
+
+function extractVasToken(payload: {
+  token?: string;
+  rechargeToken?: string;
+  vendorToken?: string;
+  extraData?: { token?: string; rechargeToken?: string };
+}): string | undefined {
+  return (
+    payload.vendorToken ??
+    payload.token ??
+    payload.rechargeToken ??
+    payload.extraData?.token ??
+    payload.extraData?.rechargeToken
+  );
 }

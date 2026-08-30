@@ -5,6 +5,8 @@ import { WhatsappService } from "./whatsapp.service";
 import { WhatsappSignatureGuard } from "./whatsapp-signature.guard";
 import { WhatsappMessageService } from "./whatsapp-message.service";
 import { WhatsappRouterService } from "./whatsapp-router.service";
+import { BillPaymentActionsService } from "./bill-payment-actions.service";
+import { BillPaymentConfirmationService } from "./bill-payment-confirmation.service";
 import { TransferConfirmationService } from "./transfer-confirmation.service";
 import { TransferReconciliationScheduler } from "./transfer-reconciliation.scheduler";
 import { ChunkedMessengerService } from "./chunked-messenger.service";
@@ -54,6 +56,8 @@ import { AiModule } from "../ai/ai.module";
     WhatsappMessageService,
     WhatsappRouterService,
     TransferConfirmationService,
+    BillPaymentActionsService,
+    BillPaymentConfirmationService,
     TransferReconciliationScheduler,
     ChunkedMessengerService,
     // Kept registered for existing unit specs; live router path no longer uses them.
@@ -71,6 +75,7 @@ import { AiModule } from "../ai/ai.module";
     WhatsappService,
     WhatsappMessageService,
     TransferConfirmationService,
+    BillPaymentConfirmationService,
     ChunkedMessengerService,
   ],
 })

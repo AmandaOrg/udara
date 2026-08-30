@@ -98,6 +98,36 @@ enum TransferDraftStatus {
   CANCELLED
 }
 
+enum BillPaymentCategory {
+  AIRTIME
+  DATA
+  ELECTRICITY
+}
+
+enum BillPaymentDraftStep {
+  AWAITING_TELCO
+  AWAITING_AMOUNT
+  AWAITING_MSISDN
+  AWAITING_PRODUCT
+  AWAITING_METER
+  AWAITING_DISCO
+}
+
+enum BillPaymentDraftStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum BillPaymentStatus {
+  PENDING_CONFIRMATION
+  PENDING_PIN
+  CONFIRMED
+  EXECUTED
+  FAILED
+  CANCELLED
+}
+
 enum SettingsChangeType {
   WINDOW_HOURS
   OVERRIDE_FEES
@@ -162,6 +192,7 @@ enum LlmCallPurpose {
 enum RubiesWebhookEventType {
   TRANSFER_STATUS
   INCOMING_CREDIT
+  BILL_PAYMENT
   UNKNOWN
 }
 
@@ -272,6 +303,8 @@ model User {
   transactions         Transaction[]
   recipients           Recipient[]
   transferDrafts       TransferDraft[]
+  billPaymentDrafts    BillPaymentDraft[]
+  billPayments         BillPayment[]
   overrides            OverrideHistory[]
   settingsRequests     SettingsChangeRequest[]
   onboardingSessions   OnboardingSession[]
@@ -302,6 +335,7 @@ model DailyAllowance {
   updatedAt DateTime @updatedAt
 
   transactions Transaction[]
+  billPayments BillPayment[]
 
   @@unique([userId, date])
   @@index([userId, weekStartDate])
@@ -346,6 +380,65 @@ model TransferDraft {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+model BillPaymentDraft {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  category BillPaymentCategory @default(AIRTIME)
+  step     BillPaymentDraftStep
+  status   BillPaymentDraftStatus @default(ACTIVE)
+
+  billerCode  String?
+  productCode String?
+  telcoLabel  String?
+  productLabel String?
+  customerName String?
+  amount      Decimal? @db.Decimal(14, 2)
+  msisdn      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+model BillPayment {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  category    BillPaymentCategory @default(AIRTIME)
+  billerCode  String
+  productCode String
+  telcoLabel  String
+  productLabel String?
+  customerName String?
+  msisdn      String
+  amount      Decimal           @db.Decimal(14, 2)
+  type        TransactionType   @default(NORMAL)
+  status      BillPaymentStatus @default(PENDING_CONFIRMATION)
+
+  feeAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  rubiesReference   String?
+  vendorToken       String?
+  requestReference  String? @unique
+  idempotencyKey    String? @unique
+
+  dailyAllowanceId     String?
+  dailyAllowance       DailyAllowance? @relation(fields: [dailyAllowanceId], references: [id])
+  appliedToAllowanceAt DateTime?
+
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+  executedAt  DateTime?
+
+  pinChallenges PinChallenge[]
 
   @@index([userId, status])
 }
@@ -573,7 +666,9 @@ model PinChallenge {
 
   flowToken     String              @unique
   purpose       PinChallengePurpose
-  transactionId String? // null for SETUP and RESET
+  transactionId String? // null for SETUP, RESET, and bill-pay PIN
+  billPaymentId String?
+  billPayment   BillPayment? @relation(fields: [billPaymentId], references: [id])
 
   // RESET only. The emailed one-time code, hashed with the same scrypt path
   // as the PIN itself — a 6-digit code is a 1,000,000-key space, so it is

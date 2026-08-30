@@ -51,6 +51,9 @@ import {
   Prisma,
   TransactionStatus,
   TransferDraftStatus,
+  BillPaymentDraftStatus,
+  BillPaymentStatus,
+  BillPaymentCategory,
   User,
 } from "@prisma/client";
 import {
@@ -383,7 +386,7 @@ export class OrchestratorService {
       `- Spending window: ${user.windowStartHour}:00 to ${user.windowEndHour}:00 WAT`,
     ];
 
-    const [draft, pending, lastSent, allowanceSummary, savedRecipients] =
+    const [draft, pending, pendingBill, billDraft, lastSent, allowanceSummary, savedRecipients] =
       await Promise.all([
       this.prisma.transferDraft.findFirst({
         where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
@@ -398,6 +401,25 @@ export class OrchestratorService {
               TransactionStatus.PENDING_PIN,
             ],
           },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      this.prisma.billPayment.findFirst({
+        where: {
+          userId: user.id,
+          status: {
+            in: [
+              BillPaymentStatus.PENDING_CONFIRMATION,
+              BillPaymentStatus.PENDING_PIN,
+            ],
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      this.prisma.billPaymentDraft.findFirst({
+        where: {
+          userId: user.id,
+          status: BillPaymentDraftStatus.ACTIVE,
         },
         orderBy: { createdAt: "desc" },
       }),
@@ -449,6 +471,14 @@ export class OrchestratorService {
         `- Active mode: awaiting_confirm`,
         `- Pending ${waitingOnPin ? "PIN" : "confirm"}: amount ₦${Number(pendingConfirm.amount).toLocaleString("en-NG")} (do NOT start transfer_wizard. ${waitingOnPin ? "They must enter PIN." : "Remind them to tap Confirm or Cancel."})`,
       );
+    } else if (pendingBill) {
+      const waitingOnPin =
+        pendingBill.status === BillPaymentStatus.PENDING_PIN;
+      const kind = billCategoryLabel(pendingBill.category);
+      lines.push(
+        `- Active mode: awaiting_confirm`,
+        `- Pending ${waitingOnPin ? "PIN" : "confirm"} (${kind}): ₦${Number(pendingBill.amount).toLocaleString("en-NG")} ${pendingBill.telcoLabel} for ${pendingBill.msisdn} (do NOT start bill/data/electricity wizards or transfer_wizard. ${waitingOnPin ? "They must enter PIN." : "Remind them to tap Confirm or Cancel."})`,
+      );
     } else if (activeDraft) {
       lines.push(
         "- Active mode: transfer_wizard",
@@ -457,6 +487,17 @@ export class OrchestratorService {
         `- Draft account: ${activeDraft.accountNumber ?? "missing"}`,
         `- Draft bank: ${activeDraft.bankName ?? activeDraft.bankCode ?? "missing"}`,
         "- If the user is answering a missing field, use fill_wizard with extracted_hints. If they change topic, use cancel_surface or show_surface for the new intent.",
+      );
+    } else if (billDraft) {
+      const mode = billDraftActiveMode(billDraft.category);
+      lines.push(
+        `- Active mode: ${mode}`,
+        `- Bill category: ${billCategoryLabel(billDraft.category)}`,
+        `- Draft step: ${billDraft.step}`,
+        `- Draft provider: ${billDraft.telcoLabel ?? "missing"}`,
+        `- Draft amount: ${billDraft.amount != null ? `₦${Number(billDraft.amount).toLocaleString("en-NG")}` : "missing"}`,
+        `- Draft phone/meter: ${billDraft.msisdn ?? "missing"}`,
+        "- Lists pick network/provider/plan; typed steps are amount, phone, or meter. If they change topic, use cancel_surface or show_surface for the new intent.",
       );
     } else if (spendCheck) {
       const raw = transferHintsToRaw(spendCheck);
@@ -735,5 +776,27 @@ export class OrchestratorService {
         content: String(m.content ?? ""),
       } as LlmMessage;
     });
+  }
+}
+
+function billCategoryLabel(category: BillPaymentCategory): string {
+  switch (category) {
+    case BillPaymentCategory.DATA:
+      return "data";
+    case BillPaymentCategory.ELECTRICITY:
+      return "electricity";
+    default:
+      return "airtime";
+  }
+}
+
+function billDraftActiveMode(category: BillPaymentCategory): string {
+  switch (category) {
+    case BillPaymentCategory.DATA:
+      return "data_bundle_wizard";
+    case BillPaymentCategory.ELECTRICITY:
+      return "electricity_wizard";
+    default:
+      return "bill_payment_wizard";
   }
 }

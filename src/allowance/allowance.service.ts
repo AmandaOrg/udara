@@ -7,7 +7,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
-import { TransactionStatus, User } from "@prisma/client";
+import { BillPaymentStatus, TransactionStatus, User } from "@prisma/client";
 import {
   watDateBucketKey,
   startOfWatIsoWeekBucketKey,
@@ -260,6 +260,58 @@ export class AllowanceService {
         data: {
           amountSpent:
             Number(allowance.amountSpent) + Number(transaction.amount),
+        },
+      }),
+    ]);
+
+    return updatedAllowance;
+  }
+
+  /** Same idempotency rules as recordSpend, for bill/airtime payments. */
+  async recordBillPaymentSpend(billPaymentId: string) {
+    const payment = await this.prisma.billPayment.findUniqueOrThrow({
+      where: { id: billPaymentId },
+    });
+
+    if (payment.appliedToAllowanceAt) {
+      if (!payment.dailyAllowanceId) {
+        throw new Error(
+          `BillPayment ${billPaymentId} has appliedToAllowanceAt set but no dailyAllowanceId`,
+        );
+      }
+      return this.prisma.dailyAllowance.findUniqueOrThrow({
+        where: { id: payment.dailyAllowanceId },
+      });
+    }
+
+    if (payment.status !== BillPaymentStatus.EXECUTED) {
+      throw new BadRequestException(
+        `Cannot record spend for bill payment ${billPaymentId}: status is ${payment.status}`,
+      );
+    }
+
+    const spendDay = watDateBucketKey(payment.createdAt);
+    const allowance = await this.prisma.dailyAllowance.findUnique({
+      where: { userId_date: { userId: payment.userId, date: spendDay } },
+    });
+    if (!allowance) {
+      throw new NotFoundException(
+        `No allowance row for ${spendDay.toDateString()} (bill payment ${billPaymentId})`,
+      );
+    }
+
+    const [, updatedAllowance] = await this.prisma.$transaction([
+      this.prisma.billPayment.update({
+        where: { id: billPaymentId },
+        data: {
+          appliedToAllowanceAt: new Date(),
+          dailyAllowanceId: allowance.id,
+        },
+      }),
+      this.prisma.dailyAllowance.update({
+        where: { id: allowance.id },
+        data: {
+          amountSpent: Number(allowance.amountSpent) + Number(payment.amount),
         },
       }),
     ]);

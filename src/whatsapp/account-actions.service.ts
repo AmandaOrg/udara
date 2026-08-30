@@ -6,6 +6,8 @@ import { RubiesService } from "../rubies/rubies.service";
 import { TaggingService } from "../tagging/tagging.service";
 import { WhatsappService } from "./whatsapp.service";
 import { TransferConfirmationService } from "./transfer-confirmation.service";
+import { BillPaymentActionsService } from "./bill-payment-actions.service";
+import { BillPaymentConfirmationService } from "./bill-payment-confirmation.service";
 import {
   BankInfo,
   BankMatchResult,
@@ -32,6 +34,9 @@ export const MENU_BALANCE = `${MENU_BUTTON_PREFIX}balance`;
 export const MENU_LIMITS = `${MENU_BUTTON_PREFIX}limits`;
 export const MENU_ACCOUNT = `${MENU_BUTTON_PREFIX}account`;
 export const MENU_TRANSFER = `${MENU_BUTTON_PREFIX}transfer`;
+export const MENU_AIRTIME = `${MENU_BUTTON_PREFIX}airtime`;
+export const MENU_DATA = `${MENU_BUTTON_PREFIX}data`;
+export const MENU_ELECTRICITY = `${MENU_BUTTON_PREFIX}electricity`;
 
 const CANCEL_WORDS = /^(cancel|stop|nevermind|never mind)$/i;
 
@@ -66,6 +71,8 @@ export class AccountActionsService {
     private readonly tagging: TaggingService,
     private readonly whatsapp: WhatsappService,
     private readonly transferConfirmation: TransferConfirmationService,
+    private readonly billPaymentActions: BillPaymentActionsService,
+    private readonly billPaymentConfirmation: BillPaymentConfirmationService,
   ) {}
 
   // =========================================================================
@@ -82,6 +89,9 @@ export class AccountActionsService {
         { id: MENU_LIMITS, title: "📊 Spending limits" },
         { id: MENU_ACCOUNT, title: "🏦 Account details" },
         { id: MENU_TRANSFER, title: "💸 Send money" },
+        { id: MENU_AIRTIME, title: "📱 Buy airtime" },
+        { id: MENU_DATA, title: "📶 Buy data" },
+        { id: MENU_ELECTRICITY, title: "⚡ Pay electricity" },
       ],
       user.id,
     );
@@ -211,6 +221,9 @@ export class AccountActionsService {
     }
 
     // Only one active draft at a time — starting fresh abandons any stale one.
+    await this.billPaymentActions.cancelActiveDraftForUser(user.id, {
+      silent: true,
+    });
     await this.prisma.transferDraft.updateMany({
       where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
       data: { status: TransferDraftStatus.CANCELLED },
@@ -292,13 +305,19 @@ export class AccountActionsService {
     return this.transferConfirmation.resumePendingTransferUi(user);
   }
 
-  /** Cancels active transfer draft and any pending confirm — silent (persona already spoke). */
+  /** Cancels active transfer/bill drafts and any pending confirm — silent (persona already spoke). */
   async cancelActiveSurfaces(user: User): Promise<void> {
     const draft = await this.getActiveDraft(user.id);
     if (draft) {
       await this.cancelDraft(user, draft.id, { silent: true });
     }
+    await this.billPaymentActions.cancelActiveDraftForUser(user.id, {
+      silent: true,
+    });
     await this.transferConfirmation.cancelPendingForUser(user.id, {
+      silent: true,
+    });
+    await this.billPaymentConfirmation.cancelPendingForUser(user.id, {
       silent: true,
     });
   }

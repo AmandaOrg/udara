@@ -9,6 +9,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { User } from "@prisma/client";
 import { AccountActionsService } from "../whatsapp/account-actions.service";
+import { BillPaymentActionsService } from "../whatsapp/bill-payment-actions.service";
 import { ChunkedMessengerService } from "../whatsapp/chunked-messenger.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { PinGateService } from "../whatsapp/pin-gate.service";
@@ -17,6 +18,12 @@ import { OrchestratorResult } from "./orchestrator.types";
 import { TransferWizardHints } from "./transfer-hints.util";
 import { sanitizeSurfaceLeadIn } from "./sanitize-lead-in.util";
 
+const BILL_PAYMENT_SURFACES = new Set([
+  "bill_payment_wizard",
+  "data_bundle_wizard",
+  "electricity_wizard",
+]);
+
 @Injectable()
 export class ActionExecutorService {
   private readonly logger = new Logger(ActionExecutorService.name);
@@ -24,6 +31,7 @@ export class ActionExecutorService {
   constructor(
     private readonly chunkedMessenger: ChunkedMessengerService,
     private readonly accountActions: AccountActionsService,
+    private readonly billPaymentActions: BillPaymentActionsService,
     private readonly spendSummary: SpendSummaryService,
     private readonly whatsapp: WhatsappService,
     private readonly pinGate: PinGateService,
@@ -71,7 +79,10 @@ export class ActionExecutorService {
     if (actionType === "show_surface" && result.surfaceKey) {
       // Topic change away from the transfer wizard must drop the draft so
       // the next turn isn't trapped in an abandoned send-money flow.
-      if (result.surfaceKey !== "transfer_wizard") {
+      if (
+        result.surfaceKey !== "transfer_wizard" &&
+        !BILL_PAYMENT_SURFACES.has(result.surfaceKey)
+      ) {
         await this.accountActions.cancelActiveSurfaces(user);
       }
       await this.dispatchSurface(
@@ -126,6 +137,15 @@ export class ActionExecutorService {
         });
         break;
       }
+      case "bill_payment_wizard":
+        await this.billPaymentActions.startAirtimeWizard(user);
+        break;
+      case "data_bundle_wizard":
+        await this.billPaymentActions.startDataWizard(user);
+        break;
+      case "electricity_wizard":
+        await this.billPaymentActions.startElectricityWizard(user);
+        break;
       case "spending_menu":
         await this.accountActions.sendMainMenu(user);
         break;

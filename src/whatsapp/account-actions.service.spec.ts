@@ -159,6 +159,12 @@ describe("AccountActionsService", () => {
       cancelPendingForUser: jest.fn().mockResolvedValue(undefined),
       resumePendingTransferUi: jest.fn().mockResolvedValue(false),
     };
+    const billPaymentActions = {
+      cancelActiveDraftForUser: jest.fn().mockResolvedValue(undefined),
+    };
+    const billPaymentConfirmation = {
+      cancelPendingForUser: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new AccountActionsService(
       prisma as any,
@@ -168,11 +174,13 @@ describe("AccountActionsService", () => {
       tagging as any,
       whatsapp as any,
       transferConfirmation as any,
+      billPaymentActions as any,
+      billPaymentConfirmation as any,
     );
   });
 
   describe("sendMainMenu", () => {
-    it("sends a list message with all four actions", async () => {
+    it("sends a list message with all menu actions", async () => {
       await service.sendMainMenu(makeUser() as any);
       expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
         "234801",
@@ -183,6 +191,9 @@ describe("AccountActionsService", () => {
           expect.objectContaining({ id: "menu:limits" }),
           expect.objectContaining({ id: "menu:account" }),
           expect.objectContaining({ id: "menu:transfer" }),
+          expect.objectContaining({ id: "menu:airtime" }),
+          expect.objectContaining({ id: "menu:data" }),
+          expect.objectContaining({ id: "menu:electricity" }),
         ]),
         "user-1",
       );

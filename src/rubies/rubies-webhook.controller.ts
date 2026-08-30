@@ -2,11 +2,12 @@ import { Body, Controller, Logger, Post, UseGuards } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { TransferConfirmationService } from "../whatsapp/transfer-confirmation.service";
+import { BillPaymentConfirmationService } from "../whatsapp/bill-payment-confirmation.service";
 import { AllowanceService } from "../allowance/allowance.service";
 import { EmailNotificationsService } from "../email/email-notifications.service";
 import { displayFirstNameOrThere } from "../common/display-name.util";
 import { RubiesSignatureGuard } from "./rubies-signature.guard";
-import { mapRubiesResponseCode } from "./rubies.service";
+import { mapRubiesResponseCode, RubiesService } from "./rubies.service";
 import {
   OnboardingStage,
   Prisma,
@@ -49,6 +50,8 @@ export class RubiesWebhookController {
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsappService,
     private readonly transferConfirmation: TransferConfirmationService,
+    private readonly billPaymentConfirmation: BillPaymentConfirmationService,
+    private readonly rubies: RubiesService,
     private readonly allowance: AllowanceService,
     private readonly emailNotifications: EmailNotificationsService,
   ) {}
@@ -195,6 +198,30 @@ export class RubiesWebhookController {
     payload: RubiesNotification,
   ): Promise<void> {
     if (!payload.paymentReference) return;
+
+    const billPayment = await this.prisma.billPayment.findUnique({
+      where: { idempotencyKey: payload.paymentReference },
+    });
+    if (billPayment) {
+      const status = mapRubiesResponseCode(payload.responseCode);
+      if (status === "PENDING") return;
+
+      let vendorToken: string | undefined;
+      if (status === "SUCCESS" && billPayment.requestReference) {
+        const query = await this.rubies
+          .queryVasTransaction(billPayment.requestReference)
+          .catch(() => null);
+        vendorToken = query?.vendorToken;
+      }
+
+      await this.billPaymentConfirmation.applyBillPaymentResult(
+        billPayment.id,
+        status,
+        payload.paymentReference,
+        vendorToken,
+      );
+      return;
+    }
 
     const transaction = await this.prisma.transaction.findUnique({
       where: { idempotencyKey: payload.paymentReference },

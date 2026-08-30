@@ -12,6 +12,8 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   let whatsapp: { sendText: jest.Mock; downloadMedia: jest.Mock };
   let onboarding: Record<string, jest.Mock>;
   let transferConfirmation: Record<string, jest.Mock>;
+  let billPaymentActions: Record<string, jest.Mock>;
+  let billPaymentConfirmation: Record<string, jest.Mock>;
   let accountActions: Record<string, jest.Mock>;
   let pinGate: { handlePinFlowReply: jest.Mock };
   let weeklyReview: {
@@ -61,6 +63,24 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       executeVerifiedTransfer: jest.fn().mockResolvedValue(undefined),
       resumeAfterPinSetup: jest.fn().mockResolvedValue(undefined),
     };
+    billPaymentActions = {
+      getActiveDraft: jest.fn().mockResolvedValue(null),
+      handleWizardText: jest.fn().mockResolvedValue(undefined),
+      handleAirtimeTelcoSelection: jest.fn().mockResolvedValue(undefined),
+      handleDataTelcoSelection: jest.fn().mockResolvedValue(undefined),
+      handleBundleSelection: jest.fn().mockResolvedValue(undefined),
+      handleDiscoSelection: jest.fn().mockResolvedValue(undefined),
+      startDataWizard: jest.fn().mockResolvedValue(undefined),
+      startElectricityWizard: jest.fn().mockResolvedValue(undefined),
+      startAirtimeWizard: jest.fn().mockResolvedValue(undefined),
+      cancelDraft: jest.fn().mockResolvedValue(undefined),
+    };
+    billPaymentConfirmation = {
+      confirmBillPayment: jest.fn().mockResolvedValue(undefined),
+      cancelBillPayment: jest.fn().mockResolvedValue(undefined),
+      executeVerifiedBillPayment: jest.fn().mockResolvedValue(undefined),
+      resumeAfterPinSetup: jest.fn().mockResolvedValue(undefined),
+    };
     accountActions = {
       getActiveDraft: jest.fn().mockResolvedValue(null),
       sendBalance: jest.fn().mockResolvedValue(undefined),
@@ -98,6 +118,8 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       whatsapp as any,
       onboarding as any,
       transferConfirmation as any,
+      billPaymentActions as any,
+      billPaymentConfirmation as any,
       accountActions as any,
       pinGate as any,
       orchestrator as any,

@@ -1,11 +1,13 @@
 # Bill payments — Rubies API spike
 
-**Status:** Blocked on API confirmation (2026-08-28)  
+**Status:** Phase A + B shipped (2026-08-30)  
 Initiative: [initiatives/bill-payments/plan.md](../../initiatives/bill-payments/plan.md)
 
 ## Question
 
 Can Udara vend **one-off airtime** (and later data / Nepa electricity) by debiting the **same Rubies BaaS wallet** users already fund for transfers?
+
+**Answer (confirmed 2026-08-30):** Yes — use **`POST /{stage}/baas-vas/purchase`** on the same `RUBIES_BASE_URL` / `RUBIES_API_KEY` as transfers. Catalog: `GET /{stage}/baas-vas/biller-category`, `biller-list`, `product-list`. Status: `GET /{stage}/baas-vas/transaction-query/{requestReference}`.
 
 ## What this codebase uses today
 
@@ -13,8 +15,7 @@ Can Udara vend **one-off airtime** (and later data / Nepa electricity) by debiti
 
 - Host: `RUBIES_BASE_URL` (default `https://api-sme-dev.rubies.ng`)
 - Paths: `/{stage}/baas-wallet/*`, `/{stage}/baas-transaction/*`
-- Implemented: `create-wallet`, `retrieve-wallet-details`, `name-enquiry`, `balance-enquiry`, `fund-transfer`, `tsq`, `bank-list`
-- **No** airtime, biller lookup, or vending methods in code or committed docs
+- Implemented: `create-wallet`, `retrieve-wallet-details`, `name-enquiry`, `balance-enquiry`, `fund-transfer`, `tsq`, `bank-list`, **`purchaseVas`**, **`queryVasTransaction`**
 
 ## Public Rubies Open API (different surface)
 
@@ -34,25 +35,28 @@ Auth docs describe **sk_test_ / sk_live_** keys on the BAAS dashboard — not th
 
 | Check | Result |
 | --- | --- |
-| BaaS OpenAPI at `api-sme-dev.rubies.ng/v3/api-docs/BAAS-API` lists airtime/biller paths | **Not verified in repo** — needs live fetch with dev credentials |
-| Open API airtime debits a user's BaaS wallet with existing `RUBIES_API_KEY` | **Unknown / likely no** — separate host and auth model |
-| Phase A (`BillPaymentDraft` + confirm → PIN → execute) safe to build | **No** — blocked until debit path is confirmed |
+| BaaS VAS on prod (`api-sme.rubies.ng/prod/baas-vas/*`) with existing API key | **Yes** — live smoke tests (`scripts/rubies-vas-*.mjs`) |
+| Airtime debits user wallet (`accountNumber` on purchase body) | **Yes** — ₦200 MTN airtime succeeded (`responseCode 00`) |
+| Sync `106` with debit+reversal | **Observed** — treat PENDING + webhook/TSQ as source of truth |
+| Phase A (`BillPaymentDraft` + confirm → PIN → execute) | **Shipped** — airtime |
+| Phase B data + prepaid electricity | **Shipped** — curated catalogs + meter verify |
 
 ## Recommendation
 
-1. **Do not** add `BillPaymentDraft` or orchestrator `bill_payment_wizard` until product/engineering confirms with Rubies which API + credentials debit the funded wallet.
-2. If BaaS exposes vending: extend `RubiesService` on the same base URL/stage; mirror transfer pending/TSQ patterns.
-3. If only Open API: separate client module, credential env vars, and explicit product sign-off that wallet balances are shared.
+1. **Use BaaS VAS** on the same base URL/stage as transfers — do not add a separate Open API client for Phase A.
+2. Poll/async-resolve with **`requestReference`** (Udara idempotency key), not Rubies' internal `reference` alone.
+3. Mirror transfer patterns: confirm → PIN → execute; webhook + TSQ for pending outcomes; `AllowanceService.recordBillPaymentSpend` on EXECUTED.
 4. **Recurring** bills remain a separate initiative (scheduler, allowance rules, PIN policy).
 
-## Next steps when unblocked
+## Next steps
 
-- Phase A: one-off airtime only (`BillPaymentDraft`, `Transaction`-like status enum, reuse `PinGateService`)
-- Phase B: data bundles + Nepa/electricity (biller verification step)
-- Phase C: recurring (out of scope here)
+- Live end-to-end walkthrough: airtime + data + electricity (prod, user-approved amounts/meters)
+- Phase C: recurring (separate initiative)
 
 ## Changelog
 
 | Date | Change |
 | --- | --- |
+| 2026-08-30 | Phase B data + electricity shipped |
+| 2026-08-30 | Live prod VAS confirmed; Phase A implementation started |
 | 2026-08-28 | Initial spike — blocked pending Rubies confirmation |

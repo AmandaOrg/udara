@@ -1,6 +1,6 @@
 # Udara project summary
 
-Last updated: 2026-08-29
+Last updated: 2026-08-30
 
 Quick orientation for agents. Full behavior: `docs/PRODUCT_BEHAVIOR.md`. Full flow: `docs/ARCHITECTURE.md`. Working rules: `AGENTS.md`.
 
@@ -22,10 +22,10 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 | `src/onboarding` | Stage machine |
 | `src/tagging` | Recipient tags |
 | `src/manager` | Settings-change gate + delayed persona |
-| `src/rubies` | BaaS + inbound webhook |
+| `src/rubies` | BaaS + VAS purchase/query + inbound webhook |
 | `src/ai` | LLM providers + persona prompts |
 | `src/orchestrator` | propose_turn + validator + surfaces (no send) |
-| `src/whatsapp` | Webhook, router, wizard, PIN gate, ActionExecutor |
+| `src/whatsapp` | Webhook, router, transfer wizard, bill-pay wizard, PIN gate, ActionExecutor |
 | `src/pin` | PIN challenge/verify |
 | `src/cli` | Dry-run golden/fixture runner |
 | `src/common` | WAT, bank match, display name |
@@ -36,11 +36,11 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 
 Structured payloads → deterministic handlers. Pre-account text (and transcribed voice) → onboarding. Menu shortcuts → list. Post-onboarding text, transcripts, and images → orchestrator.
 
-Surfaces: `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `spending_menu`, `spend_summary`.
+Surfaces: `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `bill_payment_wizard`, `data_bundle_wizard`, `electricity_wizard`, `spending_menu`, `spend_summary`.
 
 ## 5. Data (Prisma)
 
-User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel), OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WhatsappMessage, PIN challenge, Rubies webhook log, LLM call log, nudges.
+User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel), BillPaymentDraft, BillPayment, OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WhatsappMessage, PIN challenge, Rubies webhook log, LLM call log, nudges.
 
 `TransferDraft` ≠ `ConversationSession`. Persona enum still `KEDU` | `MANAGER`. Session `contextData.spendCheck` holds pending send hints during the pre-wizard spend check.
 
@@ -79,4 +79,4 @@ WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), Deepgram STT
 - `initiatives/whatsapp-media-and-spend-pushback` — Deepgram STT, inbound images, first-send pause including purpose/fee-path; text replies only.
 - `initiatives/transfer-intent-grounding` — closed-send utterances must not relaunch the wizard; completed sends are written into chat history.
 - `initiatives/beneficiary-prefill` — completed; nickname prefill for repeat sends (confirm/PIN unchanged).
-- `initiatives/bill-payments` — blocked on Rubies API spike (Phase A airtime pending confirmation).
+- `initiatives/bill-payments` — completed; airtime, data bundles, prepaid electricity via `baas-vas/*` (confirm → PIN → execute).

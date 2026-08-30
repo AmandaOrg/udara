@@ -763,7 +763,14 @@
   },
   {
     "test_case_id": "beneficiary_unique_prefill_wizard",
-    "history": [{ "role": "user", "content": "send 5k to james for rent" }],
+    "history": [
+      { "role": "user", "content": "send 5k to james for rent" },
+      {
+        "role": "assistant",
+        "content": "having room today isn't the same as this being a smart send. what's it actually for?"
+      },
+      { "role": "user", "content": "it's for rent" }
+    ],
     "mock_proposal": {
       "message": "on it.",
       "action": {

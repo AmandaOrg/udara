@@ -10,6 +10,11 @@ describe("ActionExecutorService", () => {
   };
   let whatsapp: { sendText: jest.Mock };
   let pinGate: { requestPinReset: jest.Mock };
+  let billPaymentActions: {
+    startAirtimeWizard: jest.Mock;
+    startDataWizard: jest.Mock;
+    startElectricityWizard: jest.Mock;
+  };
   let executor: ActionExecutorService;
 
   const user = {
@@ -39,10 +44,16 @@ describe("ActionExecutorService", () => {
     };
     whatsapp = { sendText: jest.fn().mockResolvedValue({ waMessageId: "w1" }) };
     pinGate = { requestPinReset: jest.fn().mockResolvedValue(undefined) };
+    billPaymentActions = {
+      startAirtimeWizard: jest.fn().mockResolvedValue(undefined),
+      startDataWizard: jest.fn().mockResolvedValue(undefined),
+      startElectricityWizard: jest.fn().mockResolvedValue(undefined),
+    };
 
     executor = new ActionExecutorService(
       chunkedMessenger as any,
       accountActions as any,
+      billPaymentActions as any,
       spendSummary as any,
       whatsapp as any,
       pinGate as any,
