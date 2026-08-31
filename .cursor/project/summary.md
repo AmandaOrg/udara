@@ -50,7 +50,7 @@ WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), Deepgram STT
 
 ## 7. Commands
 
-`start:dev`, `test`, `lint`, `e2e` / `e2e:smoke`, `orchestrator:golden`, `orchestrator:cli`, `docs:check`, `security:check`. CI: security:check, docs:check, lint, prisma generate/migrate, build, unit test. Not in CI: e2e, live LLM.
+`start:dev`, `start:prod` (migrate deploy then `node dist/main`), `test`, `lint`, `e2e` / `e2e:smoke`, `orchestrator:golden`, `orchestrator:cli`, `docs:check`, `security:check`. CI: security:check, docs:check, lint, prisma generate/migrate, build, unit test. Not in CI: e2e, live LLM.
 
 ## 8. Docs map
 
@@ -72,6 +72,7 @@ WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), Deepgram STT
 - Stub AI does not emit `propose_turn` (e2e free text → failure SOP)
 - Fee sweep skipped without `RUBIES_FEES_ACCOUNT_NUMBER`
 - Founding PDFs (PRD, onboarding script, tone prompt) are in `docs/` but are stale background, not spec — code wins
+- Production must run `start:prod` so pending Prisma migrations apply before the process listens. `npm run build` does not migrate.
 
 ## 10. Active initiatives
 
