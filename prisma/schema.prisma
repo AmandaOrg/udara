@@ -90,11 +90,42 @@ enum TransferDraftStep {
   AWAITING_ACCOUNT_NUMBER
   AWAITING_BANK_SELECTION
   AWAITING_LABEL_SELECTION // only reached for a brand-new recipient
+  AWAITING_PURPOSE_NOTE // Other: user types what the send is for
 }
 
 enum TransferDraftStatus {
   ACTIVE
   COMPLETED
+  CANCELLED
+}
+
+enum BillPaymentCategory {
+  AIRTIME
+  DATA
+  ELECTRICITY
+}
+
+enum BillPaymentDraftStep {
+  AWAITING_TELCO
+  AWAITING_AMOUNT
+  AWAITING_MSISDN
+  AWAITING_PRODUCT
+  AWAITING_METER
+  AWAITING_DISCO
+}
+
+enum BillPaymentDraftStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum BillPaymentStatus {
+  PENDING_CONFIRMATION
+  PENDING_PIN
+  CONFIRMED
+  EXECUTED
+  FAILED
   CANCELLED
 }
 
@@ -162,6 +193,7 @@ enum LlmCallPurpose {
 enum RubiesWebhookEventType {
   TRANSFER_STATUS
   INCOMING_CREDIT
+  BILL_PAYMENT
   UNKNOWN
 }
 
@@ -272,6 +304,8 @@ model User {
   transactions         Transaction[]
   recipients           Recipient[]
   transferDrafts       TransferDraft[]
+  billPaymentDrafts    BillPaymentDraft[]
+  billPayments         BillPayment[]
   overrides            OverrideHistory[]
   settingsRequests     SettingsChangeRequest[]
   onboardingSessions   OnboardingSession[]
@@ -302,6 +336,7 @@ model DailyAllowance {
   updatedAt DateTime @updatedAt
 
   transactions Transaction[]
+  billPayments BillPayment[]
 
   @@unique([userId, date])
   @@index([userId, weekStartDate])
@@ -316,12 +351,16 @@ model Recipient {
   bankCode      String
   accountName   String?
   label         RecipientLabel @default(OTHER)
+  // User-facing name for repeat sends ("james", "landlord") — not a bank field.
+  nickname   String?
+  lastUsedAt DateTime?
 
   createdAt DateTime @default(now())
 
   transactions Transaction[]
 
   @@unique([userId, accountNumber, bankCode])
+  @@index([userId, nickname])
 }
 
 model TransferDraft {
@@ -339,9 +378,69 @@ model TransferDraft {
   resolvedName   String? // from Rubies name-enquiry, shown back to the user for confirmation
   isNewRecipient Boolean         @default(false)
   label          RecipientLabel?
+  purposeNote    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+model BillPaymentDraft {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  category BillPaymentCategory @default(AIRTIME)
+  step     BillPaymentDraftStep
+  status   BillPaymentDraftStatus @default(ACTIVE)
+
+  billerCode  String?
+  productCode String?
+  telcoLabel  String?
+  productLabel String?
+  customerName String?
+  amount      Decimal? @db.Decimal(14, 2)
+  msisdn      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+model BillPayment {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  category    BillPaymentCategory @default(AIRTIME)
+  billerCode  String
+  productCode String
+  telcoLabel  String
+  productLabel String?
+  customerName String?
+  msisdn      String
+  amount      Decimal           @db.Decimal(14, 2)
+  type        TransactionType   @default(NORMAL)
+  status      BillPaymentStatus @default(PENDING_CONFIRMATION)
+
+  feeAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  rubiesReference   String?
+  vendorToken       String?
+  requestReference  String? @unique
+  idempotencyKey    String? @unique
+
+  dailyAllowanceId     String?
+  dailyAllowance       DailyAllowance? @relation(fields: [dailyAllowanceId], references: [id])
+  appliedToAllowanceAt DateTime?
+
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+  executedAt  DateTime?
+
+  pinChallenges PinChallenge[]
 
   @@index([userId, status])
 }
@@ -356,6 +455,10 @@ model Transaction {
   amount Decimal           @db.Decimal(14, 2)
   type   TransactionType   @default(NORMAL)
   status TransactionStatus @default(PENDING_CONFIRMATION)
+  // This send's stated purpose (spend-check / orchestrator label_hint) — may
+  // differ from Recipient.label when the person was tagged on an earlier send.
+  purposeLabel RecipientLabel?
+  purposeNote  String?
 
   feeAmount         Decimal   @default(0) @db.Decimal(14, 2)
   // Set once the feeAmount (if any) has actually been moved to
@@ -566,7 +669,9 @@ model PinChallenge {
 
   flowToken     String              @unique
   purpose       PinChallengePurpose
-  transactionId String? // null for SETUP and RESET
+  transactionId String? // null for SETUP, RESET, and bill-pay PIN
+  billPaymentId String?
+  billPayment   BillPayment? @relation(fields: [billPaymentId], references: [id])
 
   // RESET only. The emailed one-time code, hashed with the same scrypt path
   // as the PIN itself — a 6-digit code is a 1,000,000-key space, so it is

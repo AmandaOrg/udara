@@ -323,8 +323,52 @@ describe("RubiesService", () => {
       });
       await service.queryTransferStatus("key-1");
       await service.listBanks();
+      await service.purchaseVas({
+        accountNumber: "1000013562",
+        billerCustomerId: "07080007565",
+        productCode: "MTN_AIRTIME_PREPAID",
+        amount: 200,
+        requestReference: "UDARA-BILL-test",
+      });
+      await service.queryVasTransaction("UDARA-BILL-test");
+      await service.validateVasCustomer({
+        billerCode: "IKEDC",
+        productCode: "IKEDC_PREPAID",
+        billerCustomerId: "4503889012345",
+      });
 
       expect(http.post).not.toHaveBeenCalled();
+    });
+
+    it("purchaseVas dry-run returns SUCCESS with the request reference", async () => {
+      const result = await service.purchaseVas({
+        accountNumber: "1000013562",
+        billerCustomerId: "07080007565",
+        productCode: "MTN_AIRTIME_PREPAID",
+        amount: 200,
+        requestReference: "UDARA-BILL-42",
+        customerName: "Test User",
+      });
+      expect(result).toEqual({
+        requestReference: "UDARA-BILL-42",
+        reference: "UDARA-BILL-42",
+        status: "SUCCESS",
+        responseCode: "00",
+        vendorToken: "1234-5678-9012-3456-7890",
+      });
+    });
+
+    it("validateVasCustomer dry-run returns a fake customer name", async () => {
+      const result = await service.validateVasCustomer({
+        billerCode: "IKEDC",
+        productCode: "IKEDC_PREPAID",
+        billerCustomerId: "4503889012345",
+      });
+      expect(result).toEqual({
+        ok: true,
+        customerName: "DRY RUN CUSTOMER",
+        responseCode: "00",
+      });
     });
 
     it("initiateTransfer echoes back the idempotencyKey as the reference with SUCCESS status", async () => {

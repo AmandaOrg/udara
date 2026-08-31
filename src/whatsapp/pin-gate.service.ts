@@ -17,6 +17,7 @@ import { SensitiveFields } from "./whatsapp-message.service";
 export type PinFlowOutcome =
   | { action: "none" }
   | { action: "execute_transfer"; transactionId: string }
+  | { action: "execute_bill_payment"; billPaymentId: string }
   | { action: "pin_setup_complete" };
 
 /**
@@ -64,6 +65,25 @@ export class PinGateService {
       screenId: "PIN_ENTRY",
       headerText: "Enter your PIN",
       bodyText: "Enter your 4-digit PIN to authorize this transfer.",
+      ctaText: "Enter PIN",
+      envVar: "WHATSAPP_PIN_ENTRY_FLOW_ID",
+    });
+  }
+
+  /** PIN-entry Flow for a bill/airtime purchase that passed confirm. */
+  async requestBillPaymentPin(user: User, billPaymentId: string): Promise<void> {
+    const challenge = await this.pin.createChallenge({
+      userId: user.id,
+      purpose: PinChallengePurpose.TRANSFER_AUTH,
+      billPaymentId,
+    });
+
+    await this.sendPinFlow(user, {
+      flowId: this.config.get<string>("WHATSAPP_PIN_ENTRY_FLOW_ID"),
+      flowToken: challenge.flowToken,
+      screenId: "PIN_ENTRY",
+      headerText: "Enter your PIN",
+      bodyText: "Enter your 4-digit PIN to authorize this airtime purchase.",
       ctaText: "Enter PIN",
       envVar: "WHATSAPP_PIN_ENTRY_FLOW_ID",
     });
@@ -268,6 +288,14 @@ export class PinGateService {
       return ok ? { action: "pin_setup_complete" } : { action: "none" };
     }
 
+    if (challenge.billPaymentId) {
+      return this.handleBillPaymentSubmission(
+        user,
+        challenge.billPaymentId,
+        sensitive,
+      );
+    }
+
     return this.handleTransferSubmission(
       user,
       challenge.transactionId,
@@ -390,9 +418,37 @@ export class PinGateService {
     return { action: "execute_transfer", transactionId };
   }
 
+  private async handleBillPaymentSubmission(
+    user: User,
+    billPaymentId: string,
+    sensitive: SensitiveFields,
+  ): Promise<PinFlowOutcome> {
+    const result = await this.pin.verifyPin(user.id, sensitive.pin ?? "");
+    if (!result.ok) {
+      await this.whatsapp.sendText(user.whatsappNumber, result.reason, user.id);
+
+      if (result.lockedUntil) {
+        await this.cancelPendingBillPayment(billPaymentId);
+        return { action: "none" };
+      }
+
+      await this.requestBillPaymentPin(user, billPaymentId);
+      return { action: "none" };
+    }
+
+    return { action: "execute_bill_payment", billPaymentId };
+  }
+
   private async cancelPendingTransfer(transactionId: string): Promise<void> {
     await this.prisma.transaction.updateMany({
       where: { id: transactionId, status: "PENDING_PIN" },
+      data: { status: "CANCELLED" },
+    });
+  }
+
+  private async cancelPendingBillPayment(billPaymentId: string): Promise<void> {
+    await this.prisma.billPayment.updateMany({
+      where: { id: billPaymentId, status: "PENDING_PIN" },
       data: { status: "CANCELLED" },
     });
   }

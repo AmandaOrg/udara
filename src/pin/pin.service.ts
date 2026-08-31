@@ -348,6 +348,7 @@ export class PinService {
     userId: string;
     purpose: PinChallengePurpose;
     transactionId?: string;
+    billPaymentId?: string;
     otpHash?: string;
     otpAttempts?: number;
     ttlMs?: number;
@@ -360,6 +361,7 @@ export class PinService {
         userId: params.userId,
         purpose: params.purpose,
         transactionId: params.transactionId,
+        billPaymentId: params.billPaymentId,
         otpHash: params.otpHash,
         otpAttempts: params.otpAttempts ?? 0,
         flowToken: randomUUID(),

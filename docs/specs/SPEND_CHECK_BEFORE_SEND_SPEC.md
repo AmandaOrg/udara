@@ -17,6 +17,7 @@ Users who still have remaining daily allowance can say they want to send money a
 - A first send in chat gets **one** in-character question before the send-money wizard (vague or with a purpose).
 - Remaining allowance is not permission to skip that question. Paying early-access or borrow fees is not a skip either.
 - After the question, answering or insisting still prepares the send (does not loop forever).
+- The user's free-text answer is classified into `RENT | FOOD | VENDOR | OTHER` and stored on the transaction as `purposeLabel`.
 
 ## Non-goals
 
@@ -35,20 +36,23 @@ Users who still have remaining daily allowance can say they want to send money a
 - Label hints do not skip the first-send pause. They still help resume after the check.
 - Window closed: do not open the wizard; the spend check does not override the window lock.
 - Bare `yes` after the check may proceed; bare `yes` with no check in progress still does not invent a new send by itself.
+- `purposeLabel` on the transaction may differ from `Recipient.label` when sending to someone tagged on an earlier transfer.
 
 ## Safety / PII
 
-No new collection of PIN, BVN, or NIN. Purpose is free text in the existing chat session.
+No new collection of PIN, BVN, or NIN. Purpose is free text in the existing chat session; classification is LLM `label_hint` sanitized by code.
 
 ## Acceptance (observable)
 
 - Vague Opay/amount send → no `transfer_wizard` on that turn.
 - Landlord/rent (or similar) first send → no `transfer_wizard` on that turn.
-- After a spend-check question, a purpose or “just send it” → `transfer_wizard` allowed.
+- After a spend-check question, a purpose or “just send it” → `transfer_wizard` allowed with `labelHint` when stated.
+- Executed transaction row includes `purposeLabel` when classification was provided.
 
 ## Changelog
 
 | Date | Change |
 | --- | --- |
 | 2026-08-27 | Initial |
+| 2026-08-28 | Phase 2: purposeLabel persistence + spend-check classification |
 | 2026-08-29 | Purpose no longer skips the first-send pause |

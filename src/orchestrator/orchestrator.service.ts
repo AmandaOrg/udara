@@ -51,11 +51,19 @@ import {
   Prisma,
   TransactionStatus,
   TransferDraftStatus,
+  Recipient,
   User,
 } from "@prisma/client";
 import {
+  BillPaymentCategory,
+  BillPaymentDraftStatus,
+  BillPaymentStatus,
+} from "../prisma/bill-payment.enums";
+import { moneyOutWizardSurface } from "./bill-hints.util";
+import {
   isSpendCheckAbortUtterance,
   isWeakSpendCheckMessage,
+  pendingSurfaceForUtterance,
   sanitizeTransferHints,
   shouldPauseForSpendCheck,
   SPEND_CHECK_FALLBACK_MESSAGE,
@@ -207,7 +215,10 @@ export class OrchestratorService {
         user,
         eligibleSurfaces,
         text,
-        { spendCheckPending },
+        {
+          spendCheckPending,
+          pendingSurface: storedHints.pendingSurface,
+        },
       );
 
       validated = await this.applySpendCheckSession(
@@ -383,7 +394,46 @@ export class OrchestratorService {
       `- Spending window: ${user.windowStartHour}:00 to ${user.windowEndHour}:00 WAT`,
     ];
 
-    const [draft, pending, lastSent, allowanceSummary] = await Promise.all([
+    // Editor `@prisma/client` can omit bill models; runtime PrismaService has them.
+    const bills = this.prisma as unknown as {
+      billPayment: {
+        findFirst: (args: {
+          where: {
+            userId: string;
+            status: { in: BillPaymentStatus[] };
+          };
+          orderBy: { createdAt: "desc" };
+        }) => Promise<{
+          status: BillPaymentStatus;
+          category: BillPaymentCategory;
+          amount: unknown;
+          telcoLabel: string | null;
+          msisdn: string | null;
+        } | null>;
+      };
+      billPaymentDraft: {
+        findFirst: (args: {
+          where: { userId: string; status: BillPaymentDraftStatus };
+          orderBy: { createdAt: "desc" };
+        }) => Promise<{
+          category: BillPaymentCategory;
+          step: string;
+          telcoLabel: string | null;
+          amount: unknown;
+          msisdn: string | null;
+        } | null>;
+      };
+    };
+
+    const [
+      draft,
+      pending,
+      pendingBill,
+      billDraft,
+      lastSent,
+      allowanceSummary,
+      savedRecipients,
+    ] = await Promise.all([
       this.prisma.transferDraft.findFirst({
         where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
         orderBy: { createdAt: "desc" },
@@ -400,6 +450,25 @@ export class OrchestratorService {
         },
         orderBy: { createdAt: "desc" },
       }),
+      bills.billPayment.findFirst({
+        where: {
+          userId: user.id,
+          status: {
+            in: [
+              BillPaymentStatus.PENDING_CONFIRMATION,
+              BillPaymentStatus.PENDING_PIN,
+            ],
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      bills.billPaymentDraft.findFirst({
+        where: {
+          userId: user.id,
+          status: BillPaymentDraftStatus.ACTIVE,
+        },
+        orderBy: { createdAt: "desc" },
+      }),
       this.prisma.transaction.findFirst({
         where: {
           userId: user.id,
@@ -413,6 +482,11 @@ export class OrchestratorService {
           `Could not load allowance for user ${user.id}: ${String(err)}`,
         );
         return null;
+      }),
+      this.prisma.recipient.findMany({
+        where: { userId: user.id },
+        orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
+        take: 8,
       }),
     ]);
     const pendingConfirm = pending;
@@ -443,6 +517,13 @@ export class OrchestratorService {
         `- Active mode: awaiting_confirm`,
         `- Pending ${waitingOnPin ? "PIN" : "confirm"}: amount ₦${Number(pendingConfirm.amount).toLocaleString("en-NG")} (do NOT start transfer_wizard. ${waitingOnPin ? "They must enter PIN." : "Remind them to tap Confirm or Cancel."})`,
       );
+    } else if (pendingBill) {
+      const waitingOnPin = pendingBill.status === BillPaymentStatus.PENDING_PIN;
+      const kind = billCategoryLabel(pendingBill.category);
+      lines.push(
+        `- Active mode: awaiting_confirm`,
+        `- Pending ${waitingOnPin ? "PIN" : "confirm"} (${kind}): ₦${Number(pendingBill.amount).toLocaleString("en-NG")} ${pendingBill.telcoLabel} for ${pendingBill.msisdn} (do NOT start bill/data/electricity wizards or transfer_wizard. ${waitingOnPin ? "They must enter PIN." : "Remind them to tap Confirm or Cancel."})`,
+      );
     } else if (activeDraft) {
       lines.push(
         "- Active mode: transfer_wizard",
@@ -452,13 +533,26 @@ export class OrchestratorService {
         `- Draft bank: ${activeDraft.bankName ?? activeDraft.bankCode ?? "missing"}`,
         "- If the user is answering a missing field, use fill_wizard with extracted_hints. If they change topic, use cancel_surface or show_surface for the new intent.",
       );
+    } else if (billDraft) {
+      const mode = billDraftActiveMode(billDraft.category);
+      lines.push(
+        `- Active mode: ${mode}`,
+        `- Bill category: ${billCategoryLabel(billDraft.category)}`,
+        `- Draft step: ${billDraft.step}`,
+        `- Draft provider: ${billDraft.telcoLabel ?? "missing"}`,
+        `- Draft amount: ${billDraft.amount != null ? `₦${Number(billDraft.amount).toLocaleString("en-NG")}` : "missing"}`,
+        `- Draft phone/meter: ${billDraft.msisdn ?? "missing"}`,
+        "- Lists pick network/provider/plan; typed steps are amount, phone, or meter. If they change topic, use cancel_surface or show_surface for the new intent.",
+      );
     } else if (spendCheck) {
       const raw = transferHintsToRaw(spendCheck);
       lines.push(
         "- Active mode: spend_check",
-        `- Pending send hints: amount=${raw.amount ?? "missing"}, account=${raw.account_number ?? "missing"}, bank=${raw.bank_name ?? raw.bank_code ?? "missing"}`,
+        `- Pending send hints: amount=${raw.amount ?? "missing"}, account=${raw.account_number ?? "missing"}, bank=${raw.bank_name ?? raw.bank_code ?? "missing"}, purpose=${raw.label_hint ?? "not stated yet"}, beneficiary=${raw.beneficiary_name ?? "missing"}, pending_surface=${raw.pending_surface ?? "transfer_wizard"}`,
         "- Remaining allowance is not permission to skip this. Challenge the send (why / is it needed), even if they would pay a fee. Do not invent ₦ figures.",
-        "- If they gave a purpose, insisted, or still want to send → show_surface transfer_wizard with extracted_hints this turn. If they backed off → reply_only.",
+        "- When they answer, set label_hint in extracted_hints to RENT, FOOD, VENDOR, or OTHER based on their words — you classify, do not invent account numbers.",
+        "- If pending_surface is a bill wizard, show_surface THAT wizard (bill_payment_wizard / data_bundle_wizard / electricity_wizard), not transfer_wizard. Put telco_hint, msisdn, meter, disco_hint only if the user said them.",
+        "- If they gave a purpose, insisted, or still want to send → show_surface the pending wizard with extracted_hints this turn. If they backed off → reply_only.",
       );
     } else {
       lines.push("- Active mode: free");
@@ -505,6 +599,26 @@ export class OrchestratorService {
     } else {
       lines.push(
         "- Allowance figures unavailable this turn. If asked, say you can't pull it up right now. Do NOT estimate.",
+      );
+    }
+
+    if (savedRecipients.length > 0) {
+      const names = savedRecipients
+        .map((r: Recipient) => {
+          const nick = (r as Recipient & { nickname?: string | null }).nickname;
+          return nick ?? r.accountName ?? r.accountNumber;
+        })
+        .filter(Boolean)
+        .slice(0, 6)
+        .join(", ");
+      lines.push(
+        `- Saved beneficiaries (nicknames only — never invent account numbers): ${names}`,
+        '- For "send to <name>", put beneficiary_name in extracted_hints using ONLY a name from this list (or a substring the user typed that matches). Code resolves the account.',
+        "- If they want to send and did not name a payee, mention these names and ask which one, or leave beneficiary_name unset so the pick list can show. If this list is missing, do not pretend they have saved people.",
+      );
+    } else {
+      lines.push(
+        "- Saved beneficiaries: none. Do not claim they have saved payees. Ask for account and bank if they want to send.",
       );
     }
 
@@ -619,17 +733,30 @@ export class OrchestratorService {
   ): Promise<OrchestratorResult> {
     const launchedWizard =
       validated.actionType === "show_surface" &&
-      validated.surfaceKey === "transfer_wizard";
+      moneyOutWizardSurface(validated.surfaceKey);
     const topicChange =
       validated.actionType === "cancel_surface" ||
       (validated.actionType === "show_surface" &&
-        validated.surfaceKey !== "transfer_wizard");
+        !moneyOutWizardSurface(validated.surfaceKey));
 
     if (isSpendCheckAbortUtterance(userText) || launchedWizard || topicChange) {
       if (wasPending || launchedWizard) {
         await this.writeSpendCheck(sessionId, null);
       }
       return validated;
+    }
+
+    if (
+      wasPending &&
+      !launchedWizard &&
+      (hints.amount != null ||
+        hints.accountNumber ||
+        hints.bankCode ||
+        hints.bankName ||
+        hints.labelHint ||
+        hints.beneficiaryName)
+    ) {
+      await this.writeSpendCheck(sessionId, hints);
     }
 
     const paused =
@@ -640,6 +767,8 @@ export class OrchestratorService {
       await this.writeSpendCheck(sessionId, {
         ...hints,
         spendReason: userText.trim().slice(0, 200) || undefined,
+        pendingSurface:
+          hints.pendingSurface ?? pendingSurfaceForUtterance(userText),
       });
       if (isWeakSpendCheckMessage(validated.message)) {
         return { ...validated, message: SPEND_CHECK_FALLBACK_MESSAGE };
@@ -703,5 +832,27 @@ export class OrchestratorService {
         content: String(m.content ?? ""),
       } as LlmMessage;
     });
+  }
+}
+
+function billCategoryLabel(category: BillPaymentCategory): string {
+  switch (category) {
+    case BillPaymentCategory.DATA:
+      return "data";
+    case BillPaymentCategory.ELECTRICITY:
+      return "electricity";
+    default:
+      return "airtime";
+  }
+}
+
+function billDraftActiveMode(category: BillPaymentCategory): string {
+  switch (category) {
+    case BillPaymentCategory.DATA:
+      return "data_bundle_wizard";
+    case BillPaymentCategory.ELECTRICITY:
+      return "electricity_wizard";
+    default:
+      return "bill_payment_wizard";
   }
 }

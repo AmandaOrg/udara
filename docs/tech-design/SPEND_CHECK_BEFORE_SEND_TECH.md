@@ -11,11 +11,13 @@ Does not change Rubies, PIN Flows, fee math, or wizard steps.
 
 ## Data / types
 
-No migration. `ConversationSession.contextData` JSON:
+No migration for spend-check session. `ConversationSession.contextData` JSON:
 
 ```ts
 { spendCheck: TransferWizardHints | null }
 ```
+
+**Phase 2:** `Transaction.purposeLabel RecipientLabel?` — set at `initiateTransfer` from spend-check / wizard `labelHint`. Does not overwrite existing `Recipient.label`.
 
 Helpers on [`src/orchestrator/transfer-hints.util.ts`](../../src/orchestrator/transfer-hints.util.ts):
 
@@ -56,5 +58,6 @@ Purpose keyword list is English/Nigerian-English and incomplete on purpose. Pref
 | Date | Change |
 | --- | --- |
 | 2026-08-27 | Initial |
+| 2026-08-28 | purposeLabel on Transaction; spend_check label_hint in prompt/live facts |
 | 2026-08-29 | Purpose/label no longer skip the first-send pause |
 | 2026-08-29 | First-send pause includes purpose-stated sends |

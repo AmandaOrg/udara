@@ -10,19 +10,40 @@ import {
   CONFIRM_BUTTON_PREFIX,
   CANCEL_BUTTON_PREFIX,
 } from "./transfer-confirmation.service";
+import { BillPaymentActionsService } from "./bill-payment-actions.service";
+import { BillPaymentConfirmationService } from "./bill-payment-confirmation.service";
+import {
+  BILL_CANCEL_WORDS,
+  BUNDLE_BUTTON_PREFIX,
+  CANCEL_BILL_PREFIX,
+  CONFIRM_BILL_PREFIX,
+  DATA_TELCO_BUTTON_PREFIX,
+  DISCO_BUTTON_PREFIX,
+  TELCO_BUTTON_PREFIX,
+} from "./bill-payment.constants";
 import { OrchestratorService } from "../orchestrator/orchestrator.service";
 import { ActionExecutorService } from "../orchestrator/action-executor.service";
 import {
   AccountActionsService,
   BANK_BUTTON_PREFIX,
+  BENEFICIARY_BUTTON_PREFIX,
   LABEL_BUTTON_PREFIX,
   MENU_ACCOUNT,
   MENU_BALANCE,
   MENU_BUTTON_PREFIX,
   MENU_LIMITS,
   MENU_TRANSFER,
+  MENU_AIRTIME,
+  MENU_DATA,
+  MENU_ELECTRICITY,
 } from "./account-actions.service";
-import { User, WhatsappMessage, WhatsappMessageType } from "@prisma/client";
+import {
+  User,
+  WhatsappMessage,
+  WhatsappMessageType,
+  BillPaymentDraftStep,
+  TransferDraftStep,
+} from "@prisma/client";
 import { PinGateService } from "./pin-gate.service";
 import {
   WeeklyReviewService,
@@ -59,6 +80,8 @@ export class WhatsappRouterService {
     private readonly whatsapp: WhatsappService,
     private readonly onboarding: OnboardingService,
     private readonly transferConfirmation: TransferConfirmationService,
+    private readonly billPaymentActions: BillPaymentActionsService,
+    private readonly billPaymentConfirmation: BillPaymentConfirmationService,
     private readonly accountActions: AccountActionsService,
     private readonly pinGate: PinGateService,
     private readonly orchestrator: OrchestratorService,
@@ -222,9 +245,98 @@ export class WhatsappRouterService {
       await this.transferConfirmation.cancelTransfer(transactionId);
       return;
     }
+    if (payload.startsWith(CONFIRM_BILL_PREFIX)) {
+      const billPaymentId = payload.slice(CONFIRM_BILL_PREFIX.length);
+      await this.billPaymentConfirmation.confirmBillPayment(billPaymentId);
+      return;
+    }
+    if (payload.startsWith(CANCEL_BILL_PREFIX)) {
+      const billPaymentId = payload.slice(CANCEL_BILL_PREFIX.length);
+      await this.billPaymentConfirmation.cancelBillPayment(billPaymentId);
+      return;
+    }
+    if (payload.startsWith(TELCO_BUTTON_PREFIX)) {
+      const billerCode = payload.slice(TELCO_BUTTON_PREFIX.length);
+      const draft = await this.billPaymentActions.getActiveDraft(user.id);
+      if (!draft) {
+        await this.whatsapp.sendText(
+          message.fromNumber,
+          'that request has expired, say "airtime" to start again.',
+          user.id,
+        );
+        return;
+      }
+      await this.billPaymentActions.handleAirtimeTelcoSelection(
+        user,
+        draft.id,
+        billerCode,
+      );
+      return;
+    }
+    if (payload.startsWith(DATA_TELCO_BUTTON_PREFIX)) {
+      const billerCode = payload.slice(DATA_TELCO_BUTTON_PREFIX.length);
+      const draft = await this.billPaymentActions.getActiveDraft(user.id);
+      if (!draft) {
+        await this.whatsapp.sendText(
+          message.fromNumber,
+          'that request has expired, say "data" to start again.',
+          user.id,
+        );
+        return;
+      }
+      await this.billPaymentActions.handleDataTelcoSelection(
+        user,
+        draft.id,
+        billerCode,
+      );
+      return;
+    }
+    if (payload.startsWith(BUNDLE_BUTTON_PREFIX)) {
+      const rest = payload.slice(BUNDLE_BUTTON_PREFIX.length);
+      const [billerCode, productCode] = rest.split(":");
+      const draft = await this.billPaymentActions.getActiveDraft(user.id);
+      if (!draft || !billerCode || !productCode) {
+        await this.whatsapp.sendText(
+          message.fromNumber,
+          'that request has expired, say "data" to start again.',
+          user.id,
+        );
+        return;
+      }
+      await this.billPaymentActions.handleBundleSelection(
+        user,
+        draft.id,
+        billerCode,
+        productCode,
+      );
+      return;
+    }
+    if (payload.startsWith(DISCO_BUTTON_PREFIX)) {
+      const billerCode = payload.slice(DISCO_BUTTON_PREFIX.length);
+      const draft = await this.billPaymentActions.getActiveDraft(user.id);
+      if (!draft) {
+        await this.whatsapp.sendText(
+          message.fromNumber,
+          'that request has expired, say "electricity" to start again.',
+          user.id,
+        );
+        return;
+      }
+      await this.billPaymentActions.handleDiscoSelection(
+        user,
+        draft.id,
+        billerCode,
+      );
+      return;
+    }
 
     if (payload.startsWith(MENU_BUTTON_PREFIX)) {
       await this.handleMenuSelection(user, payload);
+      return;
+    }
+    if (payload.startsWith(BENEFICIARY_BUTTON_PREFIX)) {
+      const recipientId = payload.slice(BENEFICIARY_BUTTON_PREFIX.length);
+      await this.accountActions.handleBeneficiarySelection(user, recipientId);
       return;
     }
     if (
@@ -279,6 +391,12 @@ export class WhatsappRouterService {
         return this.accountActions.startTransferWizard(user, undefined, {
           recoverFromSession: false,
         });
+      case MENU_AIRTIME:
+        return this.billPaymentActions.startAirtimeWizard(user);
+      case MENU_DATA:
+        return this.billPaymentActions.startDataWizard(user);
+      case MENU_ELECTRICITY:
+        return this.billPaymentActions.startElectricityWizard(user);
       default:
         this.logger.warn(`Unrecognized menu selection "${payload}"`);
     }
@@ -307,8 +425,14 @@ export class WhatsappRouterService {
           outcome.transactionId,
         );
       }
+      if (outcome.action === "execute_bill_payment") {
+        await this.billPaymentConfirmation.executeVerifiedBillPayment(
+          outcome.billPaymentId,
+        );
+      }
       if (outcome.action === "pin_setup_complete") {
         await this.transferConfirmation.resumeAfterPinSetup(user.id);
+        await this.billPaymentConfirmation.resumeAfterPinSetup(user.id);
       }
       return;
     }
@@ -359,6 +483,36 @@ export class WhatsappRouterService {
         user.id,
       );
       await this.accountActions.sendMainMenu(user);
+      return;
+    }
+
+    const billDraft = await this.billPaymentActions.getActiveDraft(user.id);
+    if (billDraft) {
+      if (BILL_CANCEL_WORDS.test(text.trim())) {
+        await this.billPaymentActions.cancelDraft(user, billDraft.id);
+        return;
+      }
+      const textSteps: BillPaymentDraftStep[] = [
+        BillPaymentDraftStep.AWAITING_AMOUNT,
+        BillPaymentDraftStep.AWAITING_MSISDN,
+        BillPaymentDraftStep.AWAITING_METER,
+      ];
+      if (textSteps.includes(billDraft.step)) {
+        await this.billPaymentActions.handleWizardText(
+          user,
+          billDraft.id,
+          text,
+        );
+        return;
+      }
+    }
+
+    const transferDraft = await this.accountActions.getActiveDraft(user.id);
+    if (
+      transferDraft &&
+      transferDraft.step === TransferDraftStep.AWAITING_PURPOSE_NOTE
+    ) {
+      await this.accountActions.handleWizardText(user, transferDraft.id, text);
       return;
     }
 

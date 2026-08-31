@@ -425,6 +425,7 @@ const NEEDS_TESTS = [
   'src/pin/pin.service.ts',
   'src/orchestrator/action-validator.service.ts',
   'src/orchestrator/transfer-hints.util.ts',
+  'src/orchestrator/bill-hints.util.ts',
   'src/allowance/fee-calculator.service.ts',
   'src/allowance/window.service.ts',
 ];

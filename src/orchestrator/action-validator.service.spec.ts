@@ -343,4 +343,80 @@ describe("ActionValidatorService", () => {
     expect(result.actionType).toBe("show_surface");
     expect(result.surfaceKey).toBe("transfer_wizard");
   });
+
+  it("pauses a first airtime ask for a spend check", () => {
+    const result = validator.validate(
+      proposal({
+        surface_key: "bill_payment_wizard",
+        confidence: "high",
+        extracted_hints: { amount: 2000, telco_hint: "mtn" },
+        message: "on it.",
+      }),
+      user,
+      [
+        ...eligible,
+        {
+          key: "bill_payment_wizard",
+          kind: "wizard",
+          description: "Airtime",
+          isEligible: () => true,
+        },
+      ],
+      "buy 2k mtn airtime",
+    );
+    expect(result.actionType).toBe("reply_only");
+    expect(result.surfaceKey).toBeUndefined();
+  });
+
+  it("does not open transfer_wizard for pay nepa", () => {
+    const result = validator.validate(
+      proposal({
+        surface_key: "transfer_wizard",
+        confidence: "high",
+        extracted_hints: { amount: 5000 },
+        message: "on it.",
+      }),
+      user,
+      [
+        ...eligible,
+        {
+          key: "electricity_wizard",
+          kind: "wizard",
+          description: "Electricity",
+          isEligible: () => true,
+        },
+      ],
+      "pay nepa",
+    );
+    expect(result.actionType).toBe("reply_only");
+    expect(result.surfaceKey).toBeUndefined();
+  });
+
+  it("launches airtime wizard after spend check proceed", () => {
+    const result = validator.validate(
+      proposal({
+        surface_key: "bill_payment_wizard",
+        confidence: "high",
+        extracted_hints: { amount: 2000, telco_hint: "mtn" },
+      }),
+      user,
+      [
+        ...eligible,
+        {
+          key: "bill_payment_wizard",
+          kind: "wizard",
+          description: "Airtime",
+          isEligible: () => true,
+        },
+      ],
+      "yes",
+      { spendCheckPending: true, pendingSurface: "bill_payment_wizard" },
+    );
+    expect(result.actionType).toBe("show_surface");
+    expect(result.surfaceKey).toBe("bill_payment_wizard");
+    expect(result.extractedHints).toEqual({
+      amount: 2000,
+      telcoHint: "mtn",
+    });
+  });
 });

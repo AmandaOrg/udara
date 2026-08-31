@@ -45,10 +45,31 @@ export const SURFACE_REGISTRY: SurfaceDefinition[] = [
     isEligible: (u) => !!u.rubiesAccountNumber,
   },
   {
+    key: "bill_payment_wizard",
+    kind: "wizard",
+    description:
+      "Start the buy-airtime wizard. Use when user clearly wants to buy airtime or top up a phone RIGHT NOW — any natural phrasing (airtime, recharge, top up, buy credit). Do NOT trigger for past purchases or casual mentions.",
+    isEligible: (u) => !!u.rubiesAccountNumber,
+  },
+  {
+    key: "data_bundle_wizard",
+    kind: "wizard",
+    description:
+      "Start the buy-data wizard. Use when user clearly wants to buy a mobile data bundle RIGHT NOW. Do NOT trigger for past purchases or casual mentions.",
+    isEligible: (u) => !!u.rubiesAccountNumber,
+  },
+  {
+    key: "electricity_wizard",
+    kind: "wizard",
+    description:
+      "Start prepaid electricity payment. Use when user wants to buy power/token for their meter NOW (Nepa, prepaid meter, electricity bill). Do NOT trigger for past payments.",
+    isEligible: (u) => !!u.rubiesAccountNumber,
+  },
+  {
     key: "transfer_wizard",
     kind: "wizard",
     description:
-      "Start the send-money wizard. Use when user clearly wants to send or transfer money RIGHT NOW — any natural phrasing. Put amount, account_number, bank_name/bank_code, and label_hint into extracted_hints when present so the wizard skips filled steps. Do NOT trigger for past transfers or casual mentions.",
+      "Start the send-money wizard. Use when user clearly wants to send or transfer money RIGHT NOW — not airtime/data/electricity. Put amount, account_number, bank_name/bank_code, beneficiary_name (from live facts only), and label_hint into extracted_hints when present. Do NOT invent account numbers. Do NOT trigger for past transfers, casual mentions, or bill purchases.",
     isEligible: (u) => !!u.rubiesAccountNumber,
   },
   {

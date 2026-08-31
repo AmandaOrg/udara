@@ -66,11 +66,12 @@ Fee amounts are shown and stored even if `RUBIES_FEES_ACCOUNT_NUMBER` is unset; 
 **Verified.**
 
 1. Send-money wizard is a `TransferDraft` step machine, **separate** from `ConversationSession`.
-2. Steps: amount → account number → bank selection → label (new recipients only).
-3. Orchestrator may start or fill the wizard via `show_surface transfer_wizard` / `fill_wizard` with sanitized hints (amount > 0, 10-digit account, 6-digit bank code, label in RENT/FOOD/VENDOR/OTHER).
-4. A first send in chat gets one spend-check question before the wizard, even if they already named a purpose or would pay a fee. Remaining daily allowance is not permission to skip that. After they answer or insist, the wizard may open. See [specs/SPEND_CHECK_BEFORE_SEND_SPEC.md](specs/SPEND_CHECK_BEFORE_SEND_SPEC.md) and [specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md](specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md).
-5. Every send still goes through confirm buttons, then PIN via WhatsApp Flow (`PENDING_PIN` until verified). Money does not move on confirm alone.
-6. Thanks / “you already sent it” must not relaunch the wizard. See [specs/TRANSFER_INTENT_GROUNDING_SPEC.md](specs/TRANSFER_INTENT_GROUNDING_SPEC.md).
+2. Steps: amount → account number → bank selection → label (new recipients only) → typed purpose if **Other**.
+3. Orchestrator may start or fill the wizard via `show_surface transfer_wizard` / `fill_wizard` with sanitized hints (amount > 0, 10-digit account, 6-digit bank code, label in RENT/FOOD/VENDOR/OTHER, optional `beneficiary_name` / `purpose_note`). Amounts may be linguistic (`5k`); code parses to naira.
+4. A first send **or bill purchase** in chat gets one spend-check question before the wizard, even if they already named a purpose or would pay a fee. Remaining daily allowance is not permission to skip that. After they answer or insist, the matching wizard may open (send-money vs airtime/data/electricity). Transfer purpose is classified via `label_hint` into `RENT | FOOD | VENDOR | OTHER` (`purposeLabel`); Other may also store `purposeNote`. See [specs/SPEND_CHECK_BEFORE_SEND_SPEC.md](specs/SPEND_CHECK_BEFORE_SEND_SPEC.md), [specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md](specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md), and [specs/AI_MONEY_INTENTS_SPEC.md](specs/AI_MONEY_INTENTS_SPEC.md).
+5. Repeat sends may pre-fill account/bank from saved beneficiaries when the user names someone uniquely (`beneficiary_name` hint), or from a pick list of recent payees when they did not name anyone; confirm and PIN are still required. Unknown names do not invent accounts. See [specs/BENEFICIARY_PREFILL_SPEC.md](specs/BENEFICIARY_PREFILL_SPEC.md).
+6. Every send still goes through confirm buttons, then PIN via WhatsApp Flow (`PENDING_PIN` until verified). Money does not move on confirm alone.
+7. Thanks / “you already sent it” must not relaunch the wizard. See [specs/TRANSFER_INTENT_GROUNDING_SPEC.md](specs/TRANSFER_INTENT_GROUNDING_SPEC.md).
 
 The orchestrator **cannot** execute transfers or invent balances. Surfaces own numbers.
 
@@ -112,7 +113,13 @@ The [Canonical Onboarding Script](✅-Kedu-Onboarding-Script.pdf) is committed, 
 
 ## Recipients
 
-**Verified.** First send to an unknown account goes through tagging/confirmation. Labels: RENT, FOOD, VENDOR, OTHER.
+**Verified.** First send to an unknown account goes through tagging/confirmation. Labels: RENT, FOOD, VENDOR, OTHER. Other may include a short typed `purposeNote`. Saved nicknames are listed in live facts; the model must not invent account numbers.
+
+---
+
+## Bill payments (airtime, data, electricity)
+
+**Verified.** Menu plus orchestrator surfaces `bill_payment_wizard`, `data_bundle_wizard`, `electricity_wizard`. Chat may prefill amount / network / phone / meter / DisCo from sanitized hints. Data bundles stay a list. Same confirm → PIN as transfers. See [specs/BILL_PAYMENTS_SPEC.md](specs/BILL_PAYMENTS_SPEC.md) and [specs/AI_MONEY_INTENTS_SPEC.md](specs/AI_MONEY_INTENTS_SPEC.md).
 
 ---
 
@@ -138,7 +145,7 @@ Inbound WhatsApp voice notes are transcribed (Deepgram) and handled as text. Rep
 
 ## Surfaces the model may propose
 
-Eligible predicates in [`surface-registry.ts`](../src/orchestrator/surface-registry.ts): `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `spending_menu`, `spend_summary`. Unknown or ineligible keys are downgraded to `reply_only`. Medium/missing confidence is text-only unless the validator promotes a ready send, which the transfer-intent and spend-check specs gate.
+Eligible predicates in [`surface-registry.ts`](../src/orchestrator/surface-registry.ts): `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `bill_payment_wizard`, `data_bundle_wizard`, `electricity_wizard`, `spending_menu`, `spend_summary`. Unknown or ineligible keys are downgraded to `reply_only`. Medium/missing confidence is text-only unless the validator promotes a ready send or bill, which the transfer-intent, spend-check, and AI money-intents specs gate.
 
 ---
 

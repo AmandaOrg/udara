@@ -107,6 +107,12 @@ export class TransferConfirmationService {
     // preserves its original auto-tag-OTHER behavior exactly.
     resolvedName?: string;
     label?: RecipientLabel;
+    /** Spend purpose for this send (from spend-check / orchestrator), not recipient tag. */
+    purposeLabel?: RecipientLabel;
+    /** Free-text purpose when the category is OTHER. */
+    purposeNote?: string;
+    /** Nickname to persist when this send succeeds (from beneficiary_name hint). */
+    beneficiaryNickname?: string;
   }): Promise<void> {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: params.userId },
@@ -159,9 +165,16 @@ export class TransferConfirmationService {
         bankCode: params.bankCode,
         accountName: resolvedName,
         label: params.label ?? RecipientLabel.OTHER,
+        nickname: params.beneficiaryNickname,
+      });
+    } else if (params.beneficiaryNickname) {
+      await this.tagging.touchRecipientUsed(recipient.id, {
+        nickname: params.beneficiaryNickname,
       });
     }
 
+    const purposeLabel =
+      params.purposeLabel ?? params.label ?? RecipientLabel.OTHER;
     const idempotencyKey = randomUUID();
     const transaction = await this.prisma.transaction.create({
       data: {
@@ -171,6 +184,8 @@ export class TransferConfirmationService {
         type: evaluation.type as unknown as TransactionType,
         status: TransactionStatus.PENDING_CONFIRMATION,
         feeAmount: evaluation.feeAmount,
+        purposeLabel,
+        purposeNote: params.purposeNote?.trim().slice(0, 200) || undefined,
         idempotencyKey,
       },
     });
@@ -538,6 +553,7 @@ export class TransferConfirmationService {
         data: { status: TransferDraftStatus.CANCELLED },
       });
       await this.recordCompletedTransferInChat(transaction);
+      await this.tagging.touchRecipientUsed(transaction.recipientId);
 
       // Best-effort, keyed on the transaction id so the webhook path and the
       // reconciliation scheduler can't both send for the same transfer.

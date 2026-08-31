@@ -55,7 +55,11 @@ describe("TransferConfirmationService", () => {
     getBalance: jest.Mock;
     initiateTransfer: jest.Mock;
   };
-  let tagging: { findRecipient: jest.Mock; tagRecipient: jest.Mock };
+  let tagging: {
+    findRecipient: jest.Mock;
+    tagRecipient: jest.Mock;
+    touchRecipientUsed: jest.Mock;
+  };
   let whatsapp: { sendText: jest.Mock; sendInteractiveButtons: jest.Mock };
   let config: { get: jest.Mock };
   let pinGate: {
@@ -142,6 +146,7 @@ describe("TransferConfirmationService", () => {
     tagging = {
       findRecipient: jest.fn().mockResolvedValue(recipient),
       tagRecipient: jest.fn().mockResolvedValue(recipient),
+      touchRecipientUsed: jest.fn().mockResolvedValue(undefined),
     };
     whatsapp = {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "wamid.1" }),
@@ -205,10 +210,19 @@ describe("TransferConfirmationService", () => {
         accountNumber: "0011223344",
         bankCode: "000005",
         amount: 5000,
+        purposeLabel: RecipientLabel.RENT,
+        label: RecipientLabel.VENDOR,
       });
 
       expect(rubies.nameEnquiry).not.toHaveBeenCalled();
       expect(tagging.tagRecipient).not.toHaveBeenCalled();
+      expect(prisma.transaction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            purposeLabel: RecipientLabel.RENT,
+          }),
+        }),
+      );
     });
 
     it("resolves and auto-tags a new recipient as OTHER", async () => {
@@ -264,6 +278,7 @@ describe("TransferConfirmationService", () => {
         accountNumber: "0011223344",
         bankCode: "000005",
         amount: 800,
+        purposeLabel: RecipientLabel.FOOD,
       });
 
       expect(prisma.transaction.create).toHaveBeenCalledWith(
@@ -271,6 +286,7 @@ describe("TransferConfirmationService", () => {
           data: expect.objectContaining({
             status: TransactionStatus.PENDING_CONFIRMATION,
             amount: 800,
+            purposeLabel: RecipientLabel.FOOD,
             idempotencyKey: expect.any(String),
           }),
         }),

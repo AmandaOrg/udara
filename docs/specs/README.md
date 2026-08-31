@@ -16,7 +16,10 @@ Stakeholder-visible behavior for a feature. **What** happens and **why**, not cl
 | --- | --- |
 | [TRANSFER_INTENT_GROUNDING_SPEC.md](TRANSFER_INTENT_GROUNDING_SPEC.md) | [transfer-intent-grounding](../../initiatives/transfer-intent-grounding/plan.md) |
 | [SPEND_CHECK_BEFORE_SEND_SPEC.md](SPEND_CHECK_BEFORE_SEND_SPEC.md) | [spend-check-before-send](../../initiatives/spend-check-before-send/plan.md) |
+| [BENEFICIARY_PREFILL_SPEC.md](BENEFICIARY_PREFILL_SPEC.md) | [beneficiary-prefill](../../initiatives/beneficiary-prefill/plan.md) |
+| [BILL_PAYMENTS_SPEC.md](BILL_PAYMENTS_SPEC.md) | [bill-payments](../../initiatives/bill-payments/plan.md) |
 | [WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md](WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md) | [whatsapp-media-and-spend-pushback](../../initiatives/whatsapp-media-and-spend-pushback/plan.md) |
+| [AI_MONEY_INTENTS_SPEC.md](AI_MONEY_INTENTS_SPEC.md) | [ai-money-intents](../../initiatives/ai-money-intents/plan.md) |
 
 ## New spec
 

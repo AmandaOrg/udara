@@ -89,7 +89,12 @@ describe("AccountActionsService", () => {
     listBanks: jest.Mock;
     nameEnquiry: jest.Mock;
   };
-  let tagging: { findRecipient: jest.Mock };
+  let tagging: {
+    findRecipient: jest.Mock;
+    matchBeneficiaryByName: jest.Mock;
+    findAmbiguousBeneficiaryMatches: jest.Mock;
+    listRecipientsForUser: jest.Mock;
+  };
   let whatsapp: { sendText: jest.Mock; sendListMessage: jest.Mock };
   let transferConfirmation: {
     initiateTransfer: jest.Mock;
@@ -133,15 +138,34 @@ describe("AccountActionsService", () => {
       listBanks: jest.fn().mockResolvedValue(banks),
       nameEnquiry: jest.fn(),
     };
-    tagging = { findRecipient: jest.fn().mockResolvedValue(null) };
+    tagging = {
+      findRecipient: jest.fn().mockResolvedValue(null),
+      matchBeneficiaryByName: jest.fn().mockResolvedValue(null),
+      findAmbiguousBeneficiaryMatches: jest.fn().mockResolvedValue([]),
+      listRecipientsForUser: jest.fn().mockResolvedValue([]),
+    };
     whatsapp = {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "wamid.1" }),
       sendListMessage: jest.fn().mockResolvedValue({ waMessageId: "wamid.2" }),
+    };
+    (prisma as any).conversationSession = {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: "sess-1", contextData: {} }),
+      update: jest.fn().mockResolvedValue({ id: "sess-1", contextData: {} }),
+    };
+    (prisma as any).recipient = {
+      findFirst: jest.fn(),
     };
     transferConfirmation = {
       initiateTransfer: jest.fn(),
       cancelPendingForUser: jest.fn().mockResolvedValue(undefined),
       resumePendingTransferUi: jest.fn().mockResolvedValue(false),
+    };
+    const billPaymentActions = {
+      cancelActiveDraftForUser: jest.fn().mockResolvedValue(undefined),
+    };
+    const billPaymentConfirmation = {
+      cancelPendingForUser: jest.fn().mockResolvedValue(undefined),
     };
 
     service = new AccountActionsService(
@@ -152,11 +176,13 @@ describe("AccountActionsService", () => {
       tagging as any,
       whatsapp as any,
       transferConfirmation as any,
+      billPaymentActions as any,
+      billPaymentConfirmation as any,
     );
   });
 
   describe("sendMainMenu", () => {
-    it("sends a list message with all four actions", async () => {
+    it("sends a list message with all menu actions", async () => {
       await service.sendMainMenu(makeUser() as any);
       expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
         "234801",
@@ -167,6 +193,9 @@ describe("AccountActionsService", () => {
           expect.objectContaining({ id: "menu:limits" }),
           expect.objectContaining({ id: "menu:account" }),
           expect.objectContaining({ id: "menu:transfer" }),
+          expect.objectContaining({ id: "menu:airtime" }),
+          expect.objectContaining({ id: "menu:data" }),
+          expect.objectContaining({ id: "menu:electricity" }),
         ]),
         "user-1",
       );
@@ -412,12 +441,41 @@ describe("AccountActionsService", () => {
       );
       expect(whatsapp.sendText).toHaveBeenLastCalledWith(
         "234801",
-        expect.stringContaining("valid amount"),
+        expect.stringContaining("amount"),
         "user-1",
       );
       expect(prisma._drafts.get(draft!.id)!.step).toBe(
         TransferDraftStep.AWAITING_AMOUNT,
       );
+    });
+
+    it("accepts a linguistic 5k amount", async () => {
+      await service.startTransferWizard(makeUser() as any);
+      const draft = await service.getActiveDraft("user-1");
+      await service.handleWizardText(makeUser() as any, draft!.id, "5k");
+      expect(Number(prisma._drafts.get(draft!.id)!.amount)).toBe(5000);
+    });
+
+    it("offers saved beneficiaries when starting a send with no payee", async () => {
+      tagging.listRecipientsForUser.mockResolvedValue([
+        {
+          id: "r1",
+          nickname: "James",
+          accountNumber: "1111222233",
+          label: RecipientLabel.FOOD,
+        },
+      ]);
+      await service.startTransferWizard(makeUser() as any, { amount: 5000 });
+      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("who are you sending to"),
+        "Pick recipient",
+        expect.arrayContaining([
+          expect.objectContaining({ id: "beneficiary:r1" }),
+        ]),
+        "user-1",
+      );
+      expect(await service.getActiveDraft("user-1")).toBeNull();
     });
 
     it("accepts an amount and asks for the account number", async () => {
@@ -642,6 +700,7 @@ describe("AccountActionsService", () => {
           amount: 5000,
           resolvedName: "Jane Doe",
           label: RecipientLabel.VENDOR,
+          purposeLabel: RecipientLabel.OTHER,
         }),
       );
       expect(prisma._drafts.get(draftId)!.status).toBe(
@@ -670,10 +729,38 @@ describe("AccountActionsService", () => {
           amount: 5000,
           resolvedName: "Jane Doe",
           label: RecipientLabel.RENT,
+          purposeLabel: RecipientLabel.RENT,
         }),
       );
       expect(prisma._drafts.get(draftId)!.status).toBe(
         TransferDraftStatus.COMPLETED,
+      );
+    });
+
+    it("asks for a typed purpose after Other, then finalizes", async () => {
+      rubies.nameEnquiry.mockResolvedValue({
+        accountName: "Jane Doe",
+        bankName: "GTBank",
+      });
+      const draftId = await driveToBankStep();
+      await service.handleWizardText(makeUser() as any, draftId, "gtbank");
+      await service.handleWizardSelection(
+        makeUser() as any,
+        draftId,
+        "label:OTHER",
+      );
+      expect(prisma._drafts.get(draftId)!.step).toBe(
+        TransferDraftStep.AWAITING_PURPOSE_NOTE,
+      );
+      expect(transferConfirmation.initiateTransfer).not.toHaveBeenCalled();
+
+      await service.handleWizardText(makeUser() as any, draftId, "school fees");
+      expect(transferConfirmation.initiateTransfer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          purposeLabel: RecipientLabel.OTHER,
+          purposeNote: "school fees",
+          label: RecipientLabel.OTHER,
+        }),
       );
     });
 
@@ -688,6 +775,93 @@ describe("AccountActionsService", () => {
       expect(whatsapp.sendText).toHaveBeenLastCalledWith(
         "234801",
         expect.stringContaining("doesn't match"),
+        "user-1",
+      );
+    });
+  });
+
+  describe("beneficiary prefill", () => {
+    it("prefills account and bank from a unique saved beneficiary", async () => {
+      tagging.matchBeneficiaryByName.mockResolvedValue({
+        id: "r-james",
+        accountNumber: "9988776655",
+        bankCode: "000013",
+        nickname: "james",
+        label: RecipientLabel.VENDOR,
+      });
+      tagging.findRecipient.mockResolvedValue({
+        id: "r-james",
+        label: RecipientLabel.VENDOR,
+      });
+      rubies.nameEnquiry.mockResolvedValue({
+        accountName: "James Okonkwo",
+        bankName: "GTBank",
+      });
+
+      await service.startTransferWizard(makeUser() as any, {
+        amount: 5000,
+        beneficiaryName: "james",
+        labelHint: RecipientLabel.FOOD,
+      });
+
+      expect(transferConfirmation.initiateTransfer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountNumber: "9988776655",
+          bankCode: "000013",
+          amount: 5000,
+          label: RecipientLabel.VENDOR,
+          purposeLabel: RecipientLabel.FOOD,
+          beneficiaryNickname: "james",
+        }),
+      );
+    });
+
+    it("sends a disambiguation list when multiple beneficiaries match", async () => {
+      tagging.matchBeneficiaryByName.mockResolvedValue(null);
+      tagging.findAmbiguousBeneficiaryMatches.mockResolvedValue([
+        {
+          id: "r1",
+          nickname: "James",
+          accountNumber: "111",
+          label: RecipientLabel.FOOD,
+        },
+        {
+          id: "r2",
+          nickname: "James",
+          accountNumber: "222",
+          label: RecipientLabel.VENDOR,
+        },
+      ]);
+
+      await service.startTransferWizard(makeUser() as any, {
+        amount: 5000,
+        beneficiaryName: "james",
+      });
+
+      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("which james"),
+        "Pick recipient",
+        expect.arrayContaining([
+          expect.objectContaining({ id: "beneficiary:r1" }),
+          expect.objectContaining({ id: "beneficiary:r2" }),
+        ]),
+        "user-1",
+      );
+      expect(transferConfirmation.initiateTransfer).not.toHaveBeenCalled();
+    });
+
+    it("does not invent an account for an unknown beneficiary name", async () => {
+      tagging.matchBeneficiaryByName.mockResolvedValue(null);
+      await service.startTransferWizard(makeUser() as any, {
+        amount: 5000,
+        beneficiaryName: "zyxnotaperson",
+      });
+      const draft = await service.getActiveDraft("user-1");
+      expect(draft?.accountNumber).toBeNull();
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("account number"),
         "user-1",
       );
     });
