@@ -44,8 +44,10 @@ Schema changes go through Prisma:
 
 ```bash
 npx prisma migrate dev --name <slug>
-npx prisma migrate deploy   # CI and shared DBs
+npx prisma migrate deploy   # CI, and also every production boot
 ```
+
+Production start is `npm run start:prod`: `prisma migrate deploy` then `node dist/main`. Railway is set to that command via `railway.json`. Do **not** put migrate inside `npm run build` — compile must not need the live database, and CI's `npm run build` is not production Postgres.
 
 Never edit applied SQL in place. Update [ARCHITECTURE.md](ARCHITECTURE.md) and `.cursor/project/summary.md` when models or enums change.
 
