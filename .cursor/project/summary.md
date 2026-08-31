@@ -72,7 +72,7 @@ WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), Deepgram STT
 - Stub AI does not emit `propose_turn` (e2e free text → failure SOP)
 - Fee sweep skipped without `RUBIES_FEES_ACCOUNT_NUMBER`
 - Founding PDFs (PRD, onboarding script, tone prompt) are in `docs/` but are stale background, not spec — code wins
-- Production must run `start:prod` so pending Prisma migrations apply before the process listens. `npm run build` does not migrate.
+- Production is **Railpack**: empty Build command (Railpack runs `npm run build` itself). Never custom-build with `npm ci` — that EBUSY-locks `node_modules/.cache`. Start is `node scripts/start-prod.js`. Local watch mode is `npm run start:dev`.
 
 ## 10. Active initiatives
 

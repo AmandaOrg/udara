@@ -47,7 +47,19 @@ npx prisma migrate dev --name <slug>
 npx prisma migrate deploy   # CI, and also every production boot
 ```
 
-Production start is `npm run start:prod`: `prisma migrate deploy` then `node dist/main`. Railway is set to that command via `railway.json`. Do **not** put migrate inside `npm run build` — compile must not need the live database, and CI's `npm run build` is not production Postgres.
+Production boot is `node scripts/start-prod.js`: `prisma migrate deploy`, then `node dist/main.js`. If `dist/` is missing it compiles once. Do **not** put migrate inside `npm run build`.
+
+## Production (Railway)
+
+This service uses **Railpack** (the dashboard default). Leave **Build command empty**. Railpack already runs `npm ci`, then `npm run build` (`prisma generate && nest build`).
+
+Do **not** add a custom Build command that includes `npm ci` or `npm install`. Railpack mounts `node_modules/.cache`; a second install tries to delete that mount and fails with `EBUSY rmdir node_modules/.cache`.
+
+Start is `node scripts/start-prod.js` (also `npm start` / `Procfile` / `railpack.json`). That applies pending Prisma migrations, then runs `dist/main.js`.
+
+The root `Dockerfile` is unused while the Builder dropdown is Railpack. Do not switch builders unless you intend to.
+
+Keep `WHATSAPP_DRY_RUN` unset or `false`. Local development is `npm run start:dev`, not `npm start`.
 
 Never edit applied SQL in place. Update [ARCHITECTURE.md](ARCHITECTURE.md) and `.cursor/project/summary.md` when models or enums change.
 
