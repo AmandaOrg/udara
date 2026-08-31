@@ -5,11 +5,11 @@ import { AllowanceService } from "../allowance/allowance.service";
 import { RubiesService } from "../rubies/rubies.service";
 import { WhatsappService } from "./whatsapp.service";
 import { PinGateService } from "./pin-gate.service";
+import { TransactionType } from "@prisma/client";
 import {
   BillPaymentCategory,
   BillPaymentStatus,
-  TransactionType,
-} from "@prisma/client";
+} from "../prisma/bill-payment.enums";
 import {
   CANCEL_BILL_PREFIX,
   CONFIRM_BILL_PREFIX,

@@ -1,4 +1,7 @@
-import { BillPaymentCategory, BillPaymentStatus } from "@prisma/client";
+import {
+  BillPaymentCategory,
+  BillPaymentStatus,
+} from "../prisma/bill-payment.enums";
 import { BillPaymentConfirmationService } from "./bill-payment-confirmation.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
 

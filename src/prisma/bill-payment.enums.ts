@@ -22,6 +22,17 @@ export const BillPaymentDraftStatus = {
 export type BillPaymentDraftStatus =
   (typeof BillPaymentDraftStatus)[keyof typeof BillPaymentDraftStatus];
 
+export const BillPaymentDraftStep = {
+  AWAITING_TELCO: "AWAITING_TELCO",
+  AWAITING_AMOUNT: "AWAITING_AMOUNT",
+  AWAITING_MSISDN: "AWAITING_MSISDN",
+  AWAITING_PRODUCT: "AWAITING_PRODUCT",
+  AWAITING_METER: "AWAITING_METER",
+  AWAITING_DISCO: "AWAITING_DISCO",
+} as const;
+export type BillPaymentDraftStep =
+  (typeof BillPaymentDraftStep)[keyof typeof BillPaymentDraftStep];
+
 export const BillPaymentStatus = {
   PENDING_CONFIRMATION: "PENDING_CONFIRMATION",
   PENDING_PIN: "PENDING_PIN",

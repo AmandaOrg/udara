@@ -66,36 +66,16 @@ describe("ActionExecutorService", () => {
     );
   });
 
-  it("sends persona message then dispatches surface", async () => {
+  it("does not send an LLM lead-in before a read surface", async () => {
     await executor.execute(user, {
-      message: "pulling your balance up",
+      message: "hey Esammy, still here. what's on your mind?",
       actionType: "show_surface",
       surfaceKey: "balance_read",
       ok: true,
     });
 
-    expect(whatsapp.sendText).toHaveBeenCalledWith(
-      "234801",
-      "pulling your balance up",
-      "user-1",
-    );
+    expect(whatsapp.sendText).not.toHaveBeenCalled();
     expect(chunkedMessenger.sendChunkedReply).not.toHaveBeenCalled();
-    expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
-  });
-
-  it("does not let the LLM quote a balance in the lead-in", async () => {
-    await executor.execute(user, {
-      message: "pulling that up for you now, Esammy. account balance: ₦1,000",
-      actionType: "show_surface",
-      surfaceKey: "balance_read",
-      ok: true,
-    });
-
-    expect(whatsapp.sendText).toHaveBeenCalledWith(
-      "234801",
-      "pulling that up now.",
-      "user-1",
-    );
     expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
   });
 
@@ -183,11 +163,6 @@ describe("ActionExecutorService", () => {
   it("on LLM failure shows the menu without miss copy", async () => {
     await executor.execute(user, { message: "", ok: false });
 
-    expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
-      "234801",
-      "here's everything you can do with me.",
-      "user-1",
-    );
     expect(accountActions.sendMainMenu).toHaveBeenCalledWith(user);
     expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
   });

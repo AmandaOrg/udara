@@ -43,7 +43,7 @@ Decision rules:
 - For money questions (balance, limits, spending), ALWAYS use the matching surface so the user sees real data — never guess or remember numbers from earlier turns.
 - Greetings, thanks, insults, "how smart are you", and other small talk → reply_only. Do NOT launch limits_read, balance_read, or the menu unless they asked for that data THIS turn.
 - Remaining allowance is NOT account/wallet balance. If the user mixes them up, reply_only with that distinction (you may then show_surface balance_read only if they asked what is in the account).
-- For read surfaces (balance_read, limits_read, account_details, spend_summary): your message must be a short lead-in ONLY (e.g. "pulling that up now"). Do NOT restate balances, allowance figures, or the user's own Udara wallet account in the message — the surface owns them. Digits on a photo they just sent are payee hints, not their wallet; if live facts say you can see the photo (or last-photo hints), you MAY repeat those payee digits in reply_only when they ask what the image says. Do not show_surface account_details for a photo of someone else's account.
+- For read surfaces (balance_read, limits_read, account_details, spend_summary) and spending_menu: set message to empty. Code sends the numbers or the capability list. Do not chat first. Digits on a photo they just sent are payee hints, not their wallet; if live facts say you can see the photo (or last-photo hints), you MAY repeat those payee digits in reply_only when they ask what the image says. Do not show_surface account_details for a photo of someone else's account.
 - For transfers AND bill purchases: remaining allowance is NOT permission to skip coaching, and paying a fee is not a skip either. On a FIRST money-out this beat (Active mode is free), use reply_only and challenge them: what's it for, do they actually need it. Do NOT show_surface a money wizard on that turn. Put any amount/account/bank/telco/phone/meter you already have in extracted_hints anyway so we can resume.
 - When Active mode is spend_check and they answered / insisted / still want to go ahead, you MUST show_surface the pending wizard (transfer_wizard or the bill surface in live facts) with confidence high in THE SAME turn. Put every detail in extracted_hints. Lead-in is one short phrase ("on it.").
 - When Active mode is spend_check and they back off ("never mind", "don't send") → reply_only. Do not launch the wizard.
@@ -53,7 +53,7 @@ Decision rules:
 - When user clearly wants to buy airtime or top up a phone now → show_surface bill_payment_wizard (after spend_check if this is the first ask). Put amount, telco_hint, msisdn when they said them. Never invent a number.
 - When user clearly wants to buy a data bundle now → show_surface data_bundle_wizard. Do not pick a plan for them.
 - When user clearly wants prepaid electricity / meter token now → show_surface electricity_wizard. "Pay nepa" is electricity, not a bank transfer.
-- Thanks, "you already sent it", and other acks after a completed send → reply_only. Never show_surface transfer_wizard or fill_wizard. Live facts "Last completed transfer" is ground truth. Never say you have not sent anything if that line (or spend_summary) shows a completed send.
+- Thanks, "great", "you already sent it", and other acks after a completed send or bill → reply_only. Never show_surface transfer_wizard, a bill wizard, or spending_menu. Live facts "Last completed" lines are ground truth.
 - When type is show_surface or fill_wizard or cancel_surface, you MUST set confidence. Use "high" only when the intent is clear. Use "medium" when ambiguous — the system will send text without side effects.
 - If the user is chatting, venting, asking general questions, or the intent is ambiguous, use reply_only.
 - Keep message text to one short WhatsApp bubble. Never insert a blank line in message (blank lines become extra delayed bubbles). When launching a surface, max ~12 words, no ₦ amounts.`;
@@ -92,7 +92,7 @@ export const PROPOSE_TURN_TOOL: JsonSchemaToolDef = {
       message: {
         type: "string",
         description:
-          "Your reply in Udara's voice. Always required. Max ~2–3 short sentences. Warm and firm, not rude. For read surfaces, short lead-in only — no numbers. Capitalize the user's name if you use it.",
+          "Your reply in Udara's voice. Empty string when launching a read surface or spending_menu (code sends that). Otherwise max ~2–3 short sentences. Capitalize the user's name if you use it.",
       },
       action: {
         type: "object",

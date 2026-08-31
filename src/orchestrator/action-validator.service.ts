@@ -194,6 +194,16 @@ export class ActionValidatorService {
         ok: true,
       };
     }
+    if (closedSend && surfaceKey === "spending_menu") {
+      this.logger.debug(
+        `Blocking spending_menu for user ${user.id} — short ack after a completed send`,
+      );
+      return {
+        message: proposal.message,
+        actionType: "reply_only",
+        ok: true,
+      };
+    }
     if (!surfaceKey) {
       if (mayPromoteBill && resumeSurface) {
         return this.promoteReadySurface(

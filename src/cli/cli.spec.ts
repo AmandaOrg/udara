@@ -76,12 +76,20 @@ describe("print-executor", () => {
 });
 
 describe("golden-runner", () => {
-  it("passes a known high-confidence transfer golden case", () => {
+  it("matches the golden fixture's expected surface (first send is spend-check)", () => {
     const cases = loadGoldenDialogues();
-    const tx = cases.find((c) => c.test_case_id === "tx_intent_01");
-    expect(tx).toBeDefined();
-    const result = runGoldenCase(new ActionValidatorService(), tx!);
-    expect(result.passed).toBe(true);
-    expect(result.actual_surface).toBe("transfer_wizard");
+    const firstSend = cases.find((c) => c.test_case_id === "tx_intent_01");
+    expect(firstSend).toBeDefined();
+    const paused = runGoldenCase(new ActionValidatorService(), firstSend!);
+    expect(paused.passed).toBe(true);
+    expect(paused.actual_surface).toBeNull();
+
+    const proceed = cases.find(
+      (c) => c.test_case_id === "spend_check_proceed_launches_wizard",
+    );
+    expect(proceed).toBeDefined();
+    const launched = runGoldenCase(new ActionValidatorService(), proceed!);
+    expect(launched.passed).toBe(true);
+    expect(launched.actual_surface).toBe("transfer_wizard");
   });
 });

@@ -105,11 +105,6 @@ export class ActionExecutorService {
     this.logger.warn(
       `Orchestrator fallback for user ${user.id} — showing menu without miss copy`,
     );
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      "here's everything you can do with me.",
-      user.id,
-    );
     await this.accountActions.sendMainMenu(user);
   }
 

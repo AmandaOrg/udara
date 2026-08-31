@@ -24,6 +24,12 @@ describe("ActionValidatorService", () => {
       description: "Balance",
       isEligible: () => true,
     },
+    {
+      key: "spending_menu",
+      kind: "text",
+      description: "Menu",
+      isEligible: () => true,
+    },
   ];
 
   function proposal(
@@ -260,6 +266,21 @@ describe("ActionValidatorService", () => {
       user,
       eligible,
       "thank you",
+    );
+    expect(result.actionType).toBe("reply_only");
+    expect(result.surfaceKey).toBeUndefined();
+  });
+
+  it("does not open the menu on a short ack after a completed send", () => {
+    const result = validator.validate(
+      proposal({
+        surface_key: "spending_menu",
+        confidence: "high",
+        message: "here's everything you can do with me.",
+      }),
+      user,
+      eligible,
+      "Great",
     );
     expect(result.actionType).toBe("reply_only");
     expect(result.surfaceKey).toBeUndefined();

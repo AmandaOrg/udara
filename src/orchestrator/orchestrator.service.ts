@@ -400,9 +400,9 @@ export class OrchestratorService {
         findFirst: (args: {
           where: {
             userId: string;
-            status: { in: BillPaymentStatus[] };
+            status: BillPaymentStatus | { in: BillPaymentStatus[] };
           };
-          orderBy: { createdAt: "desc" };
+          orderBy: { createdAt: "desc" } | { executedAt: "desc" };
         }) => Promise<{
           status: BillPaymentStatus;
           category: BillPaymentCategory;
@@ -431,6 +431,7 @@ export class OrchestratorService {
       pendingBill,
       billDraft,
       lastSent,
+      lastBillPaid,
       allowanceSummary,
       savedRecipients,
     ] = await Promise.all([
@@ -476,6 +477,13 @@ export class OrchestratorService {
         },
         orderBy: { executedAt: "desc" },
         include: { recipient: true },
+      }),
+      bills.billPayment.findFirst({
+        where: {
+          userId: user.id,
+          status: BillPaymentStatus.EXECUTED,
+        },
+        orderBy: { executedAt: "desc" },
       }),
       this.allowance.getRemainingSummary(user.id).catch((err: unknown) => {
         this.logger.warn(
@@ -564,7 +572,13 @@ export class OrchestratorService {
         lastSent.recipient?.accountNumber ??
         "recipient";
       lines.push(
-        `- Last completed transfer: ₦${Number(lastSent.amount).toLocaleString("en-NG")} to ${who}. This already succeeded. Thanks or "you already sent it" → reply_only, do NOT start transfer_wizard again.`,
+        `- Last completed transfer: ₦${Number(lastSent.amount).toLocaleString("en-NG")} to ${who}. This already succeeded. Thanks or "great" → reply_only, do NOT start transfer_wizard or the menu.`,
+      );
+    }
+    if (lastBillPaid) {
+      const kind = billCategoryLabel(lastBillPaid.category);
+      lines.push(
+        `- Last completed ${kind}: ₦${Number(lastBillPaid.amount).toLocaleString("en-NG")} ${lastBillPaid.telcoLabel ?? ""} for ${lastBillPaid.msisdn ?? "them"}. This already succeeded. Thanks or "great" → reply_only, do NOT show spending_menu unless they asked for the menu.`,
       );
     }
 

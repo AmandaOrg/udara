@@ -1,9 +1,6 @@
 /**
  * Lead-in copy from the LLM, before a deterministic surface.
- * One bubble, no invented ₦ figures (the surface owns those).
  */
-const NAIRA_OR_LONG_NUMBER = /₦[\d,]+(?:\.\d+)?|\b\d{3,}\b/;
-
 export function collapseToSingleBubble(text: string): string {
   return text.replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -15,14 +12,17 @@ export function sanitizeSurfaceLeadIn(
   const collapsed = collapseToSingleBubble(text);
   if (!collapsed) return "";
 
-  const readSurface =
+  const readOrMenuSurface =
     surfaceKey === "balance_read" ||
     surfaceKey === "limits_read" ||
     surfaceKey === "account_details" ||
-    surfaceKey === "spend_summary";
+    surfaceKey === "spend_summary" ||
+    surfaceKey === "spending_menu";
 
-  if (readSurface && NAIRA_OR_LONG_NUMBER.test(collapsed)) {
-    return "pulling that up now.";
+  // Those surfaces send the real reply (or the capability list). LLM lead-in
+  // is how "hey still here" showed up before a tapped Check balance.
+  if (readOrMenuSurface) {
+    return "";
   }
 
   if (collapsed.length > 160) {

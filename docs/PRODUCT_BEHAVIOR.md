@@ -29,7 +29,7 @@ Internal package/DB naming still uses `kedu` / `ConversationPersona.KEDU`. User-
 | Buttons / lists (confirm, cancel, menu, bank, label) | Deterministic handlers |
 | WhatsApp Flow reply (KYC or PIN) | `PinGateService` or onboarding Flow handler |
 | Pre-account free text | Onboarding stage machine |
-| Exact menu shortcuts (`menu`, `help`, …) | Main menu, no LLM |
+| Exact menu shortcuts (`menu`, `help`, “what can you do”, …) | Text list of capabilities, then the tap menu. No LLM |
 | Post-onboarding free text, transcribed voice, or image + caption | Orchestrator `propose_turn` → `ActionValidatorService` → `ActionExecutorService` |
 | Voice note | Deepgram transcript, then the same path as free text (text replies only) |
 | Image | Download + orchestrator (vision when the conversation model supports it) |
@@ -71,7 +71,7 @@ Fee amounts are shown and stored even if `RUBIES_FEES_ACCOUNT_NUMBER` is unset; 
 4. A first send **or bill purchase** in chat gets one spend-check question before the wizard, even if they already named a purpose or would pay a fee. Remaining daily allowance is not permission to skip that. After they answer or insist, the matching wizard may open (send-money vs airtime/data/electricity). Transfer purpose is classified via `label_hint` into `RENT | FOOD | VENDOR | OTHER` (`purposeLabel`); Other may also store `purposeNote`. See [specs/SPEND_CHECK_BEFORE_SEND_SPEC.md](specs/SPEND_CHECK_BEFORE_SEND_SPEC.md), [specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md](specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md), and [specs/AI_MONEY_INTENTS_SPEC.md](specs/AI_MONEY_INTENTS_SPEC.md).
 5. Repeat sends may pre-fill account/bank from saved beneficiaries when the user names someone uniquely (`beneficiary_name` hint), or from a pick list of recent payees when they did not name anyone; confirm and PIN are still required. Unknown names do not invent accounts. See [specs/BENEFICIARY_PREFILL_SPEC.md](specs/BENEFICIARY_PREFILL_SPEC.md).
 6. Every send still goes through confirm buttons, then PIN via WhatsApp Flow (`PENDING_PIN` until verified). Money does not move on confirm alone.
-7. Thanks / “you already sent it” must not relaunch the wizard. See [specs/TRANSFER_INTENT_GROUNDING_SPEC.md](specs/TRANSFER_INTENT_GROUNDING_SPEC.md).
+7. Thanks, “great”, or “you already sent it” must not relaunch a money wizard or dump the main menu. Short acks after a completed send or bill get a brief in-character reply. See [specs/TRANSFER_INTENT_GROUNDING_SPEC.md](specs/TRANSFER_INTENT_GROUNDING_SPEC.md).
 
 The orchestrator **cannot** execute transfers or invent balances. Surfaces own numbers.
 

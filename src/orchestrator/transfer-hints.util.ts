@@ -114,13 +114,24 @@ export function hasActionableTransferHints(
 }
 
 /**
+ * One-word (or short) ack after money already moved — thanks / "great".
+ * Router answers these without the orchestrator so a timeout or spending_menu
+ * cannot dump the capability list instead of acknowledging.
+ */
+export function isShortCompletionAck(text: string): boolean {
+  return /^(thanks|thank you|thx|ty|thank you so much|great|cool|nice|perfect|awesome|cheers)[\s!.]*$/i.test(
+    text.trim(),
+  );
+}
+
+/**
  * Thanks / "you already sent it" — never launch or continue a transfer
  * from this utterance, even if the model still has leftover send hints.
  */
 export function isClosedTransferUtterance(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (!t) return false;
-  if (/^(thanks|thank you|thx|ty|thank you so much)[\s!.]*$/i.test(t)) {
+  if (isShortCompletionAck(t)) {
     return true;
   }
   // "I already sent the account" is mid-wizard, not a completed-send ack.

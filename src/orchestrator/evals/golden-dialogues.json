@@ -718,6 +718,26 @@
     "forbidden_surfaces": ["transfer_wizard"]
   },
   {
+    "test_case_id": "great_after_airtime_does_not_open_menu",
+    "history": [
+      { "role": "assistant", "content": "Done, ₦50 MTN airtime sent." },
+      { "role": "user", "content": "Great" }
+    ],
+    "mock_proposal": {
+      "message": "here's everything you can do with me.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "spending_menu",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["spending_menu", "bill_payment_wizard", "balance_read"],
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["spending_menu", "bill_payment_wizard"]
+  },
+  {
     "test_case_id": "already_sent_does_not_restart_transfer",
     "history": [
       { "role": "assistant", "content": "System: ₦800 to SAMUEL DAVID EGWU succeeded. Do not start that transfer again." },

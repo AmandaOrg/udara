@@ -289,6 +289,57 @@ describe("OrchestratorService", () => {
     );
   });
 
+  it("tells the model a completed bill already succeeded", async () => {
+    prisma.billPayment.findFirst.mockImplementation(
+      async ({ where }: { where: { status?: unknown } }) => {
+        if (where.status === "EXECUTED") {
+          return {
+            status: "EXECUTED",
+            category: "AIRTIME",
+            amount: 50,
+            telcoLabel: "MTN",
+            msisdn: "08000000000",
+          };
+        }
+        return null;
+      },
+    );
+    llm.complete.mockResolvedValue({
+      toolCall: {
+        name: "propose_turn",
+        arguments: {
+          message: "here's everything you can do with me.",
+          action: {
+            type: "show_surface",
+            surface_key: "spending_menu",
+            confidence: "high",
+          },
+        },
+      },
+      latencyMs: 40,
+      provider: "stub",
+      model: "stub",
+    });
+
+    const result = await service.handleMessage(user, "Great");
+
+    expect(result.ok).toBe(true);
+    expect(result.actionType).toBe("reply_only");
+    expect(result.surfaceKey).toBeUndefined();
+    expect(llm.complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: "system",
+            content: expect.stringMatching(
+              /Last completed airtime: ₦50 MTN for 08000000000/,
+            ),
+          }),
+        ]),
+      }),
+    );
+  });
+
   it("does not open the wizard on a vague send; stores a spend check instead", async () => {
     llm.complete.mockResolvedValue({
       toolCall: {

@@ -182,8 +182,13 @@ describe("AccountActionsService", () => {
   });
 
   describe("sendMainMenu", () => {
-    it("sends a list message with all menu actions", async () => {
+    it("sends a capability list then a list message with all menu actions", async () => {
       await service.sendMainMenu(makeUser() as any);
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("buy airtime, data, or prepaid electricity"),
+        "user-1",
+      );
       expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
         "234801",
         expect.any(String),

@@ -154,12 +154,43 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     await service.route(makeMessage("what else can you do?"));
 
     expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    expect(accountActions.sendMainMenu).toHaveBeenCalledWith(user);
+  });
+
+  it("treats a menu row title pasted as text as a tap, not chat", async () => {
+    await service.route(makeMessage("💰 Check balance"));
+
+    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    expect(accountActions.sendBalance).toHaveBeenCalledWith(user);
+  });
+
+  it("acks 'great' after a completed send without dumping the menu", async () => {
+    await service.route(makeMessage("Great"));
+
+    expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    expect(accountActions.sendMainMenu).not.toHaveBeenCalled();
     expect(whatsapp.sendText).toHaveBeenCalledWith(
       "234801",
-      "here's everything you can do with me.",
+      "glad that went through.",
       "user-1",
     );
-    expect(accountActions.sendMainMenu).toHaveBeenCalledWith(user);
+  });
+
+  it("still routes 'you already sent it' through the orchestrator", async () => {
+    orchestrator.handleMessage.mockResolvedValue({
+      message: "that one already went through.",
+      actionType: "reply_only",
+      ok: true,
+    });
+
+    await service.route(makeMessage("you've done the transfers already"));
+
+    expect(orchestrator.handleMessage).toHaveBeenCalled();
+    expect(whatsapp.sendText).not.toHaveBeenCalledWith(
+      "234801",
+      "glad that went through.",
+      "user-1",
+    );
   });
 
   it("routes balance paraphrases through the orchestrator (no regex shortcut)", async () => {

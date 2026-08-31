@@ -2,6 +2,7 @@ import {
   hasActionableTransferHints,
   isActiveSendUtterance,
   isClosedTransferUtterance,
+  isShortCompletionAck,
   sanitizeTransferHints,
   shouldPauseForSpendCheck,
 } from "./transfer-hints.util";
@@ -89,6 +90,15 @@ describe("isClosedTransferUtterance", () => {
   it("treats thanks as a closed send", () => {
     expect(isClosedTransferUtterance("thank you")).toBe(true);
     expect(isClosedTransferUtterance("thanks")).toBe(true);
+    expect(isClosedTransferUtterance("great")).toBe(true);
+    expect(isClosedTransferUtterance("Great!")).toBe(true);
+    expect(isShortCompletionAck("Great")).toBe(true);
+    expect(isShortCompletionAck("you've done the transfers already")).toBe(
+      false,
+    );
+    expect(isClosedTransferUtterance("you've done the transfers already")).toBe(
+      true,
+    );
   });
 
   it('treats "you already sent it" as closed, not mid-wizard account replies', () => {

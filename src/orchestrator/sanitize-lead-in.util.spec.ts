@@ -10,13 +10,13 @@ describe("sanitizeSurfaceLeadIn", () => {
     );
   });
 
-  it("strips invented naira amounts from balance lead-ins", () => {
+  it("drops LLM chatter before a read surface", () => {
     expect(
       sanitizeSurfaceLeadIn(
-        "pulling that up for you now, Esammy. account balance: ₦1,000",
+        "hey Esammy, still here. what's on your mind?",
         "balance_read",
       ),
-    ).toBe("pulling that up now.");
+    ).toBe("");
   });
 
   it("keeps a short transfer lead-in", () => {

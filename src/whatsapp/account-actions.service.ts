@@ -39,6 +39,17 @@ export const MENU_AIRTIME = `${MENU_BUTTON_PREFIX}airtime`;
 export const MENU_DATA = `${MENU_BUTTON_PREFIX}data`;
 export const MENU_ELECTRICITY = `${MENU_BUTTON_PREFIX}electricity`;
 
+/** Shown in chat before the WhatsApp list (lists only render an "Open menu" button). */
+export const MENU_OVERVIEW = `i can help with:
+• check your udara balance
+• today's allowance / spending window
+• your account number so you can fund
+• send money
+• buy airtime, data, or prepaid electricity
+• what you spent this week
+
+tap open menu if you want a button for any of those.`;
+
 const CANCEL_WORDS = /^(cancel|stop|nevermind|never mind)$/i;
 
 const LABEL_ROWS = [
@@ -81,6 +92,11 @@ export class AccountActionsService {
   // =========================================================================
 
   async sendMainMenu(user: User): Promise<void> {
+    await this.whatsapp.sendText(
+      user.whatsappNumber,
+      MENU_OVERVIEW,
+      user.id,
+    );
     await this.whatsapp.sendListMessage(
       user.whatsappNumber,
       "what would you like to do?",

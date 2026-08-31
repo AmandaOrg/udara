@@ -41,9 +41,9 @@ import {
   User,
   WhatsappMessage,
   WhatsappMessageType,
-  BillPaymentDraftStep,
   TransferDraftStep,
 } from "@prisma/client";
+import { BillPaymentDraftStep } from "../prisma/bill-payment.enums";
 import { PinGateService } from "./pin-gate.service";
 import {
   WeeklyReviewService,
@@ -53,7 +53,8 @@ import {
   SensitiveFields,
   WhatsappMessageService,
 } from "./whatsapp-message.service";
-import { isMenuShortcut } from "./menu-shortcut.util";
+import { isMenuShortcut, menuPayloadFromUtterance } from "./menu-shortcut.util";
+import { isShortCompletionAck } from "../orchestrator/transfer-hints.util";
 import { DeepgramService } from "./deepgram.service";
 import { OrchestratorTurnOptions } from "../orchestrator/orchestrator.types";
 
@@ -477,12 +478,13 @@ export class WhatsappRouterService {
     }
 
     if (isMenuShortcut(text)) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        "here's everything you can do with me.",
-        user.id,
-      );
       await this.accountActions.sendMainMenu(user);
+      return;
+    }
+
+    const menuRow = menuPayloadFromUtterance(text);
+    if (menuRow) {
+      await this.handleMenuSelection(user, menuRow);
       return;
     }
 
@@ -513,6 +515,15 @@ export class WhatsappRouterService {
       transferDraft.step === TransferDraftStep.AWAITING_PURPOSE_NOTE
     ) {
       await this.accountActions.handleWizardText(user, transferDraft.id, text);
+      return;
+    }
+
+    if (isShortCompletionAck(text) && !billDraft && !transferDraft) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "glad that went through.",
+        user.id,
+      );
       return;
     }
 

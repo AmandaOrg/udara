@@ -7,7 +7,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
-import { BillPaymentStatus, TransactionStatus, User } from "@prisma/client";
+import { TransactionStatus, User } from "@prisma/client";
+import { BillPaymentStatus } from "../prisma/bill-payment.enums";
 import {
   watDateBucketKey,
   startOfWatIsoWeekBucketKey,

@@ -1,11 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { TransferDraftStatus, User } from "@prisma/client";
 import {
   BillPaymentCategory,
   BillPaymentDraftStatus,
   BillPaymentDraftStep,
-  TransferDraftStatus,
-  User,
-} from "@prisma/client";
+} from "../prisma/bill-payment.enums";
 import { parseNairaAmount } from "../common/naira-amount.util";
 import { TransferWizardHints } from "../orchestrator/transfer-hints.util";
 import { PrismaService } from "../prisma/prisma.service";
