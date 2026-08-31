@@ -47,7 +47,7 @@ npx prisma migrate dev --name <slug>
 npx prisma migrate deploy   # CI, and also every production boot
 ```
 
-Production start is `npm run start:prod`: `prisma migrate deploy` then `node dist/main`. Railway is set to that command via `railway.json`. Do **not** put migrate inside `npm run build` — compile must not need the live database, and CI's `npm run build` is not production Postgres.
+Production start is `npm run start:prod` (`scripts/start-prod.js`): `prisma migrate deploy`, then `node dist/main.js`. If `dist/` is missing (Nixpacks skipped `nest build` because `@nestjs/cli` is not in a production-only install), it compiles once on boot. Railway uses `railway.json` + `nixpacks.toml` so the image build runs `npm ci --include=dev && npm run build`. Do **not** put migrate inside `npm run build` — compile must not need the live database.
 
 Never edit applied SQL in place. Update [ARCHITECTURE.md](ARCHITECTURE.md) and `.cursor/project/summary.md` when models or enums change.
 
