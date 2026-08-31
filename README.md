@@ -62,7 +62,7 @@ src/
 | Script | Purpose |
 | --- | --- |
 | `npm run start:dev` | Watch-mode Nest server |
-| `npm run start:prod` | Apply pending Prisma migrations, then `node dist/main` |
+| `npm run start:prod` | Migrate, then run compiled `dist/main.js` (build on boot if `dist/` is missing) |
 | `npm run build` | `nest build` |
 | `npm test` | Jest unit tests under `src/` |
 | `npm run lint` | ESLint |
