@@ -1,0 +1,14 @@
+# Never send host node_modules into the image — a second npm ci over them
+# is what caused EBUSY rmdir node_modules/.cache on Railway.
+node_modules
+dist
+.git
+.github
+.cursor
+coverage
+*.log
+.env
+.env.*
+!.env.example
+agent-transcripts
+terminals

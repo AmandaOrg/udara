@@ -61,8 +61,8 @@ src/
 
 | Script | Purpose |
 | --- | --- |
-| `npm run start:dev` | Watch-mode Nest server |
-| `npm run start:prod` | Migrate, then run compiled `dist/main.js` (build on boot if `dist/` is missing) |
+| `npm run start:dev` | Watch-mode Nest server (local) |
+| `npm start` / `start:prod` | Production: migrate, then `dist/main.js` |
 | `npm run build` | `nest build` |
 | `npm test` | Jest unit tests under `src/` |
 | `npm run lint` | ESLint |
