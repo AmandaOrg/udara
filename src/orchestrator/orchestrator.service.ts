@@ -51,14 +51,19 @@ import {
   Prisma,
   TransactionStatus,
   TransferDraftStatus,
-  BillPaymentDraftStatus,
-  BillPaymentStatus,
-  BillPaymentCategory,
+  Recipient,
   User,
 } from "@prisma/client";
 import {
+  BillPaymentCategory,
+  BillPaymentDraftStatus,
+  BillPaymentStatus,
+} from "../prisma/bill-payment.enums";
+import { moneyOutWizardSurface } from "./bill-hints.util";
+import {
   isSpendCheckAbortUtterance,
   isWeakSpendCheckMessage,
+  pendingSurfaceForUtterance,
   sanitizeTransferHints,
   shouldPauseForSpendCheck,
   SPEND_CHECK_FALLBACK_MESSAGE,
@@ -210,7 +215,10 @@ export class OrchestratorService {
         user,
         eligibleSurfaces,
         text,
-        { spendCheckPending },
+        {
+          spendCheckPending,
+          pendingSurface: storedHints.pendingSurface,
+        },
       );
 
       validated = await this.applySpendCheckSession(
@@ -386,8 +394,46 @@ export class OrchestratorService {
       `- Spending window: ${user.windowStartHour}:00 to ${user.windowEndHour}:00 WAT`,
     ];
 
-    const [draft, pending, pendingBill, billDraft, lastSent, allowanceSummary, savedRecipients] =
-      await Promise.all([
+    // Editor `@prisma/client` can omit bill models; runtime PrismaService has them.
+    const bills = this.prisma as unknown as {
+      billPayment: {
+        findFirst: (args: {
+          where: {
+            userId: string;
+            status: { in: BillPaymentStatus[] };
+          };
+          orderBy: { createdAt: "desc" };
+        }) => Promise<{
+          status: BillPaymentStatus;
+          category: BillPaymentCategory;
+          amount: unknown;
+          telcoLabel: string | null;
+          msisdn: string | null;
+        } | null>;
+      };
+      billPaymentDraft: {
+        findFirst: (args: {
+          where: { userId: string; status: BillPaymentDraftStatus };
+          orderBy: { createdAt: "desc" };
+        }) => Promise<{
+          category: BillPaymentCategory;
+          step: string;
+          telcoLabel: string | null;
+          amount: unknown;
+          msisdn: string | null;
+        } | null>;
+      };
+    };
+
+    const [
+      draft,
+      pending,
+      pendingBill,
+      billDraft,
+      lastSent,
+      allowanceSummary,
+      savedRecipients,
+    ] = await Promise.all([
       this.prisma.transferDraft.findFirst({
         where: { userId: user.id, status: TransferDraftStatus.ACTIVE },
         orderBy: { createdAt: "desc" },
@@ -404,7 +450,7 @@ export class OrchestratorService {
         },
         orderBy: { createdAt: "desc" },
       }),
-      this.prisma.billPayment.findFirst({
+      bills.billPayment.findFirst({
         where: {
           userId: user.id,
           status: {
@@ -416,7 +462,7 @@ export class OrchestratorService {
         },
         orderBy: { createdAt: "desc" },
       }),
-      this.prisma.billPaymentDraft.findFirst({
+      bills.billPaymentDraft.findFirst({
         where: {
           userId: user.id,
           status: BillPaymentDraftStatus.ACTIVE,
@@ -439,7 +485,7 @@ export class OrchestratorService {
       }),
       this.prisma.recipient.findMany({
         where: { userId: user.id },
-        orderBy: [{ lastUsedAt: 'desc' }, { createdAt: 'desc' }],
+        orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
         take: 8,
       }),
     ]);
@@ -472,8 +518,7 @@ export class OrchestratorService {
         `- Pending ${waitingOnPin ? "PIN" : "confirm"}: amount ₦${Number(pendingConfirm.amount).toLocaleString("en-NG")} (do NOT start transfer_wizard. ${waitingOnPin ? "They must enter PIN." : "Remind them to tap Confirm or Cancel."})`,
       );
     } else if (pendingBill) {
-      const waitingOnPin =
-        pendingBill.status === BillPaymentStatus.PENDING_PIN;
+      const waitingOnPin = pendingBill.status === BillPaymentStatus.PENDING_PIN;
       const kind = billCategoryLabel(pendingBill.category);
       lines.push(
         `- Active mode: awaiting_confirm`,
@@ -503,10 +548,11 @@ export class OrchestratorService {
       const raw = transferHintsToRaw(spendCheck);
       lines.push(
         "- Active mode: spend_check",
-        `- Pending send hints: amount=${raw.amount ?? "missing"}, account=${raw.account_number ?? "missing"}, bank=${raw.bank_name ?? raw.bank_code ?? "missing"}, purpose=${raw.label_hint ?? "not stated yet"}`,
+        `- Pending send hints: amount=${raw.amount ?? "missing"}, account=${raw.account_number ?? "missing"}, bank=${raw.bank_name ?? raw.bank_code ?? "missing"}, purpose=${raw.label_hint ?? "not stated yet"}, beneficiary=${raw.beneficiary_name ?? "missing"}, pending_surface=${raw.pending_surface ?? "transfer_wizard"}`,
         "- Remaining allowance is not permission to skip this. Challenge the send (why / is it needed), even if they would pay a fee. Do not invent ₦ figures.",
         "- When they answer, set label_hint in extracted_hints to RENT, FOOD, VENDOR, or OTHER based on their words — you classify, do not invent account numbers.",
-        "- If they gave a purpose, insisted, or still want to send → show_surface transfer_wizard with extracted_hints (including label_hint) this turn. If they backed off → reply_only.",
+        "- If pending_surface is a bill wizard, show_surface THAT wizard (bill_payment_wizard / data_bundle_wizard / electricity_wizard), not transfer_wizard. Put telco_hint, msisdn, meter, disco_hint only if the user said them.",
+        "- If they gave a purpose, insisted, or still want to send → show_surface the pending wizard with extracted_hints this turn. If they backed off → reply_only.",
       );
     } else {
       lines.push("- Active mode: free");
@@ -558,13 +604,21 @@ export class OrchestratorService {
 
     if (savedRecipients.length > 0) {
       const names = savedRecipients
-        .map((r) => r.nickname ?? r.accountName ?? r.accountNumber)
+        .map((r: Recipient) => {
+          const nick = (r as Recipient & { nickname?: string | null }).nickname;
+          return nick ?? r.accountName ?? r.accountNumber;
+        })
         .filter(Boolean)
         .slice(0, 6)
         .join(", ");
       lines.push(
         `- Saved beneficiaries (nicknames only — never invent account numbers): ${names}`,
-        '- For "send to <name>", put beneficiary_name in extracted_hints; code resolves the account.',
+        '- For "send to <name>", put beneficiary_name in extracted_hints using ONLY a name from this list (or a substring the user typed that matches). Code resolves the account.',
+        "- If they want to send and did not name a payee, mention these names and ask which one, or leave beneficiary_name unset so the pick list can show. If this list is missing, do not pretend they have saved people.",
+      );
+    } else {
+      lines.push(
+        "- Saved beneficiaries: none. Do not claim they have saved payees. Ask for account and bank if they want to send.",
       );
     }
 
@@ -679,11 +733,11 @@ export class OrchestratorService {
   ): Promise<OrchestratorResult> {
     const launchedWizard =
       validated.actionType === "show_surface" &&
-      validated.surfaceKey === "transfer_wizard";
+      moneyOutWizardSurface(validated.surfaceKey);
     const topicChange =
       validated.actionType === "cancel_surface" ||
       (validated.actionType === "show_surface" &&
-        validated.surfaceKey !== "transfer_wizard");
+        !moneyOutWizardSurface(validated.surfaceKey));
 
     if (isSpendCheckAbortUtterance(userText) || launchedWizard || topicChange) {
       if (wasPending || launchedWizard) {
@@ -713,6 +767,8 @@ export class OrchestratorService {
       await this.writeSpendCheck(sessionId, {
         ...hints,
         spendReason: userText.trim().slice(0, 200) || undefined,
+        pendingSurface:
+          hints.pendingSurface ?? pendingSurfaceForUtterance(userText),
       });
       if (isWeakSpendCheckMessage(validated.message)) {
         return { ...validated, message: SPEND_CHECK_FALLBACK_MESSAGE };

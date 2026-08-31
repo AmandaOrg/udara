@@ -10,6 +10,7 @@ import {
   watDateBucketKey,
 } from "../common/wat-time.util";
 import { displayFirstNameOrThere } from "../common/display-name.util";
+import { parseNairaAmount } from "../common/naira-amount.util";
 
 export const WEEKLY_REVIEW_PREFIX = "weekly:";
 export const WEEKLY_KEEP = "weekly:keep";
@@ -221,12 +222,12 @@ export class WeeklyReviewService {
     text: string,
     now: Date = new Date(),
   ): Promise<void> {
-    const amount = Number(text.replace(/[₦,\s]/g, ""));
+    const amount = parseNairaAmount(text);
 
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (amount == null) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "that didn't read as an amount. send just the number, like 12000.",
+        "that didn't read as an amount. how much a day should I work with?",
         user.id,
       );
       return;

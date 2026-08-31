@@ -90,6 +90,7 @@ enum TransferDraftStep {
   AWAITING_ACCOUNT_NUMBER
   AWAITING_BANK_SELECTION
   AWAITING_LABEL_SELECTION // only reached for a brand-new recipient
+  AWAITING_PURPOSE_NOTE // Other: user types what the send is for
 }
 
 enum TransferDraftStatus {
@@ -377,6 +378,7 @@ model TransferDraft {
   resolvedName   String? // from Rubies name-enquiry, shown back to the user for confirmation
   isNewRecipient Boolean         @default(false)
   label          RecipientLabel?
+  purposeNote    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -456,6 +458,7 @@ model Transaction {
   // This send's stated purpose (spend-check / orchestrator label_hint) — may
   // differ from Recipient.label when the person was tagged on an earlier send.
   purposeLabel RecipientLabel?
+  purposeNote  String?
 
   feeAmount         Decimal   @default(0) @db.Decimal(14, 2)
   // Set once the feeAmount (if any) has actually been moved to

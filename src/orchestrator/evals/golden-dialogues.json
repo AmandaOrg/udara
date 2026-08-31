@@ -794,5 +794,95 @@
     },
     "expected_confidence": "high",
     "forbidden_surfaces": ["balance_read"]
+  },
+  {
+    "test_case_id": "buy_airtime_spend_check_pause",
+    "history": [{ "role": "user", "content": "buy 2k mtn airtime" }],
+    "mock_proposal": {
+      "message": "on it.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "bill_payment_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 2000, "telco_hint": "mtn" }
+      }
+    },
+    "eligible_surfaces": ["bill_payment_wizard", "transfer_wizard", "balance_read"],
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["bill_payment_wizard", "transfer_wizard"]
+  },
+  {
+    "test_case_id": "pay_nepa_not_transfer",
+    "history": [{ "role": "user", "content": "pay nepa" }],
+    "mock_proposal": {
+      "message": "on it.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "transfer_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 5000 }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "electricity_wizard", "balance_read"],
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["transfer_wizard", "electricity_wizard"]
+  },
+  {
+    "test_case_id": "buy_data_spend_check_pause",
+    "history": [{ "role": "user", "content": "buy data" }],
+    "mock_proposal": {
+      "message": "on it.",
+      "action": {
+        "type": "show_surface",
+        "surface_key": "data_bundle_wizard",
+        "confidence": "high"
+      }
+    },
+    "eligible_surfaces": ["data_bundle_wizard", "transfer_wizard", "balance_read"],
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
+    "forbidden_surfaces": ["data_bundle_wizard", "transfer_wizard"]
+  },
+  {
+    "test_case_id": "fill_wizard_linguistic_amount",
+    "history": [
+      { "role": "user", "content": "send money" },
+      { "role": "assistant", "content": "how much would you like to send?" },
+      { "role": "user", "content": "5k" }
+    ],
+    "mock_proposal": {
+      "message": "got it",
+      "action": {
+        "type": "fill_wizard",
+        "confidence": "high",
+        "extracted_hints": { "amount": 5000 }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read"],
+    "expected_surface": null,
+    "expected_action_type": "fill_wizard",
+    "expected_hints": { "amount": 5000 },
+    "expected_confidence": "high",
+    "forbidden_surfaces": ["balance_read"]
+  },
+  {
+    "test_case_id": "beneficiary_unknown_name_no_invented_account",
+    "history": [{ "role": "user", "content": "send 5k to zyxnotaperson" }],
+    "mock_proposal": {
+      "message": "having room today isn't the same as this being a smart send. what's it actually for?",
+      "action": {
+        "type": "reply_only",
+        "extracted_hints": { "amount": 5000, "beneficiary_name": "zyxnotaperson" }
+      }
+    },
+    "eligible_surfaces": ["transfer_wizard", "balance_read"],
+    "expected_surface": null,
+    "expected_action_type": "reply_only",
+    "expected_confidence": null,
+    "forbidden_surfaces": ["transfer_wizard"]
   }
 ]

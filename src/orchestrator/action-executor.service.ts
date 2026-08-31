@@ -18,11 +18,7 @@ import { OrchestratorResult } from "./orchestrator.types";
 import { TransferWizardHints } from "./transfer-hints.util";
 import { sanitizeSurfaceLeadIn } from "./sanitize-lead-in.util";
 
-const BILL_PAYMENT_SURFACES = new Set([
-  "bill_payment_wizard",
-  "data_bundle_wizard",
-  "electricity_wizard",
-]);
+import { isBillPaymentSurface } from "./bill-hints.util";
 
 @Injectable()
 export class ActionExecutorService {
@@ -69,6 +65,14 @@ export class ActionExecutorService {
     }
 
     if (actionType === "fill_wizard") {
+      const billDraft = await this.billPaymentActions.getActiveDraft(user.id);
+      if (billDraft) {
+        await this.billPaymentActions.applyHintsToDraft(
+          user,
+          result.extractedHints ?? {},
+        );
+        return;
+      }
       await this.accountActions.applyHintsToDraft(
         user,
         result.extractedHints ?? {},
@@ -81,7 +85,7 @@ export class ActionExecutorService {
       // the next turn isn't trapped in an abandoned send-money flow.
       if (
         result.surfaceKey !== "transfer_wizard" &&
-        !BILL_PAYMENT_SURFACES.has(result.surfaceKey)
+        !isBillPaymentSurface(result.surfaceKey)
       ) {
         await this.accountActions.cancelActiveSurfaces(user);
       }
@@ -138,13 +142,13 @@ export class ActionExecutorService {
         break;
       }
       case "bill_payment_wizard":
-        await this.billPaymentActions.startAirtimeWizard(user);
+        await this.billPaymentActions.startAirtimeWizard(user, hints);
         break;
       case "data_bundle_wizard":
-        await this.billPaymentActions.startDataWizard(user);
+        await this.billPaymentActions.startDataWizard(user, hints);
         break;
       case "electricity_wizard":
-        await this.billPaymentActions.startElectricityWizard(user);
+        await this.billPaymentActions.startElectricityWizard(user, hints);
         break;
       case "spending_menu":
         await this.accountActions.sendMainMenu(user);

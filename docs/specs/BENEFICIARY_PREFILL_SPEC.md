@@ -23,7 +23,8 @@ Repeat sends require re-entering account and bank even when the user already sen
 
 1. **Unique match:** wizard jumps to name-enquiry + confirm (same as a known recipient today).
 2. **Ambiguous match:** list to pick which “james” — no transfer draft until they choose.
-3. **No match:** normal wizard (ask account/bank).
+3. **No match:** normal wizard (ask account/bank). No invented account numbers.
+4. **Send with no name:** if saved payees exist, show a pick list of recent beneficiaries.
 
 ## Acceptance
 
@@ -35,4 +36,5 @@ Repeat sends require re-entering account and bank even when the user already sen
 
 | Date | Change |
 | --- | --- |
+| 2026-08-31 | Pick list when send has no payee; unknown names stay unfilled ([AI_MONEY_INTENTS_SPEC.md](AI_MONEY_INTENTS_SPEC.md)) |
 | 2026-08-28 | Initial |

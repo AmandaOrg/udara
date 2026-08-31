@@ -14,6 +14,9 @@ describe("ActionExecutorService", () => {
     startAirtimeWizard: jest.Mock;
     startDataWizard: jest.Mock;
     startElectricityWizard: jest.Mock;
+    applyHintsToDraft: jest.Mock;
+    cancelActiveDraftForUser: jest.Mock;
+    getActiveDraft: jest.Mock;
   };
   let executor: ActionExecutorService;
 
@@ -48,6 +51,9 @@ describe("ActionExecutorService", () => {
       startAirtimeWizard: jest.fn().mockResolvedValue(undefined),
       startDataWizard: jest.fn().mockResolvedValue(undefined),
       startElectricityWizard: jest.fn().mockResolvedValue(undefined),
+      applyHintsToDraft: jest.fn().mockResolvedValue(undefined),
+      cancelActiveDraftForUser: jest.fn().mockResolvedValue(undefined),
+      getActiveDraft: jest.fn().mockResolvedValue(null),
     };
 
     executor = new ActionExecutorService(
@@ -119,7 +125,38 @@ describe("ActionExecutorService", () => {
     );
   });
 
-  it("fill_wizard applies hints to the active draft", async () => {
+  it("passes hints into startAirtimeWizard", async () => {
+    await executor.execute(user, {
+      message: "on it.",
+      actionType: "show_surface",
+      surfaceKey: "bill_payment_wizard",
+      extractedHints: { amount: 2000, telcoHint: "mtn" },
+      ok: true,
+    });
+
+    expect(billPaymentActions.startAirtimeWizard).toHaveBeenCalledWith(user, {
+      amount: 2000,
+      telcoHint: "mtn",
+    });
+  });
+
+  it("fill_wizard applies bill hints when a bill draft is active", async () => {
+    billPaymentActions.getActiveDraft.mockResolvedValue({ id: "bill-1" });
+
+    await executor.execute(user, {
+      message: "got it",
+      actionType: "fill_wizard",
+      extractedHints: { amount: 2000 },
+      ok: true,
+    });
+
+    expect(billPaymentActions.applyHintsToDraft).toHaveBeenCalledWith(user, {
+      amount: 2000,
+    });
+    expect(accountActions.applyHintsToDraft).not.toHaveBeenCalled();
+  });
+
+  it("fill_wizard applies hints to the active transfer draft", async () => {
     await executor.execute(user, {
       message: "got it",
       actionType: "fill_wizard",

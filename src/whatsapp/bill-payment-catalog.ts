@@ -144,6 +144,33 @@ export function findElectricityDisco(billerCode: string) {
   return ELECTRICITY_DISCOS.find((d) => d.billerCode === billerCode);
 }
 
+export function matchDataTelcoHint(raw?: string) {
+  if (!raw) return undefined;
+  const t = raw.trim().toLowerCase();
+  if (/\b(mtn|m-?tn)\b/.test(t) || t === "mtn") {
+    return findDataTelco("MTN_DATA");
+  }
+  if (/\bairtel\b/.test(t)) return findDataTelco("AIRTEL_DATA");
+  if (/\bglo\b/.test(t)) return findDataTelco("GLO_DATA");
+  if (/\b(9mobile|etisalat|nine\s*mobile)\b/.test(t)) {
+    return findDataTelco("9MOBILE_DATA");
+  }
+  return DATA_TELCOS.find((telco) => telco.label.toLowerCase() === t);
+}
+
+export function matchElectricityDiscoHint(raw?: string) {
+  if (!raw) return undefined;
+  const t = raw.trim().toLowerCase();
+  const byCode = ELECTRICITY_DISCOS.find(
+    (d) => d.billerCode.toLowerCase() === t || d.productCode.toLowerCase() === t,
+  );
+  if (byCode) return byCode;
+  return ELECTRICITY_DISCOS.find((d) => {
+    const label = d.label.toLowerCase();
+    return label === t || label.includes(t) || t.includes(label.split(" ")[0]!);
+  });
+}
+
 /** Meter / customer id: digits only, typical 10–13 digits. */
 export function normalizeMeterNumber(raw: string): string | null {
   const digits = raw.replace(/\D/g, "");

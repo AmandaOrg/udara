@@ -109,6 +109,8 @@ export class TransferConfirmationService {
     label?: RecipientLabel;
     /** Spend purpose for this send (from spend-check / orchestrator), not recipient tag. */
     purposeLabel?: RecipientLabel;
+    /** Free-text purpose when the category is OTHER. */
+    purposeNote?: string;
     /** Nickname to persist when this send succeeds (from beneficiary_name hint). */
     beneficiaryNickname?: string;
   }): Promise<void> {
@@ -183,6 +185,7 @@ export class TransferConfirmationService {
         status: TransactionStatus.PENDING_CONFIRMATION,
         feeAmount: evaluation.feeAmount,
         purposeLabel,
+        purposeNote: params.purposeNote?.trim().slice(0, 200) || undefined,
         idempotencyKey,
       },
     });

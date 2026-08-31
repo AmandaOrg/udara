@@ -93,6 +93,7 @@ describe("AccountActionsService", () => {
     findRecipient: jest.Mock;
     matchBeneficiaryByName: jest.Mock;
     findAmbiguousBeneficiaryMatches: jest.Mock;
+    listRecipientsForUser: jest.Mock;
   };
   let whatsapp: { sendText: jest.Mock; sendListMessage: jest.Mock };
   let transferConfirmation: {
@@ -141,6 +142,7 @@ describe("AccountActionsService", () => {
       findRecipient: jest.fn().mockResolvedValue(null),
       matchBeneficiaryByName: jest.fn().mockResolvedValue(null),
       findAmbiguousBeneficiaryMatches: jest.fn().mockResolvedValue([]),
+      listRecipientsForUser: jest.fn().mockResolvedValue([]),
     };
     whatsapp = {
       sendText: jest.fn().mockResolvedValue({ waMessageId: "wamid.1" }),
@@ -439,12 +441,41 @@ describe("AccountActionsService", () => {
       );
       expect(whatsapp.sendText).toHaveBeenLastCalledWith(
         "234801",
-        expect.stringContaining("valid amount"),
+        expect.stringContaining("amount"),
         "user-1",
       );
       expect(prisma._drafts.get(draft!.id)!.step).toBe(
         TransferDraftStep.AWAITING_AMOUNT,
       );
+    });
+
+    it("accepts a linguistic 5k amount", async () => {
+      await service.startTransferWizard(makeUser() as any);
+      const draft = await service.getActiveDraft("user-1");
+      await service.handleWizardText(makeUser() as any, draft!.id, "5k");
+      expect(Number(prisma._drafts.get(draft!.id)!.amount)).toBe(5000);
+    });
+
+    it("offers saved beneficiaries when starting a send with no payee", async () => {
+      tagging.listRecipientsForUser.mockResolvedValue([
+        {
+          id: "r1",
+          nickname: "James",
+          accountNumber: "1111222233",
+          label: RecipientLabel.FOOD,
+        },
+      ]);
+      await service.startTransferWizard(makeUser() as any, { amount: 5000 });
+      expect(whatsapp.sendListMessage).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("who are you sending to"),
+        "Pick recipient",
+        expect.arrayContaining([
+          expect.objectContaining({ id: "beneficiary:r1" }),
+        ]),
+        "user-1",
+      );
+      expect(await service.getActiveDraft("user-1")).toBeNull();
     });
 
     it("accepts an amount and asks for the account number", async () => {
@@ -706,6 +737,33 @@ describe("AccountActionsService", () => {
       );
     });
 
+    it("asks for a typed purpose after Other, then finalizes", async () => {
+      rubies.nameEnquiry.mockResolvedValue({
+        accountName: "Jane Doe",
+        bankName: "GTBank",
+      });
+      const draftId = await driveToBankStep();
+      await service.handleWizardText(makeUser() as any, draftId, "gtbank");
+      await service.handleWizardSelection(
+        makeUser() as any,
+        draftId,
+        "label:OTHER",
+      );
+      expect(prisma._drafts.get(draftId)!.step).toBe(
+        TransferDraftStep.AWAITING_PURPOSE_NOTE,
+      );
+      expect(transferConfirmation.initiateTransfer).not.toHaveBeenCalled();
+
+      await service.handleWizardText(makeUser() as any, draftId, "school fees");
+      expect(transferConfirmation.initiateTransfer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          purposeLabel: RecipientLabel.OTHER,
+          purposeNote: "school fees",
+          label: RecipientLabel.OTHER,
+        }),
+      );
+    });
+
     it("ignores a bank/label selection that doesn't match the draft's current step", async () => {
       const draftId = await driveToBankStep(); // step is AWAITING_BANK_SELECTION
       await service.handleWizardSelection(
@@ -761,8 +819,18 @@ describe("AccountActionsService", () => {
     it("sends a disambiguation list when multiple beneficiaries match", async () => {
       tagging.matchBeneficiaryByName.mockResolvedValue(null);
       tagging.findAmbiguousBeneficiaryMatches.mockResolvedValue([
-        { id: "r1", nickname: "James", accountNumber: "111", label: RecipientLabel.FOOD },
-        { id: "r2", nickname: "James", accountNumber: "222", label: RecipientLabel.VENDOR },
+        {
+          id: "r1",
+          nickname: "James",
+          accountNumber: "111",
+          label: RecipientLabel.FOOD,
+        },
+        {
+          id: "r2",
+          nickname: "James",
+          accountNumber: "222",
+          label: RecipientLabel.VENDOR,
+        },
       ]);
 
       await service.startTransferWizard(makeUser() as any, {
@@ -781,6 +849,21 @@ describe("AccountActionsService", () => {
         "user-1",
       );
       expect(transferConfirmation.initiateTransfer).not.toHaveBeenCalled();
+    });
+
+    it("does not invent an account for an unknown beneficiary name", async () => {
+      tagging.matchBeneficiaryByName.mockResolvedValue(null);
+      await service.startTransferWizard(makeUser() as any, {
+        amount: 5000,
+        beneficiaryName: "zyxnotaperson",
+      });
+      const draft = await service.getActiveDraft("user-1");
+      expect(draft?.accountNumber).toBeNull();
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("account number"),
+        "user-1",
+      );
     });
   });
 });

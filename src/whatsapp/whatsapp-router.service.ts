@@ -37,7 +37,13 @@ import {
   MENU_DATA,
   MENU_ELECTRICITY,
 } from "./account-actions.service";
-import { User, WhatsappMessage, WhatsappMessageType, BillPaymentDraftStep } from "@prisma/client";
+import {
+  User,
+  WhatsappMessage,
+  WhatsappMessageType,
+  BillPaymentDraftStep,
+  TransferDraftStep,
+} from "@prisma/client";
 import { PinGateService } from "./pin-gate.service";
 import {
   WeeklyReviewService,
@@ -499,6 +505,15 @@ export class WhatsappRouterService {
         );
         return;
       }
+    }
+
+    const transferDraft = await this.accountActions.getActiveDraft(user.id);
+    if (
+      transferDraft &&
+      transferDraft.step === TransferDraftStep.AWAITING_PURPOSE_NOTE
+    ) {
+      await this.accountActions.handleWizardText(user, transferDraft.id, text);
+      return;
     }
 
     const result = await this.orchestrator.handleMessage(user, text, options);

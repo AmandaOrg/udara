@@ -38,6 +38,21 @@ export function findAirtimeTelco(billerCode: string) {
   return AIRTIME_TELCOS.find((t) => t.billerCode === billerCode);
 }
 
+/** Map spoken network names onto the closed airtime catalog. */
+export function matchAirtimeTelcoHint(raw?: string) {
+  if (!raw) return undefined;
+  const t = raw.trim().toLowerCase();
+  if (/\b(mtn|m-?tn)\b/.test(t) || t === "mtn") {
+    return findAirtimeTelco("MTN_AIRTIME");
+  }
+  if (/\bairtel\b/.test(t)) return findAirtimeTelco("AIRTEL_AIRTIME");
+  if (/\bglo\b/.test(t)) return findAirtimeTelco("GLO_AIRTIME");
+  if (/\b(9mobile|etisalat|nine\s*mobile)\b/.test(t)) {
+    return findAirtimeTelco("9MOBILE_AIRTIME");
+  }
+  return AIRTIME_TELCOS.find((telco) => telco.label.toLowerCase() === t);
+}
+
 /** Normalize Nigerian MSISDN to 11-digit local form (070xxxxxxxx). */
 export function normalizeMsisdn(raw: string): string | null {
   const digits = raw.replace(/\D/g, "");

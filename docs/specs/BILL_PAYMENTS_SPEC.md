@@ -12,7 +12,7 @@ Users want airtime, mobile data, and prepaid electricity from Udara without leav
 
 - One-off airtime, data bundles, and prepaid electricity via Rubies BaaS VAS
 - Same money path as transfers: wizard → confirm → PIN → execute
-- Surfaces own all amounts; orchestrator only launches wizards
+- Surfaces own all amounts; orchestrator may launch wizards **and** pass sanitized hints (never product codes for data)
 
 ## Non-goals
 
@@ -46,5 +46,6 @@ All categories respect spending window, allowance evaluation, and fee rules like
 
 | Date | Change |
 | --- | --- |
+| 2026-08-31 | Chat prefill + spend-check via [AI_MONEY_INTENTS_SPEC.md](AI_MONEY_INTENTS_SPEC.md) |
 | 2026-08-30 | Phase A airtime + Phase B data/electricity spec |
 | 2026-08-28 | Initial spike spec |

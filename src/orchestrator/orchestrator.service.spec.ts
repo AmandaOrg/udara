@@ -35,10 +35,12 @@ describe("OrchestratorService", () => {
         findFirst: jest.fn().mockResolvedValue({
           id: "sess-1",
           messages: [],
+          contextData: {},
         }),
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: "sess-1",
           messages: [],
+          contextData: {},
         }),
         create: jest.fn(),
         update: jest
@@ -56,6 +58,12 @@ describe("OrchestratorService", () => {
       },
       recipient: {
         findMany: jest.fn().mockResolvedValue([]),
+      },
+      billPayment: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      billPaymentDraft: {
+        findFirst: jest.fn().mockResolvedValue(null),
       },
     };
     llm = { complete: jest.fn() };

@@ -44,6 +44,19 @@ describe("sanitizeTransferHints", () => {
     ).toBe("james");
   });
 
+  it("parses string 5k amounts", () => {
+    expect(sanitizeTransferHints({ amount: "5k" }).amount).toBe(5000);
+  });
+
+  it("keeps purpose_note", () => {
+    expect(
+      sanitizeTransferHints({
+        purpose_note: "school fees",
+        label_hint: "OTHER",
+      }),
+    ).toEqual({ purposeNote: "school fees", labelHint: "OTHER" });
+  });
+
   it("returns empty object for missing input", () => {
     expect(sanitizeTransferHints()).toEqual({});
     expect(sanitizeTransferHints({})).toEqual({});
@@ -65,9 +78,9 @@ describe("hasActionableTransferHints", () => {
     expect(hasActionableTransferHints({ amount: 200 })).toBe(false);
   });
 
-  it('is true when amount and beneficiary_name are present', () => {
+  it("is true when amount and beneficiary_name are present", () => {
     expect(
-      hasActionableTransferHints({ amount: 5000, beneficiaryName: 'james' }),
+      hasActionableTransferHints({ amount: 5000, beneficiaryName: "james" }),
     ).toBe(true);
   });
 });
@@ -97,15 +110,16 @@ describe("isActiveSendUtterance", () => {
   it("is false for thanks and short acks", () => {
     expect(isActiveSendUtterance("thank you")).toBe(false);
     expect(isActiveSendUtterance("yes")).toBe(false);
+    expect(isActiveSendUtterance("pay nepa")).toBe(false);
+    expect(isActiveSendUtterance("buy 2k mtn airtime")).toBe(false);
   });
 });
 
 describe("shouldPauseForSpendCheck", () => {
   it("pauses any first active send, including when purpose is already stated", () => {
-    expect(
-      shouldPauseForSpendCheck("send 800 to opay"),
-    ).toBe(true);
+    expect(shouldPauseForSpendCheck("send 800 to opay")).toBe(true);
     expect(shouldPauseForSpendCheck("send 5k to my landlord")).toBe(true);
+    expect(shouldPauseForSpendCheck("buy 2k mtn airtime")).toBe(true);
     expect(shouldPauseForSpendCheck("thanks")).toBe(false);
   });
 });

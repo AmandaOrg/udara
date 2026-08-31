@@ -13,6 +13,7 @@ import {
   BankMatchResult,
   matchBanks,
 } from "../common/bank-match.util";
+import { parseNairaAmount } from "../common/naira-amount.util";
 import { TransferWizardHints } from "../orchestrator/transfer-hints.util";
 import {
   ConversationPersona,
@@ -220,6 +221,16 @@ export class AccountActionsService {
       return;
     }
 
+    if (
+      !resolved.accountNumber &&
+      !resolved.bankCode &&
+      !resolved.bankName &&
+      !resolved.beneficiaryName
+    ) {
+      const offered = await this.offerRecentBeneficiaries(user, resolved);
+      if (offered) return;
+    }
+
     // Only one active draft at a time — starting fresh abandons any stale one.
     await this.billPaymentActions.cancelActiveDraftForUser(user.id, {
       silent: true,
@@ -266,7 +277,8 @@ export class AccountActionsService {
       ...pick.hints,
       accountNumber: recipient.accountNumber,
       bankCode: recipient.bankCode,
-      beneficiaryName: pick.hints.beneficiaryName ?? recipient.nickname ?? undefined,
+      beneficiaryName:
+        pick.hints.beneficiaryName ?? recipient.nickname ?? undefined,
     };
     await this.startTransferWizard(user, merged);
   }
@@ -339,6 +351,11 @@ export class AccountActionsService {
     let bankCode = hints.bankCode ?? existing?.bankCode ?? undefined;
     let bankName = hints.bankName ?? existing?.bankName ?? undefined;
     const labelHint = hints.labelHint ?? existing?.label ?? undefined;
+    const purposeNote =
+      hints.purposeNote ??
+      (typeof existing?.purposeNote === "string"
+        ? existing.purposeNote
+        : undefined);
 
     let bankMatch: BankMatchResult | null = null;
 
@@ -365,6 +382,7 @@ export class AccountActionsService {
       bankCode: bankCode ?? null,
       bankName: bankName ?? null,
       ...(labelHint ? { label: labelHint } : {}),
+      ...(purposeNote ? { purposeNote } : {}),
     };
 
     if (amount && accountNumber && bankCode && bankName) {
@@ -485,7 +503,7 @@ export class AccountActionsService {
       }
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        `how much would you like to send to ${accountNumber} at ${bankName}? (just the number, e.g. 5000)`,
+        `how much would you like to send to ${accountNumber} at ${bankName}?`,
         user.id,
       );
       return;
@@ -508,7 +526,7 @@ export class AccountActionsService {
       }
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        `how much would you like to send to account ${accountNumber}? (just the number, e.g. 5000)`,
+        `how much would you like to send to account ${accountNumber}?`,
         user.id,
       );
       return;
@@ -554,7 +572,7 @@ export class AccountActionsService {
 
     await this.whatsapp.sendText(
       user.whatsappNumber,
-      "how much would you like to send? (just the number, e.g. 5000)",
+      "how much would you like to send?",
       user.id,
     );
   }
@@ -594,6 +612,9 @@ export class AccountActionsService {
     switch (draft.step) {
       case TransferDraftStep.AWAITING_AMOUNT:
         await this.handleAmountText(user, draft, text);
+        return "handled";
+      case TransferDraftStep.AWAITING_PURPOSE_NOTE:
+        await this.handlePurposeNoteText(user, draft, text);
         return "handled";
       case TransferDraftStep.AWAITING_ACCOUNT_NUMBER:
         await this.handleAccountNumberText(user, draft, text);
@@ -639,6 +660,21 @@ export class AccountActionsService {
       const label = selectionId.slice(
         LABEL_BUTTON_PREFIX.length,
       ) as RecipientLabel;
+      if (label === RecipientLabel.OTHER && !draft.purposeNote) {
+        await this.prisma.transferDraft.update({
+          where: { id: draft.id },
+          data: {
+            label: RecipientLabel.OTHER,
+            step: TransferDraftStep.AWAITING_PURPOSE_NOTE,
+          },
+        });
+        await this.whatsapp.sendText(
+          user.whatsappNumber,
+          "got it. what's it for?",
+          user.id,
+        );
+        return;
+      }
       await this.finalizeTransfer(user, draft, label);
       return;
     }
@@ -655,11 +691,11 @@ export class AccountActionsService {
     draft: TransferDraft,
     text: string,
   ): Promise<void> {
-    const amount = Number(text.replace(/[₦,\s]/g, ""));
-    if (!Number.isFinite(amount) || amount <= 0) {
+    const amount = parseNairaAmount(text);
+    if (amount == null) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
-        "that doesn't look like a valid amount, just send the number, e.g. 5000.",
+        "that didn't read as an amount. how much do you want to send?",
         user.id,
       );
       return;
@@ -862,11 +898,29 @@ export class AccountActionsService {
     );
 
     const effectiveLabel = labelHint ?? draft.label ?? undefined;
-
-    const purposeLabel =
-      labelHint ?? draft.label ?? RecipientLabel.OTHER;
+    const purposeLabel = labelHint ?? draft.label ?? RecipientLabel.OTHER;
+    const purposeNote = draft.purposeNote ?? undefined;
 
     if (existingRecipient) {
+      if (labelHint === RecipientLabel.OTHER && !purposeNote) {
+        await this.prisma.transferDraft.update({
+          where: { id: draft.id },
+          data: {
+            bankCode,
+            bankName,
+            resolvedName: resolved.accountName,
+            isNewRecipient: false,
+            label: RecipientLabel.OTHER,
+            step: TransferDraftStep.AWAITING_PURPOSE_NOTE,
+          },
+        });
+        await this.whatsapp.sendText(
+          user.whatsappNumber,
+          "what's this one for?",
+          user.id,
+        );
+        return;
+      }
       const updated = await this.prisma.transferDraft.update({
         where: { id: draft.id },
         data: {
@@ -880,6 +934,26 @@ export class AccountActionsService {
         purposeLabel,
         beneficiaryNickname,
       });
+      return;
+    }
+
+    if (effectiveLabel === RecipientLabel.OTHER && !purposeNote) {
+      await this.prisma.transferDraft.update({
+        where: { id: draft.id },
+        data: {
+          bankCode,
+          bankName,
+          resolvedName: resolved.accountName,
+          isNewRecipient: true,
+          label: RecipientLabel.OTHER,
+          step: TransferDraftStep.AWAITING_PURPOSE_NOTE,
+        },
+      });
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        `found it, ${resolved.accountName}. what's it for?`,
+        user.id,
+      );
       return;
     }
 
@@ -948,10 +1022,60 @@ export class AccountActionsService {
       amount: Number(draft.amount),
       resolvedName: draft.resolvedName ?? undefined,
       label: recipientLabel,
-      purposeLabel:
-        options?.purposeLabel ?? draft.label ?? recipientLabel,
+      purposeLabel: options?.purposeLabel ?? draft.label ?? recipientLabel,
+      purposeNote: draft.purposeNote ?? undefined,
       beneficiaryNickname: options?.beneficiaryNickname,
     });
+  }
+
+  private async handlePurposeNoteText(
+    user: User,
+    draft: TransferDraft,
+    text: string,
+  ): Promise<void> {
+    const note = text.trim().slice(0, 200);
+    if (note.length < 2) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "say in a few words what it's for.",
+        user.id,
+      );
+      return;
+    }
+
+    const updated = await this.prisma.transferDraft.update({
+      where: { id: draft.id },
+      data: {
+        purposeNote: note,
+        label: RecipientLabel.OTHER,
+      },
+    });
+
+    await this.finalizeTransfer(user, updated, RecipientLabel.OTHER, {
+      purposeLabel: RecipientLabel.OTHER,
+    });
+  }
+
+  private async offerRecentBeneficiaries(
+    user: User,
+    hints: TransferWizardHints,
+  ): Promise<boolean> {
+    const recipients = await this.tagging.listRecipientsForUser(user.id);
+    if (recipients.length === 0) return false;
+
+    await this.writeBeneficiaryPick(user.id, hints);
+    await this.whatsapp.sendListMessage(
+      user.whatsappNumber,
+      "who are you sending to? pick someone you've paid before, or type a new account number.",
+      "Pick recipient",
+      recipients.slice(0, 10).map((r) => ({
+        id: `${BENEFICIARY_BUTTON_PREFIX}${r.id}`,
+        title: (r.nickname ?? r.accountName ?? r.accountNumber).slice(0, 24),
+        description: `${r.accountNumber} · ${r.label.toLowerCase()}`,
+      })),
+      user.id,
+    );
+    return true;
   }
 
   private async resolveBeneficiaryHints(

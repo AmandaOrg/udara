@@ -1,6 +1,6 @@
 # Udara project summary
 
-Last updated: 2026-08-30
+Last updated: 2026-08-31
 
 Quick orientation for agents. Full behavior: `docs/PRODUCT_BEHAVIOR.md`. Full flow: `docs/ARCHITECTURE.md`. Working rules: `AGENTS.md`.
 
@@ -80,3 +80,4 @@ WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), Deepgram STT
 - `initiatives/transfer-intent-grounding` — closed-send utterances must not relaunch the wizard; completed sends are written into chat history.
 - `initiatives/beneficiary-prefill` — completed; nickname prefill for repeat sends (confirm/PIN unchanged).
 - `initiatives/bill-payments` — completed; airtime, data bundles, prepaid electricity via `baas-vas/*` (confirm → PIN → execute).
+- `initiatives/ai-money-intents` — chat prefill for bills/beneficiaries, typed Other purpose, linguistic amounts.
