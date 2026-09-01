@@ -82,6 +82,44 @@ npm run docs:check       # docs structure and links
 
 Both run in CI before lint. See [SECURITY.md](SECURITY.md).
 
+## Transactional email (Resend)
+
+Monthly summaries and other mail go through [Resend](https://resend.com). Inbox placement depends on **DNS on the From domain**, not only on HTML.
+
+### Required env (production)
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `RESEND_API_KEY` | `re_…` | Resend dashboard |
+| `RESEND_FROM_ADDRESS` | `Udara <noreply@useudara.com>` | Must use a **verified** domain in Resend |
+| `RESEND_REPLY_TO` | `hello@useudara.com` | Optional; improves trust (real reply address) |
+
+Do not use `@udara.ng` or other unverified domains — Resend returns 403 and mail is more likely to spam.
+
+### DNS checklist (Resend → Domains → useudara.com)
+
+Add every record Resend shows until status is **Verified**:
+
+1. **SPF** — TXT on `@` or the sending subdomain Resend assigns
+2. **DKIM** — CNAME/TXT Resend provides
+3. **DMARC** — TXT on `_dmarc.useudara.com`, e.g. `v=DMARC1; p=none; rua=mailto:hello@useudara.com` (tighten `p=` later)
+
+After DNS propagates, send a test from Resend’s dashboard to Gmail and confirm **SPF pass**, **DKIM pass**, **DMARC pass** in “Show original”.
+
+### Code-side hygiene (already in app)
+
+- Plain-text part alongside HTML (multipart)
+- `Reply-To` when `RESEND_REPLY_TO` is set
+- `List-Unsubscribe` header on monthly summaries
+- Consistent `From` on the verified domain
+
+### If mail still lands in spam
+
+1. Mark one message **Not spam** in Gmail (helps sender reputation for that user).
+2. Confirm Resend domain is fully verified (not “pending”).
+3. Avoid changing the From address often; keep `noreply@useudara.com` stable.
+4. Ops resend: `npm run email:resend-monthly -- --user-id <uuid> --dedupe-suffix corrected-aug-2026`
+
 ## Conventions
 
 - Co-locate unit tests as `*.spec.ts` next to the unit.

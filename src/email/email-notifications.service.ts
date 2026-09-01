@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { EmailType, User } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AllowanceService } from "../allowance/allowance.service";
@@ -37,6 +38,7 @@ export class EmailNotificationsService {
     private readonly email: EmailService,
     private readonly allowance: AllowanceService,
     private readonly spendSummary: SpendSummaryService,
+    private readonly config: ConfigService,
   ) {}
 
   /** Wraps a send so a failure can never escape into a money path. */
@@ -233,6 +235,7 @@ export class EmailNotificationsService {
         subject,
         html,
         dedupeKey,
+        headers: monthlySummaryListHeaders(this.config),
       });
     });
   }
@@ -247,4 +250,17 @@ export class EmailNotificationsService {
  */
 function dateKey(date: Date): string {
   return watDateBucketKey(date).toISOString().slice(0, 10);
+}
+
+/** Gmail/Outlook use this to offer one-click unsubscribe; improves inbox placement. */
+function monthlySummaryListHeaders(
+  config: ConfigService,
+): Record<string, string> {
+  const replyTo =
+    config.get<string>("RESEND_REPLY_TO") ?? "hello@useudara.com";
+  const mailto = `mailto:${replyTo}?subject=${encodeURIComponent("Unsubscribe monthly summary")}`;
+  return {
+    "List-Unsubscribe": `<${mailto}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  };
 }

@@ -27,7 +27,7 @@ function layout(heading: string, bodyHtml: string): string {
     <h1 style="margin:14px 0 18px;font-size:20px;line-height:1.35;color:${INK};font-weight:600;">${heading}</h1>
     ${bodyHtml}
     <p style="margin:26px 0 0;padding-top:16px;border-top:1px solid ${RULE};font-size:12px;line-height:1.6;color:${MUTED};">
-      you're getting this because you have a Udara account. reply to your Udara chat on WhatsApp if anything here looks wrong.
+      you're getting this because you have a Udara account. if this landed in spam, mark it as not spam once so future summaries reach your inbox. questions? reply to this email or message Udara on WhatsApp.
     </p>
   </div>
 </div>`;

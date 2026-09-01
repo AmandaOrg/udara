@@ -48,6 +48,8 @@ describe("EmailService", () => {
       to: ["me@example.com"],
       subject: "money in",
       html: "<p>hi</p>",
+      text: "hi",
+      tags: [{ name: "email_type", value: "money_in" }],
     });
     expect(opts.headers.Authorization).toBe("Bearer re_test_key");
     expect(finalizedWith()).toMatchObject({
@@ -125,12 +127,36 @@ describe("EmailService", () => {
       key === "RESEND_API_KEY"
         ? "re_test_key"
         : key === "RESEND_FROM_ADDRESS"
-          ? "Udara <hello@udara.ng>"
+          ? "Udara <hello@useudara.com>"
           : undefined,
     );
 
     await service.send(base);
 
-    expect(http.post.mock.calls[0][1].from).toBe("Udara <hello@udara.ng>");
+    expect(http.post.mock.calls[0][1].from).toBe("Udara <hello@useudara.com>");
+  });
+
+  it("includes reply_to when RESEND_REPLY_TO is set", async () => {
+    config.get.mockImplementation((key: string) => {
+      if (key === "RESEND_API_KEY") return "re_test_key";
+      if (key === "RESEND_REPLY_TO") return "hello@useudara.com";
+      return undefined;
+    });
+
+    await service.send(base);
+
+    expect(http.post.mock.calls[0][1].reply_to).toBe("hello@useudara.com");
+  });
+
+  it("merges custom headers into the Resend payload", async () => {
+    await service.send({
+      ...base,
+      headers: { "List-Unsubscribe": "<mailto:hello@useudara.com>" },
+    });
+
+    expect(http.post.mock.calls[0][1].headers).toMatchObject({
+      "List-Unsubscribe": "<mailto:hello@useudara.com>",
+      "X-Entity-Ref-ID": base.dedupeKey,
+    });
   });
 });
