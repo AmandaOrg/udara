@@ -2,6 +2,9 @@ import {
   getWatHour,
   getWatDateParts,
   startOfWatDayInstant,
+  startOfPreviousWatMonthInstant,
+  startOfWatMonthInstant,
+  formatPreviousWatMonthLabel,
   watDateBucketKey,
   startOfWatIsoWeekBucketKey,
   startOfWatIsoWeekInstant,
@@ -89,6 +92,35 @@ describe("wat-time.util", () => {
       const thursday = new Date("2026-01-08T10:00:00Z");
       const result = startOfWatIsoWeekInstant(thursday);
       expect(result.toISOString()).toBe("2026-01-04T23:00:00.000Z");
+    });
+  });
+
+  describe("startOfPreviousWatMonthInstant", () => {
+    it("returns the 1st of the previous WAT month", () => {
+      // 1 Sep 2026 9am WAT = 2026-09-01T08:00:00Z
+      const sep1 = new Date("2026-09-01T08:00:00Z");
+      expect(startOfPreviousWatMonthInstant(sep1).toISOString()).toBe(
+        "2026-07-31T23:00:00.000Z",
+      ); // Aug 1 00:00 WAT
+    });
+
+    it("rolls back to December of the prior year in January", () => {
+      const jan1 = new Date("2026-01-01T08:00:00Z");
+      expect(startOfPreviousWatMonthInstant(jan1).toISOString()).toBe(
+        "2025-11-30T23:00:00.000Z",
+      ); // Dec 1 00:00 WAT
+    });
+  });
+
+  describe("formatPreviousWatMonthLabel", () => {
+    it("labels the month before the instant's WAT calendar month", () => {
+      const sep1 = new Date("2026-09-01T08:00:00Z");
+      expect(formatPreviousWatMonthLabel(sep1)).toBe("August 2026");
+    });
+
+    it("handles January → December prior year", () => {
+      const jan1 = new Date("2026-01-01T08:00:00Z");
+      expect(formatPreviousWatMonthLabel(jan1)).toBe("December 2025");
     });
   });
 
