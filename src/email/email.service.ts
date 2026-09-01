@@ -4,6 +4,7 @@ import { HttpService } from "@nestjs/axios";
 import { firstValueFrom } from "rxjs";
 import { EmailStatus, EmailType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { htmlToPlainText } from "./email-plain-text.util";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
@@ -13,6 +14,10 @@ export interface SendEmailParams {
   type: EmailType;
   subject: string;
   html: string;
+  /** Optional plain-text body; generated from html when omitted. */
+  text?: string;
+  /** Merged into Resend headers after defaults (e.g. List-Unsubscribe). */
+  headers?: Record<string, string>;
   /**
    * Idempotency key encoding what this email is *about* — a specific credit,
    * a specific transaction, a specific user-week. A retried webhook or an
@@ -60,8 +65,13 @@ export class EmailService {
   private get fromAddress(): string {
     return (
       this.config.get<string>("RESEND_FROM_ADDRESS") ??
-      "Udara <noreply@udara.ng>"
+      "Udara <noreply@useudara.com>"
     );
+  }
+
+  /** Reply-To should be a monitored inbox on the same verified domain as From. */
+  private get replyToAddress(): string | undefined {
+    return this.config.get<string>("RESEND_REPLY_TO") ?? undefined;
   }
 
   async send(params: SendEmailParams): Promise<SendEmailResult> {
@@ -120,22 +130,30 @@ export class EmailService {
     }
 
     try {
+      const payload: Record<string, unknown> = {
+        from: this.fromAddress,
+        to: [params.to],
+        subject: params.subject,
+        html: params.html,
+        text: params.text ?? htmlToPlainText(params.html),
+        tags: [{ name: "email_type", value: params.type.toLowerCase() }],
+        headers: {
+          "X-Entity-Ref-ID": params.dedupeKey.slice(0, 100),
+          ...params.headers,
+        },
+      };
+      const replyTo = this.replyToAddress;
+      if (replyTo) {
+        payload.reply_to = replyTo;
+      }
+
       const response = await firstValueFrom(
-        this.http.post<{ id?: string }>(
-          RESEND_ENDPOINT,
-          {
-            from: this.fromAddress,
-            to: [params.to],
-            subject: params.subject,
-            html: params.html,
+        this.http.post<{ id?: string }>(RESEND_ENDPOINT, payload, {
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
           },
-          {
-            headers: {
-              Authorization: `Bearer ${this.apiKey}`,
-              "Content-Type": "application/json",
-            },
-          },
-        ),
+        }),
       );
 
       await this.finalize(claimed.id, EmailStatus.SENT, {
