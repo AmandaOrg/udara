@@ -100,6 +100,18 @@ export function startOfWatMonthInstant(date: Date): Date {
 }
 
 /**
+ * WAT midnight on the 1st of the calendar month before the month `date` falls
+ * on. Used for monthly recap emails sent on the 1st (recap = previous month).
+ */
+export function startOfPreviousWatMonthInstant(date: Date): Date {
+  const { year, month } = getWatDateParts(date);
+  if (month === 1) {
+    return watMidnightInstant({ year: year - 1, month: 12, day: 1 });
+  }
+  return watMidnightInstant({ year, month: month - 1, day: 1 });
+}
+
+/**
  * The WAT calendar month a given instant falls on, as a display label like
  * "January 2026".
  */
@@ -109,6 +121,11 @@ export function formatWatMonthLabel(date: Date): string {
     month: "long",
     year: "numeric",
   }).format(date);
+}
+
+/** Display label for the WAT calendar month before the month `date` falls on. */
+export function formatPreviousWatMonthLabel(date: Date): string {
+  return formatWatMonthLabel(startOfPreviousWatMonthInstant(date));
 }
 
 /** Monday of the WAT ISO week a given instant falls on, as WatDateParts. */

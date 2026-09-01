@@ -5,7 +5,7 @@ import { AllowanceService } from "../allowance/allowance.service";
 import { SpendSummaryService } from "../allowance/spend-summary.service";
 import { EmailService } from "./email.service";
 import {
-  formatWatMonthLabel,
+  formatPreviousWatMonthLabel,
   startOfWatIsoWeekInstant,
   startOfWatMonthInstant,
   watDateBucketKey,
@@ -199,16 +199,26 @@ export class EmailNotificationsService {
     });
   }
 
-  /** One per user per WAT calendar month, keyed on that month's 1st. */
-  async sendMonthlySummary(user: User, now: Date = new Date()): Promise<void> {
+  /** One per user per WAT calendar month, keyed on that month's 1st. Recaps the month just finished. */
+  async sendMonthlySummary(
+    user: User,
+    now: Date = new Date(),
+    options?: { dedupeSuffix?: string },
+  ): Promise<void> {
     await this.safely("monthly-summary", async () => {
-      const summary = await this.spendSummary.getMonthlySummary(user.id, now);
+      const summary = await this.spendSummary.getPreviousMonthSummary(
+        user.id,
+        now,
+      );
       const todayAllowance = await this.allowance.getOrCreateTodayAllowance(
         user.id,
       );
+      const dedupeKey = `MONTHLY:${user.id}:${dateKey(startOfWatMonthInstant(now))}${
+        options?.dedupeSuffix ? `:${options.dedupeSuffix}` : ""
+      }`;
       const { subject, html } = monthlySummaryEmail({
         name: user.name,
-        periodLabel: formatWatMonthLabel(now),
+        periodLabel: formatPreviousWatMonthLabel(now),
         totalSpent: summary.totalSpent,
         transactionCount: summary.transactionCount,
         byLabel: summary.byLabel,
@@ -222,7 +232,7 @@ export class EmailNotificationsService {
         type: EmailType.MONTHLY_SUMMARY,
         subject,
         html,
-        dedupeKey: `MONTHLY:${user.id}:${dateKey(startOfWatMonthInstant(now))}`,
+        dedupeKey,
       });
     });
   }

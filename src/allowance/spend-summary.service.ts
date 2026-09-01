@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RecipientLabel, TransactionStatus } from "@prisma/client";
 import {
   getWatDateParts,
+  startOfPreviousWatMonthInstant,
   startOfWatIsoWeekInstant,
   startOfWatMonthInstant,
 } from "../common/wat-time.util";
@@ -55,9 +56,32 @@ export class SpendSummaryService {
     return this.summarizeSince(userId, startOfWatMonthInstant(now));
   }
 
+  /**
+   * Full previous WAT calendar month — for the recap email sent on the 1st.
+   * e.g. a send on 1 Sep covers 1 Aug 00:00 WAT through 31 Aug 23:59 WAT.
+   */
+  async getPreviousMonthSummary(
+    userId: string,
+    now: Date = new Date(),
+  ): Promise<WeeklySpendSummary> {
+    return this.summarizeBetween(
+      userId,
+      startOfPreviousWatMonthInstant(now),
+      startOfWatMonthInstant(now),
+    );
+  }
+
   private async summarizeSince(
     userId: string,
     periodStart: Date,
+  ): Promise<WeeklySpendSummary> {
+    return this.summarizeBetween(userId, periodStart);
+  }
+
+  private async summarizeBetween(
+    userId: string,
+    periodStart: Date,
+    periodEndExclusive?: Date,
   ): Promise<WeeklySpendSummary> {
     const weekStartDate = periodStart;
 
@@ -65,7 +89,9 @@ export class SpendSummaryService {
       where: {
         userId,
         status: TransactionStatus.EXECUTED,
-        createdAt: { gte: weekStartDate },
+        createdAt: periodEndExclusive
+          ? { gte: periodStart, lt: periodEndExclusive }
+          : { gte: periodStart },
       },
       include: { recipient: true },
     });

@@ -107,6 +107,47 @@ describe("SpendSummaryService", () => {
     });
   });
 
+  describe("getPreviousMonthSummary", () => {
+    it("queries EXECUTED transactions for the full previous WAT month", async () => {
+      prisma.transaction.findMany.mockResolvedValue([]);
+      // 1 Sep 2026 9am WAT
+      await service.getPreviousMonthSummary(
+        "user-1",
+        new Date("2026-09-01T08:00:00Z"),
+      );
+
+      expect(prisma.transaction.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: "user-1",
+            status: TransactionStatus.EXECUTED,
+            createdAt: {
+              gte: new Date("2026-07-31T23:00:00.000Z"), // Aug 1 00:00 WAT
+              lt: new Date("2026-08-31T23:00:00.000Z"), // Sep 1 00:00 WAT
+            },
+          }),
+        }),
+      );
+    });
+
+    it("excludes transactions from the current month", async () => {
+      prisma.transaction.findMany.mockResolvedValue([
+        txn({
+          amount: 500,
+          createdAt: new Date("2026-08-15T10:00:00Z"), // mid-Aug WAT
+        }),
+      ]);
+
+      const summary = await service.getPreviousMonthSummary(
+        "user-1",
+        new Date("2026-09-01T08:00:00Z"),
+      );
+
+      expect(summary.totalSpent).toBe(500);
+      expect(summary.transactionCount).toBe(1);
+    });
+  });
+
   describe("formatAsText", () => {
     it("says so plainly when there's nothing to report", () => {
       const text = service.formatAsText({
