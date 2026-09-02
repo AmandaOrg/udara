@@ -16,6 +16,9 @@ export const WEEKLY_REVIEW_PREFIX = "weekly:";
 export const WEEKLY_KEEP = "weekly:keep";
 export const WEEKLY_ADJUST = "weekly:adjust";
 
+/** After this, an unanswered Adjust no longer swallows chat. */
+export const AWAITING_LIMIT_TTL_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Bounds on a self-served weekly limit change. Deliberately permissive at the
  * bottom (someone tightening their own limit is the behaviour this product
@@ -53,16 +56,49 @@ export class WeeklyReviewService {
   ) {}
 
   /**
-   * The review the router should treat the next inbound text as an answer to,
+   * The review the router should treat a parseable amount as an answer to,
    * or null. Only AWAITING_LIMIT qualifies: a review sitting at SENT is
    * waiting on a button, and free text then should behave normally rather
-   * than being swallowed as a limit.
+   * than being swallowed as a limit. Stale waits are completed with no
+   * override so they cannot trap chat into the next day.
    */
-  async getReviewAwaitingLimit(userId: string): Promise<WeeklyReview | null> {
-    return this.prisma.weeklyReview.findFirst({
+  async getReviewAwaitingLimit(
+    userId: string,
+    now: Date = new Date(),
+  ): Promise<WeeklyReview | null> {
+    const review = await this.prisma.weeklyReview.findFirst({
       where: { userId, status: WeeklyReviewStatus.AWAITING_LIMIT },
       orderBy: { createdAt: "desc" },
     });
+    if (!review) return null;
+
+    const lastChange = review.updatedAt ?? review.createdAt;
+    if (now.getTime() - lastChange.getTime() > AWAITING_LIMIT_TTL_MS) {
+      await this.completeWithoutOverride(review, now);
+      return null;
+    }
+    return review;
+  }
+
+  /**
+   * Drops an unanswered Adjust. Same persistence as Keep (COMPLETED, no
+   * newDailyLimit). ack: send the keep-limits line and stop; silent: let
+   * the same utterance continue through the router.
+   */
+  async abandonAwaitingLimit(
+    user: User,
+    review: WeeklyReview,
+    options: { ack: boolean },
+    now: Date = new Date(),
+  ): Promise<void> {
+    await this.completeWithoutOverride(review, now);
+    if (options.ack) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "okay, we'll keep the current limits. i'll check in again next sunday.",
+        user.id,
+      );
+    }
   }
 
   /**
@@ -73,6 +109,18 @@ export class WeeklyReviewService {
    */
   async sendReview(user: User, now: Date = new Date()): Promise<boolean> {
     const weekStartDate = watDateBucketKey(startOfWatIsoWeekInstant(now));
+
+    await this.prisma.weeklyReview.updateMany({
+      where: {
+        userId: user.id,
+        status: WeeklyReviewStatus.AWAITING_LIMIT,
+        weekStartDate: { not: weekStartDate },
+      },
+      data: {
+        status: WeeklyReviewStatus.COMPLETED,
+        respondedAt: now,
+      },
+    });
 
     const summary = await this.spendSummary.getWeeklySummary(user.id, now);
     const todayAllowance = await this.allowance.getOrCreateTodayAllowance(
@@ -213,8 +261,9 @@ export class WeeklyReviewService {
   }
 
   /**
-   * Handles the free-text amount after "Adjust limits". Rejections leave the
-   * review in AWAITING_LIMIT so the user can simply try again.
+   * Handles a parseable amount after "Adjust limits". Out-of-range amounts
+   * leave the review in AWAITING_LIMIT so the user can try again. Non-amount
+   * text is abandoned by the router, not this method.
    */
   async handleLimitText(
     user: User,
@@ -225,6 +274,7 @@ export class WeeklyReviewService {
     const amount = parseNairaAmount(text);
 
     if (amount == null) {
+      await this.touchAwaitingLimit(review);
       await this.whatsapp.sendText(
         user.whatsappNumber,
         "that didn't read as an amount. how much a day should I work with?",
@@ -234,6 +284,7 @@ export class WeeklyReviewService {
     }
 
     if (amount < MIN_DAILY_LIMIT) {
+      await this.touchAwaitingLimit(review);
       await this.whatsapp.sendText(
         user.whatsappNumber,
         `${naira(amount)} a day is too low to be workable. give me something from ${naira(MIN_DAILY_LIMIT)} up.`,
@@ -248,6 +299,7 @@ export class WeeklyReviewService {
     const planned = this.allowance.computePlannedDailyAmount(user);
     const ceiling = planned * MAX_MULTIPLE_OF_PLAN;
     if (planned > 0 && amount > ceiling) {
+      await this.touchAwaitingLimit(review);
       await this.whatsapp.sendText(
         user.whatsappNumber,
         `${naira(amount)} a day is more than double your plan (${naira(planned)}). i can go up to ${naira(ceiling)} here. if you need more than that, ask me to raise your limit properly and we'll talk it through.`,
@@ -283,5 +335,26 @@ export class WeeklyReviewService {
       `done. ${naira(amount)} a day, ${naira(amount * 7)} for the week. this is just for this week, then you're back to your normal plan.`,
       user.id,
     );
+  }
+
+  private async completeWithoutOverride(
+    review: WeeklyReview,
+    now: Date,
+  ): Promise<void> {
+    await this.prisma.weeklyReview.update({
+      where: { id: review.id },
+      data: {
+        status: WeeklyReviewStatus.COMPLETED,
+        respondedAt: now,
+      },
+    });
+  }
+
+  /** Bumps updatedAt so a too-low / too-high retry resets the 24h TTL. */
+  private async touchAwaitingLimit(review: WeeklyReview): Promise<void> {
+    await this.prisma.weeklyReview.update({
+      where: { id: review.id },
+      data: { status: WeeklyReviewStatus.AWAITING_LIMIT },
+    });
   }
 }

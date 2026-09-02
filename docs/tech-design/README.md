@@ -20,6 +20,7 @@ Engineer-readable **how** for a feature. Architecture, types, files, env, and te
 | [BILL_PAYMENTS_TECH.md](BILL_PAYMENTS_TECH.md) | [bill-payments](../../initiatives/bill-payments/plan.md) — full Phase A+B implementation |
 | [WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_TECH.md](WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_TECH.md) | [whatsapp-media-and-spend-pushback](../../initiatives/whatsapp-media-and-spend-pushback/plan.md) |
 | [AI_MONEY_INTENTS_TECH.md](AI_MONEY_INTENTS_TECH.md) | [ai-money-intents](../../initiatives/ai-money-intents/plan.md) |
+| [WEEKLY_REVIEW_LIMIT_ESCAPE_TECH.md](WEEKLY_REVIEW_LIMIT_ESCAPE_TECH.md) | [weekly-review-limit-escape](../../initiatives/weekly-review-limit-escape/plan.md) |
 
 ## New design
 

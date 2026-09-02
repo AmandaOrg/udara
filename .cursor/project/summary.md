@@ -1,6 +1,6 @@
 # Udara project summary
 
-Last updated: 2026-08-31
+Last updated: 2026-09-02
 
 Quick orientation for agents. Full behavior: `docs/PRODUCT_BEHAVIOR.md`. Full flow: `docs/ARCHITECTURE.md`. Working rules: `AGENTS.md`.
 
@@ -34,13 +34,13 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 
 ## 4. Routing
 
-Structured payloads → deterministic handlers. Pre-account text (and transcribed voice) → onboarding. Menu shortcuts → list. Post-onboarding text, transcripts, and images → orchestrator.
+Structured payloads → deterministic handlers. Pre-account text (and transcribed voice) → onboarding. Menu shortcuts → list. Weekly-review `AWAITING_LIMIT` intercepts only a parseable amount (or cancel words); other text abandons the wait and continues. Post-onboarding text, transcripts, and images → orchestrator.
 
 Surfaces: `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `bill_payment_wizard`, `data_bundle_wizard`, `electricity_wizard`, `spending_menu`, `spend_summary`.
 
 ## 5. Data (Prisma)
 
-User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel), BillPaymentDraft, BillPayment, OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WhatsappMessage, PIN challenge, Rubies webhook log, LLM call log, nudges.
+User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel), BillPaymentDraft, BillPayment, OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WeeklyReview, WhatsappMessage, PIN challenge, Rubies webhook log, LLM call log, nudges.
 
 `TransferDraft` ≠ `ConversationSession`. Persona enum still `KEDU` | `MANAGER`. Session `contextData.spendCheck` holds pending send hints during the pre-wizard spend check.
 
@@ -82,3 +82,4 @@ WhatsApp Cloud API (`WHATSAPP_DRY_RUN`), Rubies (`RUBIES_DRY_RUN`), Deepgram STT
 - `initiatives/beneficiary-prefill` — completed; nickname prefill for repeat sends (confirm/PIN unchanged).
 - `initiatives/bill-payments` — completed; airtime, data bundles, prepaid electricity via `baas-vas/*` (confirm → PIN → execute).
 - `initiatives/ai-money-intents` — chat prefill for bills/beneficiaries, typed Other purpose, linguistic amounts.
+- `initiatives/weekly-review-limit-escape` — completed; Adjust-limits wait is amount-only; greetings and other intents (and 24h TTL) leave the prompt.

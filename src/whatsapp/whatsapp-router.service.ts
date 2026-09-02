@@ -55,6 +55,7 @@ import {
 } from "./whatsapp-message.service";
 import { isMenuShortcut, menuPayloadFromUtterance } from "./menu-shortcut.util";
 import { isShortCompletionAck } from "../orchestrator/transfer-hints.util";
+import { parseNairaAmount } from "../common/naira-amount.util";
 import { DeepgramService } from "./deepgram.service";
 import { OrchestratorTurnOptions } from "../orchestrator/orchestrator.types";
 
@@ -448,9 +449,10 @@ export class WhatsappRouterService {
   }
 
   /**
-   * Pre-account onboarding stays scripted. Post-onboarding free text always
-   * goes to the orchestrator (including when a transfer draft is active —
-   * the model sees Active mode and can fill_wizard or cancel_surface).
+   * Pre-account onboarding stays scripted. Post-onboarding free text goes
+   * to the orchestrator except a parseable amount (or cancel) while a
+   * weekly review is AWAITING_LIMIT. Active transfer drafts still reach
+   * the model so it can fill_wizard or cancel_surface.
    */
   private async handleText(
     user: User,
@@ -473,8 +475,19 @@ export class WhatsappRouterService {
       user.id,
     );
     if (awaitingLimit) {
-      await this.weeklyReview.handleLimitText(user, awaitingLimit, text);
-      return;
+      if (BILL_CANCEL_WORDS.test(text.trim())) {
+        await this.weeklyReview.abandonAwaitingLimit(user, awaitingLimit, {
+          ack: true,
+        });
+        return;
+      }
+      if (parseNairaAmount(text) != null) {
+        await this.weeklyReview.handleLimitText(user, awaitingLimit, text);
+        return;
+      }
+      await this.weeklyReview.abandonAwaitingLimit(user, awaitingLimit, {
+        ack: false,
+      });
     }
 
     if (isMenuShortcut(text)) {

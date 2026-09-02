@@ -30,11 +30,12 @@ Internal package/DB naming still uses `kedu` / `ConversationPersona.KEDU`. User-
 | WhatsApp Flow reply (KYC or PIN) | `PinGateService` or onboarding Flow handler |
 | Pre-account free text | Onboarding stage machine |
 | Exact menu shortcuts (`menu`, `help`, “what can you do”, …) | Text list of capabilities, then the tap menu. No LLM |
-| Post-onboarding free text, transcribed voice, or image + caption | Orchestrator `propose_turn` → `ActionValidatorService` → `ActionExecutorService` |
+| Weekly review **Adjust limits** while `AWAITING_LIMIT` | Only a parseable naira amount is an answer. `cancel` / `stop` / `nevermind` keep current limits and stop. Any other text drops the wait (no amount-retry line) and continues as a normal post-onboarding turn. Wait older than 24 hours is dropped. See [specs/WEEKLY_REVIEW_LIMIT_ESCAPE_SPEC.md](specs/WEEKLY_REVIEW_LIMIT_ESCAPE_SPEC.md) |
+| Post-onboarding free text, transcribed voice, or image + caption | Orchestrator `propose_turn` → `ActionValidatorService` → `ActionExecutorService` (after the weekly-limit intercept above, if any) |
 | Voice note | Deepgram transcript, then the same path as free text (text replies only) |
 | Image | Download + orchestrator (vision when the conversation model supports it) |
 
-There is **no** regex product path that extracts transfer fields from free text. The LLM proposes; the validator disposes.
+There is **no** regex product path that extracts transfer fields from free text. The LLM proposes; the validator disposes. Weekly-limit answers use the same `parseNairaAmount` helper as wizards; they are not transfer extraction.
 
 ---
 

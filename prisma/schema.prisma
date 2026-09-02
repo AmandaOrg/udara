@@ -742,7 +742,7 @@ model EmailLog {
 enum WeeklyReviewStatus {
   SENT // recap delivered, waiting on the keep/adjust choice
   AWAITING_LIMIT // user chose "adjust", next text is their new daily limit
-  COMPLETED // kept the same limits, or a new limit was accepted
+  COMPLETED // kept, accepted a new limit, or abandoned the wait
 }
 
 // One review per user per WAT ISO week. The unique constraint is what makes
@@ -759,6 +759,7 @@ model WeeklyReview {
   newDailyLimit Decimal?           @db.Decimal(14, 2) // set only if they adjusted
 
   createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   respondedAt DateTime?
 
   @@unique([userId, weekStartDate])

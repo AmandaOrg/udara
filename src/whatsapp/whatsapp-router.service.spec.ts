@@ -20,6 +20,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     getReviewAwaitingLimit: jest.Mock;
     handleChoice: jest.Mock;
     handleLimitText: jest.Mock;
+    abandonAwaitingLimit: jest.Mock;
   };
   let orchestrator: { handleMessage: jest.Mock };
   let actionExecutor: { execute: jest.Mock; sendSafeFallback: jest.Mock };
@@ -97,6 +98,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       getReviewAwaitingLimit: jest.fn().mockResolvedValue(null),
       handleChoice: jest.fn().mockResolvedValue(undefined),
       handleLimitText: jest.fn().mockResolvedValue(undefined),
+      abandonAwaitingLimit: jest.fn().mockResolvedValue(undefined),
     };
     pinGate = { handlePinFlowReply: jest.fn() };
     orchestrator = { handleMessage: jest.fn() };
@@ -285,6 +287,67 @@ describe("WhatsappRouterService — orchestrator free text", () => {
 
     expect(orchestrator.handleMessage).toHaveBeenCalled();
     expect(actionExecutor.execute).toHaveBeenCalled();
+  });
+
+  describe("weekly review AWAITING_LIMIT", () => {
+    const awaiting = { id: "wr-1", status: "AWAITING_LIMIT" };
+
+    beforeEach(() => {
+      weeklyReview.getReviewAwaitingLimit.mockResolvedValue(awaiting);
+      orchestrator.handleMessage.mockResolvedValue({
+        message: "hey",
+        actionType: "reply_only",
+        ok: true,
+      });
+    });
+
+    it("sends a parseable amount to handleLimitText and does not orchestrate", async () => {
+      await service.route(makeMessage("7000"));
+
+      expect(weeklyReview.handleLimitText).toHaveBeenCalledWith(
+        user,
+        awaiting,
+        "7000",
+      );
+      expect(weeklyReview.abandonAwaitingLimit).not.toHaveBeenCalled();
+      expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    });
+
+    it("abandons silently on a greeting and continues to the orchestrator", async () => {
+      await service.route(makeMessage("Hi"));
+
+      expect(weeklyReview.handleLimitText).not.toHaveBeenCalled();
+      expect(weeklyReview.abandonAwaitingLimit).toHaveBeenCalledWith(
+        user,
+        awaiting,
+        { ack: false },
+      );
+      expect(orchestrator.handleMessage).toHaveBeenCalledWith(user, "Hi", {});
+    });
+
+    it("abandons silently on a balance question and continues to the orchestrator", async () => {
+      await service.route(makeMessage("what's the balance"));
+
+      expect(weeklyReview.handleLimitText).not.toHaveBeenCalled();
+      expect(weeklyReview.abandonAwaitingLimit).toHaveBeenCalledWith(
+        user,
+        awaiting,
+        { ack: false },
+      );
+      expect(orchestrator.handleMessage).toHaveBeenCalled();
+    });
+
+    it("acks cancel and does not orchestrate", async () => {
+      await service.route(makeMessage("nevermind"));
+
+      expect(weeklyReview.abandonAwaitingLimit).toHaveBeenCalledWith(
+        user,
+        awaiting,
+        { ack: true },
+      );
+      expect(weeklyReview.handleLimitText).not.toHaveBeenCalled();
+      expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    });
   });
 
   describe("PIN flow replies", () => {

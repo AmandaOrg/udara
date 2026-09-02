@@ -51,5 +51,6 @@ Do not delete completed folders. Set status `completed` (or `deleted` if abandon
 | [bill-payments](bill-payments/plan.md) | completed | [SPEC](../docs/specs/BILL_PAYMENTS_SPEC.md) | [SPIKE](../docs/tech-design/BILL_PAYMENTS_SPIKE.md) |
 | [whatsapp-media-and-spend-pushback](whatsapp-media-and-spend-pushback/plan.md) | in progress | [SPEC](../docs/specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md) | [TECH](../docs/tech-design/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_TECH.md) |
 | [ai-money-intents](ai-money-intents/plan.md) | in progress | [SPEC](../docs/specs/AI_MONEY_INTENTS_SPEC.md) | [TECH](../docs/tech-design/AI_MONEY_INTENTS_TECH.md) |
+| [weekly-review-limit-escape](weekly-review-limit-escape/plan.md) | completed | [SPEC](../docs/specs/WEEKLY_REVIEW_LIMIT_ESCAPE_SPEC.md) | [TECH](../docs/tech-design/WEEKLY_REVIEW_LIMIT_ESCAPE_TECH.md) |
 
 Update this table whenever you add a folder or change status. `npm run docs:check` enforces registration.

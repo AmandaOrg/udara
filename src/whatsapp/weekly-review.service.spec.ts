@@ -7,6 +7,7 @@ describe("WeeklyReviewService", () => {
       create: jest.Mock;
       findFirst: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
     };
     user: { update: jest.Mock };
   };
@@ -44,6 +45,7 @@ describe("WeeklyReviewService", () => {
         create: jest.fn().mockResolvedValue({ id: "wr-1" }),
         findFirst: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       user: { update: jest.fn().mockResolvedValue({}) },
     };
@@ -144,6 +146,22 @@ describe("WeeklyReviewService", () => {
       expect(sent).toBe(false);
       expect(whatsapp.sendInteractiveButtons).not.toHaveBeenCalled();
     });
+
+    it("completes leftover AWAITING_LIMIT from an earlier week before sending", async () => {
+      await service.sendReview(user, sunday);
+
+      expect(prisma.weeklyReview.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: "user-1",
+            status: WeeklyReviewStatus.AWAITING_LIMIT,
+          }),
+          data: expect.objectContaining({
+            status: WeeklyReviewStatus.COMPLETED,
+          }),
+        }),
+      );
+    });
   });
 
   describe("keep vs adjust", () => {
@@ -218,7 +236,11 @@ describe("WeeklyReviewService", () => {
       await service.handleLimitText(user, review, "a bit more", sunday);
 
       expect(prisma.user.update).not.toHaveBeenCalled();
-      expect(prisma.weeklyReview.update).not.toHaveBeenCalled();
+      expect(prisma.weeklyReview.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { status: WeeklyReviewStatus.AWAITING_LIMIT },
+        }),
+      );
       expect(allSent()).toContain("didn't read as an amount");
     });
 
@@ -262,6 +284,62 @@ describe("WeeklyReviewService", () => {
           }),
         }),
       );
+    });
+  });
+
+  describe("leaving an unanswered Adjust", () => {
+    const fresh = {
+      id: "wr-1",
+      status: WeeklyReviewStatus.AWAITING_LIMIT,
+      createdAt: sunday,
+      updatedAt: sunday,
+    } as any;
+
+    it("returns a still-open wait", async () => {
+      prisma.weeklyReview.findFirst.mockResolvedValue(fresh);
+
+      const found = await service.getReviewAwaitingLimit("user-1", sunday);
+
+      expect(found).toEqual(fresh);
+      expect(prisma.weeklyReview.update).not.toHaveBeenCalled();
+    });
+
+    it("completes a wait older than 24 hours and returns null", async () => {
+      prisma.weeklyReview.findFirst.mockResolvedValue({
+        ...fresh,
+        updatedAt: new Date(sunday.getTime() - 25 * 60 * 60 * 1000),
+      });
+
+      const found = await service.getReviewAwaitingLimit("user-1", sunday);
+
+      expect(found).toBeNull();
+      expect(prisma.weeklyReview.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: WeeklyReviewStatus.COMPLETED,
+          }),
+        }),
+      );
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+    });
+
+    it("silent abandon completes with no outbound text", async () => {
+      await service.abandonAwaitingLimit(user, fresh, { ack: false }, sunday);
+
+      expect(prisma.weeklyReview.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: WeeklyReviewStatus.COMPLETED,
+          }),
+        }),
+      );
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+    });
+
+    it("acked abandon tells them limits stay as they are", async () => {
+      await service.abandonAwaitingLimit(user, fresh, { ack: true }, sunday);
+
+      expect(allSent()).toContain("keep the current limits");
     });
   });
 });
