@@ -19,7 +19,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   let weeklyReview: {
     getReviewAwaitingLimit: jest.Mock;
     handleChoice: jest.Mock;
-    handleLimitText: jest.Mock;
+    handleLimitAmount: jest.Mock;
     abandonAwaitingLimit: jest.Mock;
   };
   let orchestrator: { handleMessage: jest.Mock };
@@ -98,7 +98,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     weeklyReview = {
       getReviewAwaitingLimit: jest.fn().mockResolvedValue(null),
       handleChoice: jest.fn().mockResolvedValue(undefined),
-      handleLimitText: jest.fn().mockResolvedValue(undefined),
+      handleLimitAmount: jest.fn().mockResolvedValue(undefined),
       abandonAwaitingLimit: jest.fn().mockResolvedValue(undefined),
     };
     pinGate = { handlePinFlowReply: jest.fn() };
@@ -339,41 +339,39 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       });
     });
 
-    it("sends a parseable amount to handleLimitText and does not orchestrate", async () => {
-      await service.route(makeMessage("7000"));
+    it.each(["7000", "7000 naira", "make it 7k", "7000 a day", "Seven thousand."])(
+      "reads %p as the answer it plainly is",
+      async (answer) => {
+        await service.route(makeMessage(answer));
 
-      expect(weeklyReview.handleLimitText).toHaveBeenCalledWith(
-        user,
-        awaiting,
-        "7000",
-      );
-      expect(weeklyReview.abandonAwaitingLimit).not.toHaveBeenCalled();
-      expect(orchestrator.handleMessage).not.toHaveBeenCalled();
-    });
+        expect(weeklyReview.handleLimitAmount).toHaveBeenCalledWith(
+          user,
+          awaiting,
+          7000,
+        );
+        expect(weeklyReview.abandonAwaitingLimit).not.toHaveBeenCalled();
+        expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+      },
+    );
 
-    it("abandons silently on a greeting and continues to the orchestrator", async () => {
-      await service.route(makeMessage("Hi"));
+    /**
+     * The wait is still dropped for anything that is not an answer — otherwise
+     * the review traps ordinary chat — but the user is told, which is the part
+     * that was missing.
+     */
+    it.each(["Hi", "what's the balance"])(
+      "tells the user before dropping the wait on %p, then carries on",
+      async (message) => {
+        await service.route(makeMessage(message));
 
-      expect(weeklyReview.handleLimitText).not.toHaveBeenCalled();
-      expect(weeklyReview.abandonAwaitingLimit).toHaveBeenCalledWith(
-        user,
-        awaiting,
-        { ack: false },
-      );
-      expect(orchestrator.handleMessage).toHaveBeenCalledWith(user, "Hi", {});
-    });
-
-    it("abandons silently on a balance question and continues to the orchestrator", async () => {
-      await service.route(makeMessage("what's the balance"));
-
-      expect(weeklyReview.handleLimitText).not.toHaveBeenCalled();
-      expect(weeklyReview.abandonAwaitingLimit).toHaveBeenCalledWith(
-        user,
-        awaiting,
-        { ack: false },
-      );
-      expect(orchestrator.handleMessage).toHaveBeenCalled();
-    });
+        expect(weeklyReview.handleLimitAmount).not.toHaveBeenCalled();
+        expect(weeklyReview.abandonAwaitingLimit).toHaveBeenCalledWith(
+          user,
+          awaiting,
+        );
+        expect(orchestrator.handleMessage).toHaveBeenCalled();
+      },
+    );
 
     it("acks cancel and does not orchestrate", async () => {
       await service.route(makeMessage("nevermind"));
@@ -381,10 +379,39 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       expect(weeklyReview.abandonAwaitingLimit).toHaveBeenCalledWith(
         user,
         awaiting,
-        { ack: true },
       );
-      expect(weeklyReview.handleLimitText).not.toHaveBeenCalled();
+      expect(weeklyReview.handleLimitAmount).not.toHaveBeenCalled();
       expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not claim something went through after dropping the wait", async () => {
+      // "thanks" is a short completion ack, so the old code dropped the review
+      // silently and then said "glad that went through." — a claim of success
+      // for the thing it had just discarded.
+      await service.route(makeMessage("thanks"));
+
+      expect(whatsapp.sendText).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining("went through"),
+        expect.anything(),
+      );
+    });
+
+    it("lets an active bill wizard have its own amount and its own cancel", async () => {
+      // The review branch used to run first, so "500" for an airtime purchase
+      // was rejected as too low a daily limit and "cancel" acked the review
+      // while the wizard stayed live to swallow the next number typed.
+      billPaymentActions.getActiveDraft.mockResolvedValue({
+        id: "bill-1",
+        step: "AWAITING_AMOUNT",
+      });
+
+      await service.route(makeMessage("500"));
+      expect(billPaymentActions.handleWizardText).toHaveBeenCalled();
+      expect(weeklyReview.handleLimitAmount).not.toHaveBeenCalled();
+
+      await service.route(makeMessage("cancel"));
+      expect(billPaymentActions.cancelDraft).toHaveBeenCalled();
     });
   });
 
@@ -509,8 +536,39 @@ describe("WhatsappRouterService — orchestrator free text", () => {
             mimeType: "image/jpeg",
             data: Buffer.from("jpeg-bytes").toString("base64"),
           },
+          // A captioned photo is real user text, so it is not synthetic.
+          syntheticText: false,
         },
       );
+    });
+
+    /**
+     * A captionless photo arrives as the literal "(user sent a photo)", which
+     * is not an answer to anything — but it is not an amount either, so it used
+     * to close an open weekly-limit wait silently on its way past.
+     */
+    it("does not let a captionless photo answer the weekly-limit question", async () => {
+      weeklyReview.getReviewAwaitingLimit.mockResolvedValue({ id: "wr-1" });
+      whatsapp.downloadMedia.mockResolvedValue({
+        buffer: Buffer.from("jpeg-bytes"),
+        mimeType: "image/jpeg",
+      });
+      orchestrator.handleMessage.mockResolvedValue({
+        message: "got it",
+        actionType: "reply_only",
+        ok: true,
+      });
+
+      await service.route({
+        id: "m-img",
+        type: WhatsappMessageType.IMAGE,
+        fromNumber: "234801",
+        mediaId: "img-1",
+        textBody: "",
+      } as any);
+
+      expect(weeklyReview.getReviewAwaitingLimit).not.toHaveBeenCalled();
+      expect(weeklyReview.abandonAwaitingLimit).not.toHaveBeenCalled();
     });
   });
 });

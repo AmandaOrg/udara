@@ -32,7 +32,12 @@ export const CANCEL_BILL_PREFIX = "cancel_bill:";
 export const MIN_AIRTIME_AMOUNT = 50;
 export const MAX_AIRTIME_AMOUNT = 50_000;
 
-export const BILL_CANCEL_WORDS = /^(cancel|stop|nevermind|never mind)$/i;
+/**
+ * @deprecated Use `isCancelWord` from `common/cancel-words.util`. Kept as a
+ * re-export so nothing breaks; there were three byte-identical copies of this
+ * regex, and widening one silently changed what aborted an unrelated flow.
+ */
+export { CANCEL_WORDS as BILL_CANCEL_WORDS } from "../common/cancel-words.util";
 
 export function findAirtimeTelco(billerCode: string) {
   return AIRTIME_TELCOS.find((t) => t.billerCode === billerCode);

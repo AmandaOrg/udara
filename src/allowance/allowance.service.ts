@@ -295,6 +295,39 @@ export class AllowanceService {
     });
   }
 
+  /**
+   * Applies a mid-week limit override to the day already in progress, and
+   * reports how many days of the WAT week remain.
+   *
+   * The weekly review's "Adjust limits" wait stays open into Monday, and an
+   * answer given then is about the week already running. But today's
+   * DailyAllowance row was created at the midnight boundary from the *old*
+   * plan, and getOrCreateTodayAllowance returns an existing row untouched — so
+   * the user was told "done, ₦7,000 a day" while today stayed at the old
+   * figure, and the quoted weekly total counted seven days of a week that had
+   * already started.
+   *
+   * Spend already made today is preserved; only the allocation changes.
+   */
+  async applyLimitOverrideToToday(
+    userId: string,
+    amount: number,
+    now: Date = new Date(),
+  ): Promise<number> {
+    const today = watDateBucketKey(now);
+    await this.prisma.dailyAllowance.updateMany({
+      where: { userId, date: today },
+      data: { amountAllocated: amount },
+    });
+
+    // WAT ISO week starts Monday. Whole days from today to Sunday inclusive.
+    const weekStart = startOfWatIsoWeekBucketKey(today);
+    const dayOfWeek = Math.round(
+      (today.getTime() - weekStart.getTime()) / (24 * 60 * 60 * 1000),
+    );
+    return Math.max(1, 7 - dayOfWeek);
+  }
+
   /** Same idempotency rules as recordSpend, for bill/airtime payments. */
   async recordBillPaymentSpend(billPaymentId: string) {
     const payment = await this.prisma.billPayment.findUniqueOrThrow({

@@ -20,6 +20,13 @@ export type ProposeActionType =
 
 export type OrchestratorTurnOptions = {
   image?: LlmImagePart;
+  /**
+   * True when `text` is a placeholder the router invented rather than words the
+   * user typed — a captionless photo arrives as "(user sent a photo)". Paths
+   * that treat an utterance as an *answer to a question we asked* must skip it,
+   * or a photo silently answers, and closes, the weekly-limit wait.
+   */
+  syntheticText?: boolean;
 };
 
 /**

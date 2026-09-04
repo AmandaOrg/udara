@@ -26,18 +26,22 @@ Sunday recap, Keep vs Adjust, and a valid in-range number still work as today.
 
 After **Adjust limits**:
 
-- A parseable amount in range is applied for the coming week only, then the check-in is done.
-- Too low or more than double the plan: Udara says so and still waits for another number (they can retry up to the stated ceiling).
-- `cancel`, `stop`, or `nevermind`: Udara keeps the current limits, says so, and does not also answer as if this were a new chat turn.
-- Any other text that is not an amount (greetings, “what’s the balance”, “I want to send money”, menu words): the limit prompt is dropped with no extra “didn’t read as an amount” line. The same message is handled as a normal post-onboarding turn.
-- If they never send a valid amount within **24 hours** of the last Adjust (or last too-low / too-high retry), the wait expires. Limits stay as they were. The next message is a normal turn.
-- A new Sunday recap closes any leftover wait from an earlier week so that recap’s buttons are not sitting behind an old number prompt.
+- An amount is read the way people write one: `5000`, `5k`, `₦5,000`, `5000 naira`, `5000 a day`, `make it 5k`, `7000/day`, and a voice note transcribed as `Five thousand.` all count. Only the weekly review is this forgiving; wizard amount entry stays strict, because guessing an amount out of prose there would move money the user did not ask to move.
+- An in-range amount applies for the rest of the current week, then the check-in is done. Answering on Monday adjusts that same day, and the total quoted back counts the days actually left rather than always seven.
+- Too low or more than double the plan: Udara says so and still waits for another number.
+- `cancel`, `stop`, or `nevermind`: Udara keeps the current limits and says so.
+- Any other text: Udara says the limits are staying as they are, then handles the message normally. It is never dropped silently — a mistyped limit used to vanish with no trace, and re-tapping the button answered "that check-in has already been answered".
+- A photo or a voice note is never treated as an answer. A captionless photo in particular is not an amount and no longer closes the wait on its way past.
+- An active airtime, data, electricity or transfer wizard takes precedence. A number typed for a wizard is that wizard's, and `cancel` cancels the wizard, not the check-in.
+- If no valid amount arrives within **24 hours** of the last Adjust or retry, the wait expires quietly and limits stay as they were.
+- Only the current week's recap is answerable. An untapped bubble from a previous Sunday is not, because an override set from it would apply to a week already ending.
 
 ## Edge cases
 
 - A number sent while the wait is still open is a limit, not a transfer amount. Diverting (non-amount) closes the wait first so a later `5000` can be a send.
 - Completing without a new limit is the same as Keep: no weekly override.
-- Stuck users unstick on the first non-amount message after this ships; no one has to send a number to escape.
+- Stuck users unstick on the first non-amount message; no one has to send a number to escape.
+- Short acknowledgements like "thanks" do not produce "glad that went through" after the wait was dropped, since nothing went through.
 
 ## Safety / PII
 

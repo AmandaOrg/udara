@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { isCancelWord } from "../common/cancel-words.util";
 import { AllowanceService } from "../allowance/allowance.service";
 import { WindowService } from "../allowance/window.service";
 import { RubiesService } from "../rubies/rubies.service";
@@ -50,7 +51,7 @@ export const MENU_OVERVIEW = `i can help with:
 
 tap open menu if you want a button for any of those.`;
 
-const CANCEL_WORDS = /^(cancel|stop|nevermind|never mind)$/i;
+
 
 const LABEL_ROWS = [
   { id: `${LABEL_BUTTON_PREFIX}RENT`, title: "🏠 Rent" },
@@ -616,7 +617,7 @@ export class AccountActionsService {
     draftId: string,
     text: string,
   ): Promise<"handled" | "interrupt"> {
-    if (CANCEL_WORDS.test(text.trim())) {
+    if (isCancelWord(text)) {
       await this.cancelDraft(user, draftId);
       return "handled";
     }

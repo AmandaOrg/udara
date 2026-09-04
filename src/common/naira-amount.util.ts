@@ -91,3 +91,40 @@ function parseWordAmount(t: string): number | null {
   if (thousand || kSuffix) sum *= 1000;
   return sum;
 }
+
+/**
+ * A forgiving parser for one specific question: "what daily limit do you want?"
+ *
+ * `parseNairaAmount` above is deliberately strict, and must stay that way — it
+ * decides what a *wizard* does with free text, where guessing an amount out of
+ * prose would be a way to move money the user did not ask to move. Its own spec
+ * pins that contract.
+ *
+ * The weekly review is the opposite situation. The user has just tapped
+ * "Adjust limits" and been asked for a number, so a number is exactly what they
+ * are giving. Rejecting "5000 naira", "make it 5k" or a voice note transcribed
+ * as "Five thousand." meant silently discarding an answer to a question we
+ * asked, which is worse than reading it generously.
+ *
+ * Only used where the user has already been asked for an amount.
+ */
+export function parseLimitAnswer(raw: unknown): number | null {
+  if (typeof raw !== "string") return parseNairaAmount(raw);
+
+  const cleaned = raw
+    .toLowerCase()
+    .trim()
+    // Leading intent: "make it 5k", "let's do 5000", "i want 5000"
+    .replace(/^(make it|lets do|let's do|i want|do|set it to|set|use)\s+/, "")
+    // Currency, written any of the ways people write it
+    .replace(/(₦|\bngn\b|\bnaira\b|\bbucks\b)/g, " ")
+    // Per-day suffixes, including "/day"
+    .replace(/\s*(\/|per\s+|a\s+)?\s*(day|daily)\b/g, " ")
+    .replace(/\bplease\b|\babeg\b|\bpls\b/g, " ")
+    // Trailing punctuation, which is what smart-formatted transcripts add
+    .replace(/[.!?,]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return parseNairaAmount(cleaned);
+}

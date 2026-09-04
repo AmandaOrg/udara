@@ -55,7 +55,8 @@ import {
 } from "./whatsapp-message.service";
 import { isMenuShortcut, menuPayloadFromUtterance } from "./menu-shortcut.util";
 import { isShortCompletionAck } from "../orchestrator/transfer-hints.util";
-import { parseNairaAmount } from "../common/naira-amount.util";
+import { parseLimitAnswer } from "../common/naira-amount.util";
+import { isCancelWord } from "../common/cancel-words.util";
 import { DeepgramService } from "./deepgram.service";
 import { InboundRateLimitService } from "./inbound-rate-limit.service";
 import { OrchestratorTurnOptions } from "../orchestrator/orchestrator.types";
@@ -228,7 +229,8 @@ export class WhatsappRouterService {
     }
     try {
       const { buffer, mimeType } = await this.whatsapp.downloadMedia(mediaId);
-      const text = caption || "(user sent a photo)";
+      const syntheticText = caption.length === 0;
+    const text = caption || "(user sent a photo)";
       let image: OrchestratorTurnOptions["image"];
       if (buffer.length > 0 && buffer.length <= VISION_MAX_BYTES) {
         image = {
@@ -236,7 +238,7 @@ export class WhatsappRouterService {
           data: buffer.toString("base64"),
         };
       }
-      await this.handleUserUtterance(user, text, { image });
+      await this.handleUserUtterance(user, text, { image, syntheticText });
     } catch (err) {
       this.logger.warn(`Image download failed: ${String(err)}`);
       await this.whatsapp.sendText(
@@ -487,25 +489,6 @@ export class WhatsappRouterService {
       return;
     }
 
-    const awaitingLimit = await this.weeklyReview.getReviewAwaitingLimit(
-      user.id,
-    );
-    if (awaitingLimit) {
-      if (BILL_CANCEL_WORDS.test(text.trim())) {
-        await this.weeklyReview.abandonAwaitingLimit(user, awaitingLimit, {
-          ack: true,
-        });
-        return;
-      }
-      if (parseNairaAmount(text) != null) {
-        await this.weeklyReview.handleLimitText(user, awaitingLimit, text);
-        return;
-      }
-      await this.weeklyReview.abandonAwaitingLimit(user, awaitingLimit, {
-        ack: false,
-      });
-    }
-
     if (isMenuShortcut(text)) {
       await this.accountActions.sendMainMenu(user);
       return;
@@ -519,7 +502,7 @@ export class WhatsappRouterService {
 
     const billDraft = await this.billPaymentActions.getActiveDraft(user.id);
     if (billDraft) {
-      if (BILL_CANCEL_WORDS.test(text.trim())) {
+      if (isCancelWord(text)) {
         await this.billPaymentActions.cancelDraft(user, billDraft.id);
         return;
       }
@@ -547,7 +530,46 @@ export class WhatsappRouterService {
       return;
     }
 
-    if (isShortCompletionAck(text) && !billDraft && !transferDraft) {
+    // The weekly-review wait is checked *after* the wizards, not before.
+    // Running it first meant a "500" typed for an airtime purchase was read as
+    // a daily limit and rejected as too low, and a "cancel" meant for that
+    // wizard acknowledged the review instead and left the wizard live to
+    // swallow the next number the user typed.
+    //
+    // Synthetic text is skipped entirely: a captionless photo arrives as the
+    // literal "(user sent a photo)", which is not an answer to anything.
+    let abandonedReview = false;
+    if (!options.syntheticText) {
+      const awaitingLimit = await this.weeklyReview.getReviewAwaitingLimit(
+        user.id,
+      );
+      if (awaitingLimit) {
+        if (isCancelWord(text)) {
+          await this.weeklyReview.abandonAwaitingLimit(user, awaitingLimit);
+          return;
+        }
+        const amount = parseLimitAnswer(text);
+        if (amount != null) {
+          await this.weeklyReview.handleLimitAmount(user, awaitingLimit, amount);
+          return;
+        }
+        // Not an answer, so drop the wait — but say so, and carry on with the
+        // utterance. Dropping it silently is what made a mistyped limit vanish
+        // with no trace and no way to retry.
+        await this.weeklyReview.abandonAwaitingLimit(user, awaitingLimit);
+        abandonedReview = true;
+      }
+    }
+
+    // `abandonedReview` suppresses this: having just told the user their limits
+    // are unchanged, "glad that went through." is both a non-sequitur and a
+    // claim that something succeeded when nothing did.
+    if (
+      isShortCompletionAck(text) &&
+      !billDraft &&
+      !transferDraft &&
+      !abandonedReview
+    ) {
       await this.whatsapp.sendText(
         user.whatsappNumber,
         "glad that went through.",

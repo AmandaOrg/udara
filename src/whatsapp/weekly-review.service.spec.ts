@@ -1,3 +1,4 @@
+import { parseLimitAnswer } from "../common/naira-amount.util";
 import { WeeklyReviewService } from "./weekly-review.service";
 import { Prisma, RecipientLabel, WeeklyReviewStatus } from "@prisma/client";
 
@@ -14,6 +15,7 @@ describe("WeeklyReviewService", () => {
   let allowance: {
     getOrCreateTodayAllowance: jest.Mock;
     computePlannedDailyAmount: jest.Mock;
+    applyLimitOverrideToToday: jest.Mock;
   };
   let spendSummary: { getWeeklySummary: jest.Mock };
   let whatsapp: { sendText: jest.Mock; sendInteractiveButtons: jest.Mock };
@@ -45,7 +47,9 @@ describe("WeeklyReviewService", () => {
         create: jest.fn().mockResolvedValue({ id: "wr-1" }),
         findFirst: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        // Completion is a claim now, so count 1 means this caller won it.
+        // The sendReview sweep is the one place a zero count is normal.
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       user: { update: jest.fn().mockResolvedValue({}) },
     };
@@ -55,6 +59,8 @@ describe("WeeklyReviewService", () => {
         .fn()
         .mockResolvedValue({ amountAllocated: 15_000 }),
       computePlannedDailyAmount: jest.fn().mockReturnValue(15_000),
+      // Returns days left in the WAT week; 7 on a Sunday answer.
+      applyLimitOverrideToToday: jest.fn().mockResolvedValue(7),
     };
     spendSummary = {
       getWeeklySummary: jest.fn().mockResolvedValue({
@@ -150,17 +156,21 @@ describe("WeeklyReviewService", () => {
     it("completes leftover AWAITING_LIMIT from an earlier week before sending", async () => {
       await service.sendReview(user, sunday);
 
-      expect(prisma.weeklyReview.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            userId: "user-1",
-            status: WeeklyReviewStatus.AWAITING_LIMIT,
-          }),
-          data: expect.objectContaining({
-            status: WeeklyReviewStatus.COMPLETED,
-          }),
-        }),
+      // Asserts the week exclusion too. Without it this passed even if the
+      // sweep had completed *this* week's own open wait, which is the one row
+      // it must never touch.
+      const sweep = prisma.weeklyReview.updateMany.mock.calls.find(
+        (c: any[]) => c[0].where?.status === WeeklyReviewStatus.AWAITING_LIMIT,
       );
+      expect(sweep).toBeDefined();
+      expect(sweep![0].where).toMatchObject({
+        userId: "user-1",
+        status: WeeklyReviewStatus.AWAITING_LIMIT,
+        weekStartDate: { not: expect.any(Date) },
+      });
+      expect(sweep![0].data).toMatchObject({
+        status: WeeklyReviewStatus.COMPLETED,
+      });
     });
   });
 
@@ -173,9 +183,11 @@ describe("WeeklyReviewService", () => {
     });
 
     it("'keep' completes the review and writes no override", async () => {
-      await service.handleChoice(user, "weekly:keep");
+      await service.handleChoice(user, "weekly:keep", sunday);
 
-      expect(prisma.weeklyReview.update).toHaveBeenCalledWith(
+      // Completion is a claim, so Keep and the abandon path share one write
+      // shape rather than each hand-rolling their own.
+      expect(prisma.weeklyReview.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             status: WeeklyReviewStatus.COMPLETED,
@@ -213,7 +225,7 @@ describe("WeeklyReviewService", () => {
     } as any;
 
     it("accepts a plain number and scopes the override to the coming week", async () => {
-      await service.handleLimitText(user, review, "12000", sunday);
+      await service.handleLimitAmount(user, review, 12_000, sunday);
 
       const data = prisma.user.update.mock.calls[0][0].data;
       expect(Number(data.dailyLimitOverride)).toBe(12_000);
@@ -226,26 +238,28 @@ describe("WeeklyReviewService", () => {
     });
 
     it("tolerates naira signs and separators", async () => {
-      await service.handleLimitText(user, review, "₦12,000", sunday);
+      await service.handleLimitAmount(user, review, 12_000, sunday);
       expect(
         Number(prisma.user.update.mock.calls[0][0].data.dailyLimitOverride),
       ).toBe(12_000);
     });
 
-    it("rejects non-numeric input and leaves the review open to retry", async () => {
-      await service.handleLimitText(user, review, "a bit more", sunday);
-
-      expect(prisma.user.update).not.toHaveBeenCalled();
-      expect(prisma.weeklyReview.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { status: WeeklyReviewStatus.AWAITING_LIMIT },
-        }),
-      );
-      expect(allSent()).toContain("didn't read as an amount");
+    it("tolerates the phrasings people actually use", async () => {
+      // The strict wizard parser rejects all of these, which is why answering
+      // the question we asked used to close the review with no override and no
+      // message at all.
+      for (const [answer, expected] of [
+        ["12000 naira", 12_000],
+        ["make it 12k", 12_000],
+        ["12000 a day", 12_000],
+        ["twelve thousand.", 12_000],
+      ] as const) {
+        expect(parseLimitAnswer(answer)).toBe(expected);
+      }
     });
 
     it("rejects an implausibly low limit", async () => {
-      await service.handleLimitText(user, review, "5", sunday);
+      await service.handleLimitAmount(user, review, 5, sunday);
 
       expect(prisma.user.update).not.toHaveBeenCalled();
       expect(allSent()).toContain("too low");
@@ -253,7 +267,7 @@ describe("WeeklyReviewService", () => {
 
     it("refuses to let 'adjust limits' become 'switch discipline off'", async () => {
       // Ceiling is 2x the derived plan: 15,000 -> 30,000.
-      await service.handleLimitText(user, review, "500000", sunday);
+      await service.handleLimitAmount(user, review, 500_000, sunday);
 
       expect(prisma.user.update).not.toHaveBeenCalled();
       expect(allSent()).toContain("₦30,000");
@@ -268,22 +282,53 @@ describe("WeeklyReviewService", () => {
       });
       allowance.computePlannedDailyAmount.mockReturnValue(15_000);
 
-      await service.handleLimitText(user, review, "45000", sunday);
+      await service.handleLimitAmount(user, review, 45_000, sunday);
 
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
 
     it("marks the review completed and records the chosen limit", async () => {
-      await service.handleLimitText(user, review, "12000", sunday);
+      await service.handleLimitAmount(user, review, 12_000, sunday);
 
-      expect(prisma.weeklyReview.update).toHaveBeenCalledWith(
+      expect(prisma.weeklyReview.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: expect.objectContaining({
+            status: WeeklyReviewStatus.AWAITING_LIMIT,
+          }),
           data: expect.objectContaining({
             status: WeeklyReviewStatus.COMPLETED,
             newDailyLimit: 12_000,
           }),
         }),
       );
+    });
+
+    it("recomputes today's allowance when the answer lands mid-week", async () => {
+      // Monday. The wait stays open into Monday, but today's allowance row was
+      // already created at midnight from the old plan, and
+      // getOrCreateTodayAllowance returns an existing row untouched — so
+      // without this the user was told "done, ₦12,000 a day" while today
+      // stayed at the old figure.
+      const monday = new Date("2026-01-12T09:00:00Z");
+      allowance.applyLimitOverrideToToday.mockResolvedValue(7);
+
+      await service.handleLimitAmount(user, review, 12_000, monday);
+
+      expect(allowance.applyLimitOverrideToToday).toHaveBeenCalledWith(
+        "user-1",
+        12_000,
+        monday,
+      );
+    });
+
+    it("quotes the days actually left, not always seven", async () => {
+      const thursday = new Date("2026-01-15T09:00:00Z");
+      allowance.applyLimitOverrideToToday.mockResolvedValue(4);
+
+      await service.handleLimitAmount(user, review, 10_000, thursday);
+
+      expect(allSent()).toContain("₦40,000"); // 10,000 x 4 days left
+      expect(allSent()).toContain("4 days left this week");
     });
   });
 
@@ -304,42 +349,46 @@ describe("WeeklyReviewService", () => {
       expect(prisma.weeklyReview.update).not.toHaveBeenCalled();
     });
 
-    it("completes a wait older than 24 hours and returns null", async () => {
-      prisma.weeklyReview.findFirst.mockResolvedValue({
-        ...fresh,
-        updatedAt: new Date(sunday.getTime() - 25 * 60 * 60 * 1000),
-      });
+    it("does not return a wait older than 24 hours", async () => {
+      // Expiry is now a predicate on the query, not a write inside the getter.
+      // A stale row is simply invisible to routing, which is all the TTL was
+      // for — and a getter that mutated state could race a concurrent retry
+      // into re-arming a review another message had just closed.
+      prisma.weeklyReview.findFirst.mockResolvedValue(null);
 
       const found = await service.getReviewAwaitingLimit("user-1", sunday);
 
       expect(found).toBeNull();
-      expect(prisma.weeklyReview.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            status: WeeklyReviewStatus.COMPLETED,
-          }),
-        }),
-      );
-      expect(whatsapp.sendText).not.toHaveBeenCalled();
+      expect(prisma.weeklyReview.update).not.toHaveBeenCalled();
+      const where = prisma.weeklyReview.findFirst.mock.calls.at(-1)![0].where;
+      expect(where.updatedAt.gt).toBeInstanceOf(Date);
     });
 
-    it("silent abandon completes with no outbound text", async () => {
-      await service.abandonAwaitingLimit(user, fresh, { ack: false }, sunday);
-
-      expect(prisma.weeklyReview.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            status: WeeklyReviewStatus.COMPLETED,
-          }),
-        }),
-      );
-      expect(whatsapp.sendText).not.toHaveBeenCalled();
-    });
-
-    it("acked abandon tells them limits stay as they are", async () => {
-      await service.abandonAwaitingLimit(user, fresh, { ack: true }, sunday);
+    /**
+     * Abandoning silently was the worst bug in this flow: the user tapped
+     * "Adjust limits", typed something unreadable, and the whole thing
+     * evaporated with no override and no message — and a re-tap answered "that
+     * check-in has already been answered".
+     */
+    it("always tells the user their limits are unchanged", async () => {
+      await service.abandonAwaitingLimit(user, fresh, sunday);
 
       expect(allSent()).toContain("keep the current limits");
+      expect(prisma.weeklyReview.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: WeeklyReviewStatus.COMPLETED,
+          }),
+        }),
+      );
+    });
+
+    it("stays quiet when another handler already closed the review", async () => {
+      prisma.weeklyReview.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.abandonAwaitingLimit(user, fresh, sunday);
+
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
     });
   });
 });
