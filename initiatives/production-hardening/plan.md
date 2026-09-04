@@ -91,8 +91,10 @@ Scope narrowed after the design review: the Rubies response-semantics fix and HT
 
 ## Phase 2 — Money-path correctness
 
-**Status:** in progress
+**Status:** completed
 **Started:** 2026-09-04
+**Completed:** 2026-09-04
+**Owner:** Egwu David Samuel
 
 Sub-ordered per the design review. Each step is independently deployable and no intermediate state is worse than today.
 
@@ -106,8 +108,8 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 - [x] **2c** Recovery jobs: stuck bills, executed-but-unapplied spend, a daily abandoned-work report. Separate crons, `take` + `orderBy` + age bounds, in-process overlap guards
 - [x] **2d** Per-call HTTP timeouts: 10s interactive, 60s money movement, 20s background, plus a 30s module-level floor on all three bare `HttpModule` imports
 - [x] **2e** Rubies response type guard; `mapRubiesResponseCodeStrict` at the four money sites only; `listBanks` and `validateVasCustomer` degrade locally (C2)
-- [ ] **2f** Fee sweep lease with attempts, deterministic reference, 24h recovery cap (H7)
-- [ ] **2g** Re-quote at confirm on changed terms or age; `cancelPendingForUser` extended to `PENDING_PIN` (C4)
+- [x] **2f** Fee sweep lease with attempts, deterministic reference, 24h recovery cap (H7)
+- [x] **2g** Re-quote at confirm on changed terms or age; `cancelPendingForUser` extended to `PENDING_PIN` (C4)
 
 **Deviation from the sketch, on review advice:** the fee-sweep retry job is *not* in 2c. Its claim predicate needs the schema change from 2f (`feeSweepAttempts`, `feeSweepLastTryAt`) to be re-claimable at all, so it ships with 2f rather than ahead of it.
 
@@ -115,19 +117,21 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 
 ### Acceptance tests
 
-- [ ] Each transition bails on `count === 0` under a simulated concurrent claim
-- [ ] Two pending transfers cannot both consume the same headroom
-- [ ] An executed transfer whose side effects throw is recovered by the repair job
-- [ ] An HTML gateway body resolves to `PENDING`, leaving the row `CONFIRMED` for reconciliation
-- [ ] A bank-list failure still lets the wizard reply, rather than going silent
-- [ ] The fee retry job can re-claim a row it already attempted
+- [x] Each transition bails on `count === 0` under a simulated concurrent claim
+- [x] Two pending transfers cannot both consume the same headroom — enforced by the confirm-time re-quote in 2g rather than by rejection
+- [x] An executed transfer whose side effects throw is recovered by the repair job
+- [x] An HTML gateway body resolves to `PENDING`, leaving the row `CONFIRMED` for reconciliation
+- [x] A bank-list failure still lets the wizard reply, rather than going silent
+- [x] The fee retry job can re-claim a row it already attempted
 
 ### Progress log
 
 - 2026-09-04: **2a** landed. `claimStatus` helpers in both confirmation services; `applyTransferResult` / `applyBillPaymentResult` claim from `CONFIRMED` then refetch. Spec mocks gained `updateMany`; assertions rewritten from `update` to the claim shape. Commit `731d2c9`.
 - 2026-09-04: **2b** landed. Interactive `$transaction` with a conditional claim plus `{ increment }` on a `Decimal`; `getOrCreateTodayAllowance` catches P2002. Spec `$transaction` mock now accepts both forms. Added the first tests `recordBillPaymentSpend` has ever had.
 - 2026-09-04: **2c** landed. Three new jobs beside the existing transfer reconciler: bill-payment reconciliation via `queryVasTransaction` (which previously had no caller at all outside the service), allowance repair for `EXECUTED` rows with no spend recorded, and a daily report of work past the 7-day horizon. New spec file — the scheduler had none.
-- 2026-09-04: **2d + 2e** landed together, ordering constraint satisfied because 2c shipped first.
+- 2026-09-04: **2d + 2e** landed together, ordering constraint satisfied because 2c shipped first. Commit `91b4ae2`.
+- 2026-09-04: **2f + 2g** landed, completing the phase. Commit `a2f722c`. Migration `20260904120000_fee_sweep_lease` is additive but **unverified against a live database** — Docker was not running locally, so CI's `prisma migrate deploy` is the first real check.
+- 2026-09-04: Phase complete. 50 suites / 723 tests, up from 671 at the start of the initiative.
 
 ### Risk
 
@@ -299,7 +303,7 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 | Phase | Description | Status |
 | --- | --- | --- |
 | 1 | Log and webhook containment | completed |
-| 2 | Money-path correctness | not started |
+| 2 | Money-path correctness | completed |
 | 3 | Operability | not started |
 | 4 | Data layer, non-destructive | not started |
 | 5 | LLM safety | not started |
