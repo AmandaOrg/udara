@@ -16,7 +16,7 @@ import { EmailModule } from "../email/email.module";
   // too) so the webhook controller can read the daily/weekly figures for the
   // funded-celebration message.
   imports: [
-    HttpModule,
+    HttpModule.register({ timeout: 30_000, maxRedirects: 5 }),
     forwardRef(() => WhatsappModule),
     forwardRef(() => AllowanceModule),
     // The webhook controller emails the user on an incoming credit.

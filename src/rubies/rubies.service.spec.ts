@@ -1,6 +1,10 @@
 import { of, throwError } from "rxjs";
 import { AxiosError } from "axios";
-import { RubiesService, mapRubiesResponseCode } from "./rubies.service";
+import {
+  RubiesService,
+  mapRubiesResponseCode,
+  mapRubiesResponseCodeStrict,
+} from "./rubies.service";
 
 describe("mapRubiesResponseCode", () => {
   it('maps "00" to SUCCESS', () => {
@@ -15,6 +19,26 @@ describe("mapRubiesResponseCode", () => {
     "maps %p to FAILED (any other code)",
     (code) => {
       expect(mapRubiesResponseCode(code)).toBe("FAILED");
+    },
+  );
+});
+
+/**
+ * The strict variant exists because "we did not get an answer" and "the transfer
+ * failed" are opposite facts, and recording the second when the first is true is
+ * how a customer gets told nothing was deducted after their money left.
+ */
+describe("mapRubiesResponseCodeStrict", () => {
+  it("agrees with the plain mapping on every code Rubies actually documents", () => {
+    expect(mapRubiesResponseCodeStrict("00")).toBe("SUCCESS");
+    expect(mapRubiesResponseCodeStrict("09")).toBe("PENDING");
+    expect(mapRubiesResponseCodeStrict("25")).toBe("FAILED");
+  });
+
+  it.each([undefined, null, ""])(
+    "treats a missing code (%p) as PENDING, not FAILED",
+    (code) => {
+      expect(mapRubiesResponseCodeStrict(code)).toBe("PENDING");
     },
   );
 });
@@ -246,6 +270,50 @@ describe("RubiesService", () => {
       expect(result.responseMessage).toBe("Reversed");
     });
 
+    it("initiateTransfer reports PENDING, never FAILED, when the response carries no code", async () => {
+      // A 200 with a body that isn't the documented shape. FAILED here would tell
+      // the customer nothing was deducted and close the transfer permanently;
+      // PENDING keeps it alive for the reconciliation job to resolve.
+      http.post.mockReturnValue(of({ data: { reference: "REF-4" } }));
+
+      const result = await service.initiateTransfer({
+        fromAccountNumber: "111",
+        fromAccountName: "A",
+        toAccountNumber: "222",
+        toBankCode: "000005",
+        toAccountName: "B",
+        amount: 5000,
+        narration: "test",
+        idempotencyKey: "REF-4",
+      });
+
+      expect(result.status).toBe("PENDING");
+    });
+
+    it("sends money with a longer timeout than an interactive lookup", async () => {
+      http.post.mockReturnValue(
+        of({ data: { reference: "REF-5", responseCode: "00" } }),
+      );
+
+      await service.initiateTransfer({
+        fromAccountNumber: "111",
+        fromAccountName: "A",
+        toAccountNumber: "222",
+        toBankCode: "000005",
+        toAccountName: "B",
+        amount: 5000,
+        narration: "test",
+        idempotencyKey: "REF-5",
+      });
+
+      const [, , config] = http.post.mock.calls.at(-1) as [
+        string,
+        unknown,
+        { timeout: number },
+      ];
+      expect(config.timeout).toBe(60_000);
+    });
+
     it("queryTransferStatus (tsq) uses the same response-code mapping as initiateTransfer", async () => {
       http.post.mockReturnValue(of({ data: { responseCode: "90" } }));
       const result = await service.queryTransferStatus("REF-1");
@@ -290,6 +358,42 @@ describe("RubiesService", () => {
       http.post.mockReturnValue(throwError(() => new Error("ECONNREFUSED")));
       await expect(service.getBalance("0123456789")).rejects.toThrow(
         "Could not reach Rubies",
+      );
+    });
+
+    /**
+     * The failure this whole change exists for. A gateway in front of Rubies
+     * answers 502 with an HTML page. That body is truthy, so it used to be
+     * returned as if it were Rubies' own verdict; it has no responseCode, which
+     * mapped to FAILED, which told the customer nothing was deducted and marked
+     * the transfer terminal so nothing ever rechecked it. A 502 is exactly the
+     * case where the debit may already have landed.
+     */
+    it.each([
+      ["an HTML gateway page", "<html><body>502 Bad Gateway</body></html>"],
+      ["an error envelope with no responseCode", { error: "rate limited" }],
+      ["an empty object", {}],
+      ["a non-string responseCode", { responseCode: 0 }],
+    ])("throws rather than treating %s as a verdict", async (_label, body) => {
+      const axiosError = new AxiosError("Request failed with status code 502");
+      axiosError.response = { data: body, status: 502 } as any;
+      http.post.mockReturnValue(throwError(() => axiosError));
+
+      await expect(service.getBalance("0123456789")).rejects.toThrow(
+        "Could not reach Rubies",
+      );
+    });
+
+    it("still accepts a genuine Rubies error body, which does carry a code", async () => {
+      const axiosError = new AxiosError("Request failed with status code 400");
+      axiosError.response = {
+        data: { responseCode: "51", responseMessage: "Insufficient funds" },
+        status: 400,
+      } as any;
+      http.post.mockReturnValue(throwError(() => axiosError));
+
+      await expect(service.getBalance("0123456789")).rejects.toThrow(
+        "Insufficient funds",
       );
     });
   });

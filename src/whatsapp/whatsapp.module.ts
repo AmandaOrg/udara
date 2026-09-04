@@ -30,7 +30,7 @@ import { AiModule } from "../ai/ai.module";
 
 @Module({
   imports: [
-    HttpModule,
+    HttpModule.register({ timeout: 30_000, maxRedirects: 5 }),
     AiModule,
     OrchestratorModule,
     PinModule,

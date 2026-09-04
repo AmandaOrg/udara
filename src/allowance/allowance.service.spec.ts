@@ -4,6 +4,7 @@ import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
 import { TransactionStatus } from "@prisma/client";
+import { BillPaymentStatus } from "../prisma/bill-payment.enums";
 
 /**
  * Uses real WindowService/FeeCalculatorService (both pure/deterministic) and a
@@ -24,6 +25,11 @@ describe("AllowanceService", () => {
     transaction: {
       findUniqueOrThrow: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
+    };
+    billPayment: {
+      findUniqueOrThrow: jest.Mock;
+      updateMany: jest.Mock;
     };
     $transaction: jest.Mock;
   };
@@ -100,8 +106,20 @@ describe("AllowanceService", () => {
       transaction: {
         findUniqueOrThrow: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+      billPayment: {
+        findUniqueOrThrow: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      // recordSpend/recordBillPaymentSpend use the interactive form so the claim
+      // and the increment are one atomic unit; everything else still uses the
+      // array form. Support both, handing the callback this same mock as `tx`.
+      $transaction: jest.fn((arg: unknown) =>
+        typeof arg === "function"
+          ? (arg as (tx: unknown) => unknown)(prisma)
+          : Promise.all(arg as Promise<unknown>[]),
+      ),
     };
 
     service = new AllowanceService(
@@ -334,16 +352,35 @@ describe("AllowanceService", () => {
 
       const result = await service.recordSpend("txn-1");
 
-      expect(prisma.transaction.update).toHaveBeenCalledWith(
+      // Claimed on appliedToAllowanceAt being null, so a second caller for the
+      // same transaction cannot double-count the spend.
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: { id: "txn-1", appliedToAllowanceAt: null },
+        data: expect.objectContaining({ dailyAllowanceId: allowance.id }),
+      });
+      // An atomic increment, not a total computed from a stale read. Two spends
+      // on the same day previously both read amountSpent and both wrote their own
+      // total, so one of them silently vanished from the allowance.
+      expect(prisma.dailyAllowance.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "txn-1" },
-          data: expect.objectContaining({ dailyAllowanceId: allowance.id }),
+          data: { amountSpent: { increment: 500 } },
         }),
       );
-      expect(prisma.dailyAllowance.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { amountSpent: 1_500 } }),
-      );
       expect(result.amountSpent).toBe(1_500);
+    });
+
+    it("does not double-count when another caller claimed the spend first", async () => {
+      const transaction = makeTransaction({ amount: 500 });
+      const allowance = makeAllowance({ amountSpent: 1_000 });
+      prisma.transaction.findUniqueOrThrow.mockResolvedValue(transaction);
+      prisma.dailyAllowance.findUnique.mockResolvedValue(allowance);
+      prisma.transaction.updateMany.mockResolvedValue({ count: 0 });
+      prisma.dailyAllowance.findUniqueOrThrow.mockResolvedValue(allowance);
+
+      const result = await service.recordSpend("txn-1");
+
+      expect(prisma.dailyAllowance.update).not.toHaveBeenCalled();
+      expect(result.amountSpent).toBe(1_000);
     });
 
     it("is idempotent — a second call on an already-applied transaction is a no-op", async () => {
@@ -380,6 +417,71 @@ describe("AllowanceService", () => {
       prisma.dailyAllowance.findUnique.mockResolvedValue(null);
 
       await expect(service.recordSpend("txn-1")).rejects.toThrow();
+    });
+  });
+
+  /**
+   * Bill payments consume the same daily allowance as transfers, so the same
+   * claim-and-increment rules have to hold. This path had no coverage at all.
+   */
+  describe("recordBillPaymentSpend", () => {
+    function makeBillPayment(overrides: Partial<Record<string, unknown>> = {}) {
+      return {
+        id: "bill-1",
+        userId,
+        amount: 300,
+        status: BillPaymentStatus.EXECUTED,
+        createdAt: today,
+        appliedToAllowanceAt: null,
+        dailyAllowanceId: null,
+        ...overrides,
+      };
+    }
+
+    it("increments the day's allowance and claims the payment", async () => {
+      const allowance = makeAllowance({ amountSpent: 1_000 });
+      prisma.billPayment.findUniqueOrThrow.mockResolvedValue(makeBillPayment());
+      prisma.dailyAllowance.findUnique.mockResolvedValue(allowance);
+      prisma.dailyAllowance.update.mockResolvedValue({
+        ...allowance,
+        amountSpent: 1_300,
+      });
+
+      const result = await service.recordBillPaymentSpend("bill-1");
+
+      expect(prisma.billPayment.updateMany).toHaveBeenCalledWith({
+        where: { id: "bill-1", appliedToAllowanceAt: null },
+        data: expect.objectContaining({ dailyAllowanceId: allowance.id }),
+      });
+      expect(prisma.dailyAllowance.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { amountSpent: { increment: 300 } },
+        }),
+      );
+      expect(result.amountSpent).toBe(1_300);
+    });
+
+    it("does not double-count when another caller claimed it first", async () => {
+      const allowance = makeAllowance({ amountSpent: 1_000 });
+      prisma.billPayment.findUniqueOrThrow.mockResolvedValue(makeBillPayment());
+      prisma.dailyAllowance.findUnique.mockResolvedValue(allowance);
+      prisma.billPayment.updateMany.mockResolvedValue({ count: 0 });
+      prisma.dailyAllowance.findUniqueOrThrow.mockResolvedValue(allowance);
+
+      await service.recordBillPaymentSpend("bill-1");
+
+      expect(prisma.dailyAllowance.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses to record spend for a payment that has not executed", async () => {
+      prisma.billPayment.findUniqueOrThrow.mockResolvedValue(
+        makeBillPayment({ status: BillPaymentStatus.PENDING_PIN }),
+      );
+
+      await expect(service.recordBillPaymentSpend("bill-1")).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.dailyAllowance.update).not.toHaveBeenCalled();
     });
   });
   describe("getRemainingSummary", () => {

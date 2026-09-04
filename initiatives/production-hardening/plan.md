@@ -91,22 +91,27 @@ Scope narrowed after the design review: the Rubies response-semantics fix and HT
 
 ## Phase 2 — Money-path correctness
 
-**Status:** not started
+**Status:** in progress
+**Started:** 2026-09-04
 
 Sub-ordered per the design review. Each step is independently deployable and no intermediate state is worse than today.
 
 ### Deliverables, in order
 
-- [ ] **2a** Conditional status claims on every transfer and bill transition (C5). The `PENDING_PIN → CONFIRMED` claim is the single highest-value line in this initiative
-- [ ] **2a** `applyTransferResult` claims only from `CONFIRMED` (claim, refetch, then side effects), closing the forged-webhook jump; unexpected status logged loudly, already-terminal silently
-- [ ] **2a** P2002 on `overrideHistory.create` handled as already-recorded
-- [ ] **2b** Allowance spend claimed atomically and incremented as a `Decimal`, not stale-read (H1)
-- [ ] **2b** `getOrCreateTodayAllowance` tolerates the create race
-- [ ] **2c** Recovery jobs: stuck bills, executed-but-unapplied spend, unresolved sweeps. Separate crons, advisory lock, `take` + `orderBy` + age bounds
-- [ ] **2d** Per-call HTTP timeouts: 10s interactive, 60s money movement, 20s background
-- [ ] **2e** Rubies response type guard; `mapRubiesResponseCodeStrict` at the four money sites only; `listBanks` and `validateVasCustomer` degrade locally (C2)
+- [x] **2a** Conditional status claims on every transfer and bill transition (C5). The `PENDING_PIN → CONFIRMED` claim is the single highest-value line in this initiative
+- [x] **2a** `applyTransferResult` claims only from `CONFIRMED` (claim, refetch, then side effects), closing the forged-webhook jump; unexpected status logged loudly, already-terminal silently
+- [x] **2a** P2002 on `overrideHistory.create` handled as already-recorded
+- [x] **2b** Allowance spend claimed atomically and incremented as a `Decimal`, not stale-read (H1)
+- [x] **2b** `getOrCreateTodayAllowance` tolerates the create race
+- [x] **2c** Recovery jobs: stuck bills, executed-but-unapplied spend, a daily abandoned-work report. Separate crons, `take` + `orderBy` + age bounds, in-process overlap guards
+- [x] **2d** Per-call HTTP timeouts: 10s interactive, 60s money movement, 20s background, plus a 30s module-level floor on all three bare `HttpModule` imports
+- [x] **2e** Rubies response type guard; `mapRubiesResponseCodeStrict` at the four money sites only; `listBanks` and `validateVasCustomer` degrade locally (C2)
 - [ ] **2f** Fee sweep lease with attempts, deterministic reference, 24h recovery cap (H7)
 - [ ] **2g** Re-quote at confirm on changed terms or age; `cancelPendingForUser` extended to `PENDING_PIN` (C4)
+
+**Deviation from the sketch, on review advice:** the fee-sweep retry job is *not* in 2c. Its claim predicate needs the schema change from 2f (`feeSweepAttempts`, `feeSweepLastTryAt`) to be re-claimable at all, so it ships with 2f rather than ahead of it.
+
+**Overlap guard:** in-process booleans for now, not a Postgres advisory lock. Correctness comes from the atomic claims in 2a — the webhook races these jobs regardless — so the guard is only load-shedding. Railway's zero-downtime deploys do overlap instances, so an advisory lock is still worth adding; recorded under Deferred rather than done.
 
 ### Acceptance tests
 
@@ -119,7 +124,10 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 
 ### Progress log
 
--
+- 2026-09-04: **2a** landed. `claimStatus` helpers in both confirmation services; `applyTransferResult` / `applyBillPaymentResult` claim from `CONFIRMED` then refetch. Spec mocks gained `updateMany`; assertions rewritten from `update` to the claim shape. Commit `731d2c9`.
+- 2026-09-04: **2b** landed. Interactive `$transaction` with a conditional claim plus `{ increment }` on a `Decimal`; `getOrCreateTodayAllowance` catches P2002. Spec `$transaction` mock now accepts both forms. Added the first tests `recordBillPaymentSpend` has ever had.
+- 2026-09-04: **2c** landed. Three new jobs beside the existing transfer reconciler: bill-payment reconciliation via `queryVasTransaction` (which previously had no caller at all outside the service), allowance repair for `EXECUTED` rows with no spend recorded, and a daily report of work past the 7-day horizon. New spec file — the scheduler had none.
+- 2026-09-04: **2d + 2e** landed together, ordering constraint satisfied because 2c shipped first.
 
 ### Risk
 

@@ -7,7 +7,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
-import { TransactionStatus, User } from "@prisma/client";
+import { Prisma, TransactionStatus, User } from "@prisma/client";
 import { BillPaymentStatus } from "../prisma/bill-payment.enums";
 import {
   watDateBucketKey,
@@ -105,15 +105,31 @@ export class AllowanceService {
           Number(yesterdayAllowance.amountSpent)
         : 0;
 
-    return this.prisma.dailyAllowance.create({
-      data: {
-        userId,
-        date: today,
-        weekStartDate: startOfWatIsoWeekBucketKey(today),
-        amountAllocated: dailyAmount,
-        surplusCarriedIn: Math.max(surplus, 0),
-      },
-    });
+    try {
+      return await this.prisma.dailyAllowance.create({
+        data: {
+          userId,
+          date: today,
+          weekStartDate: startOfWatIsoWeekBucketKey(today),
+          amountAllocated: dailyAmount,
+          surplusCarriedIn: Math.max(surplus, 0),
+        },
+      });
+    } catch (err) {
+      // @@unique([userId, date]). The midnight scheduler pre-creates today's row
+      // for every user while inbound messages create it lazily, so the two race
+      // at exactly 00:00 WAT. Losing that race is the correct outcome, not an
+      // error to throw out of initiateTransfer.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
+        return this.prisma.dailyAllowance.findUniqueOrThrow({
+          where: { userId_date: { userId, date: today } },
+        });
+      }
+      throw err;
+    }
   }
 
   /**
@@ -248,24 +264,35 @@ export class AllowanceService {
       );
     }
 
-    const [, updatedAllowance] = await this.prisma.$transaction([
-      this.prisma.transaction.update({
-        where: { id: transactionId },
+    // Interactive transaction, not the array form: the claim and the increment
+    // have to be one atomic unit. The `appliedToAllowanceAt` check above is a
+    // fast path read outside any transaction, so it cannot be the guard — the
+    // Rubies webhook and the reconciliation scheduler can both reach here for the
+    // same transaction and both pass it.
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.transaction.updateMany({
+        where: { id: transactionId, appliedToAllowanceAt: null },
         data: {
           appliedToAllowanceAt: new Date(),
           dailyAllowanceId: allowance.id,
         },
-      }),
-      this.prisma.dailyAllowance.update({
+      });
+      if (claimed.count === 0) {
+        // Another caller applied it between the read above and here.
+        return tx.dailyAllowance.findUniqueOrThrow({
+          where: { id: allowance.id },
+        });
+      }
+      return tx.dailyAllowance.update({
         where: { id: allowance.id },
-        data: {
-          amountSpent:
-            Number(allowance.amountSpent) + Number(transaction.amount),
-        },
-      }),
-    ]);
-
-    return updatedAllowance;
+        // `increment`, not a value computed from the row read above: two spends
+        // landing on the same day previously both read the same amountSpent and
+        // both wrote their own total, so one of them silently vanished from the
+        // allowance and the next evaluateSpend over-allowed. Passing the Decimal
+        // straight through — Number() would lose precision on Decimal(14,2).
+        data: { amountSpent: { increment: transaction.amount } },
+      });
+    });
   }
 
   /** Same idempotency rules as recordSpend, for bill/airtime payments. */
@@ -301,22 +328,24 @@ export class AllowanceService {
       );
     }
 
-    const [, updatedAllowance] = await this.prisma.$transaction([
-      this.prisma.billPayment.update({
-        where: { id: billPaymentId },
+    // Same claim-then-increment shape as recordSpend above.
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.billPayment.updateMany({
+        where: { id: billPaymentId, appliedToAllowanceAt: null },
         data: {
           appliedToAllowanceAt: new Date(),
           dailyAllowanceId: allowance.id,
         },
-      }),
-      this.prisma.dailyAllowance.update({
+      });
+      if (claimed.count === 0) {
+        return tx.dailyAllowance.findUniqueOrThrow({
+          where: { id: allowance.id },
+        });
+      }
+      return tx.dailyAllowance.update({
         where: { id: allowance.id },
-        data: {
-          amountSpent: Number(allowance.amountSpent) + Number(payment.amount),
-        },
-      }),
-    ]);
-
-    return updatedAllowance;
+        data: { amountSpent: { increment: payment.amount } },
+      });
+    });
   }
 }

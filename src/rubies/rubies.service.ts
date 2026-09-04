@@ -77,6 +77,44 @@ export function mapRubiesResponseCode(
   return "FAILED";
 }
 
+/**
+ * Same mapping, except that a *missing* code means "we do not know" rather than
+ * "it failed".
+ *
+ * Use this wherever recording a wrong FAILED would strand real money: a
+ * transfer, a VAS purchase, or either of their status queries. PENDING keeps the
+ * row alive for the reconciliation job; FAILED is terminal and tells the
+ * customer nothing was deducted.
+ *
+ * Deliberately a separate function rather than a change to the one above, which
+ * is also applied to webhook-supplied input and whose "anything else is failed"
+ * contract is pinned by its own tests.
+ */
+export function mapRubiesResponseCodeStrict(
+  code: string | undefined | null,
+): "SUCCESS" | "PENDING" | "FAILED" {
+  if (code == null || code === "") return "PENDING";
+  return mapRubiesResponseCode(code);
+}
+
+/** Does this body actually look like an answer from Rubies, or is it gateway noise? */
+function isRubiesResponseBody(data: unknown): data is RubiesApiResponse {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    typeof (data as RubiesApiResponse).responseCode === "string"
+  );
+}
+
+/**
+ * Timeouts by call class. A single flat value is wrong at both ends: 30s of
+ * silence mid-wizard is a bad experience, while aborting a fund transfer early
+ * costs a 2-minute wait plus a status query for no reason.
+ */
+const INTERACTIVE_TIMEOUT_MS = 10_000; // user is watching: name enquiry, balance, bank list
+const MONEY_TIMEOUT_MS = 60_000; // fund transfer, VAS purchase
+const BACKGROUND_TIMEOUT_MS = 20_000; // status queries, reconciliation
+
 interface RubiesApiResponse {
   responseCode?: string;
   responseMessage?: string;
@@ -125,6 +163,7 @@ export class RubiesService {
   private async post<T>(
     path: string,
     body: Record<string, unknown>,
+    options?: { timeoutMs?: number },
   ): Promise<T & RubiesApiResponse> {
     const url = `${this.baseUrl}/${this.stage}${path}`;
     type Response = T & RubiesApiResponse;
@@ -135,39 +174,65 @@ export class RubiesService {
             Authorization: this.authHeader,
             "Content-Type": "application/json",
           },
+          timeout: options?.timeoutMs ?? INTERACTIVE_TIMEOUT_MS,
         }),
       );
       return response.data;
     } catch (err) {
-      const axiosErr = err as AxiosError<Response>;
-      if (axiosErr.response?.data) {
-        // Rubies returns a structured {responseCode, responseMessage} body on most
-        // 4xx failures too — surface that instead of a bare HTTP error where possible.
-        return axiosErr.response.data;
-      }
-      this.logger.error(`Rubies request to ${path} failed: ${String(err)}`);
-      throw new Error("Could not reach Rubies. Please try again.");
+      return this.handleRequestError<Response>(err, "POST", path);
     }
   }
 
-  private async get<T>(path: string): Promise<T & RubiesApiResponse> {
+  private async get<T>(
+    path: string,
+    options?: { timeoutMs?: number },
+  ): Promise<T & RubiesApiResponse> {
     const url = `${this.baseUrl}/${this.stage}${path}`;
     type Response = T & RubiesApiResponse;
     try {
       const response = await firstValueFrom(
         this.http.get<Response>(url, {
           headers: { Authorization: this.authHeader },
+          timeout: options?.timeoutMs ?? INTERACTIVE_TIMEOUT_MS,
         }),
       );
       return response.data;
     } catch (err) {
-      const axiosErr = err as AxiosError<Response>;
-      if (axiosErr.response?.data) {
-        return axiosErr.response.data;
-      }
-      this.logger.error(`Rubies GET to ${path} failed: ${String(err)}`);
-      throw new Error("Could not reach Rubies. Please try again.");
+      return this.handleRequestError<Response>(err, "GET", path);
     }
+  }
+
+  /**
+   * Decides whether an HTTP error carries an answer from Rubies or is just
+   * noise, and it matters enormously which.
+   *
+   * Rubies returns a structured {responseCode, responseMessage} body on most 4xx
+   * failures, and surfacing that is genuinely better than a bare HTTP error. But
+   * the previous version returned `response.data` for *any* error with a body:
+   * a 502 HTML page from a gateway, a 429, an auth error. Those have no
+   * responseCode, and `mapRubiesResponseCode(undefined)` is FAILED — so a gateway
+   * hiccup on a fund-transfer told the customer "nothing was deducted" when the
+   * debit may well have landed, and marked the row terminal so nothing ever
+   * rechecked it.
+   *
+   * Only a body that actually looks like a Rubies answer is treated as one.
+   * Anything else throws, which leaves the transaction CONFIRMED for the
+   * reconciliation job — the same path a PENDING response already takes.
+   */
+  private handleRequestError<Response extends RubiesApiResponse>(
+    err: unknown,
+    method: string,
+    path: string,
+  ): Response {
+    const axiosErr = err as AxiosError<Response>;
+    const data = axiosErr.response?.data;
+    if (isRubiesResponseBody(data)) {
+      return data as Response;
+    }
+    this.logger.error(
+      `Rubies ${method} ${path} failed (status=${axiosErr.response?.status ?? "none"}): ${String(err)}`,
+    );
+    throw new Error("Could not reach Rubies. Please try again.");
   }
 
   /**
@@ -376,11 +441,11 @@ export class RubiesService {
       debitAccountName: params.fromAccountName,
       narration: params.narration,
       reference: params.idempotencyKey,
-    });
+    }, { timeoutMs: MONEY_TIMEOUT_MS });
 
     return {
       reference: response.reference ?? params.idempotencyKey,
-      status: mapRubiesResponseCode(response.responseCode),
+      status: mapRubiesResponseCodeStrict(response.responseCode),
       responseCode: response.responseCode ?? "",
       responseMessage: response.responseMessage,
       sessionId: response.sessionId,
@@ -405,11 +470,12 @@ export class RubiesService {
       {
         reference,
       },
+      { timeoutMs: BACKGROUND_TIMEOUT_MS },
     );
 
     return {
       reference,
-      status: mapRubiesResponseCode(response.responseCode),
+      status: mapRubiesResponseCodeStrict(response.responseCode),
       responseCode: response.responseCode ?? "",
       responseMessage: response.responseMessage,
     };
@@ -425,15 +491,26 @@ export class RubiesService {
       ];
     }
 
-    const response = await this.post<{
-      data?: { bankCode?: string; bankName?: string }[];
-    }>("/baas-transaction/bank-list", {});
+    // Degrades to an empty list rather than throwing. This is called unwrapped
+    // from five places in the transfer wizard, and a throw there reaches the
+    // controller, which logs it and marks the message FAILED — so the user gets
+    // no reply at all. An empty list produces "couldn't find that bank", which
+    // is a worse answer than the truth but a far better outcome than silence.
+    // No money is at stake on this path.
+    try {
+      const response = await this.post<{
+        data?: { bankCode?: string; bankName?: string }[];
+      }>("/baas-transaction/bank-list", {});
 
-    const rows = Array.isArray(response.data) ? response.data : [];
-    return rows.map((r) => ({
-      bankCode: r.bankCode ?? "",
-      bankName: r.bankName ?? "",
-    }));
+      const rows = Array.isArray(response.data) ? response.data : [];
+      return rows.map((r) => ({
+        bankCode: r.bankCode ?? "",
+        bankName: r.bankName ?? "",
+      }));
+    } catch (err) {
+      this.logger.error(`Rubies bank-list unavailable: ${String(err)}`);
+      return [];
+    }
   }
 
   /**
@@ -472,13 +549,13 @@ export class RubiesService {
       productCode: params.productCode,
       amount: `${params.amount}.0`,
       customerName: params.customerName,
-    });
+    }, { timeoutMs: MONEY_TIMEOUT_MS });
 
     return {
       requestReference:
         response.requestReference ?? params.requestReference,
       reference: response.reference ?? params.requestReference,
-      status: mapRubiesResponseCode(response.responseCode),
+      status: mapRubiesResponseCodeStrict(response.responseCode),
       responseCode: response.responseCode ?? "",
       responseMessage: response.responseMessage,
       vendorToken: extractVasToken(response),
@@ -502,15 +579,31 @@ export class RubiesService {
       };
     }
 
-    const response = await this.post<{
+    // Same reasoning as listBanks: a meter lookup is an interactive, non-money
+    // step, and "couldn't verify that meter" beats no reply at all.
+    let response: {
       customerName?: string;
       name?: string;
       data?: { customerName?: string; name?: string };
-    }>("/baas-vas/customerEnquiry", {
-      billerCode: params.billerCode,
-      productCode: params.productCode,
-      billerCustomerId: params.billerCustomerId,
-    });
+    } & RubiesApiResponse;
+    try {
+      response = await this.post<{
+        customerName?: string;
+        name?: string;
+        data?: { customerName?: string; name?: string };
+      }>("/baas-vas/customerEnquiry", {
+        billerCode: params.billerCode,
+        productCode: params.productCode,
+        billerCustomerId: params.billerCustomerId,
+      });
+    } catch (err) {
+      this.logger.error(`Rubies customerEnquiry unavailable: ${String(err)}`);
+      return {
+        ok: false,
+        responseCode: "",
+        responseMessage: "Customer lookup is unavailable right now.",
+      };
+    }
 
     const customerName =
       response.customerName ??
@@ -551,12 +644,14 @@ export class RubiesService {
       rechargeToken?: string;
       vendorToken?: string;
       extraData?: { token?: string; rechargeToken?: string };
-    }>(`/baas-vas/transaction-query/${encodeURIComponent(requestReference)}`);
+    }>(`/baas-vas/transaction-query/${encodeURIComponent(requestReference)}`, {
+      timeoutMs: BACKGROUND_TIMEOUT_MS,
+    });
 
     return {
       requestReference,
       reference: response.reference ?? requestReference,
-      status: mapRubiesResponseCode(response.responseCode),
+      status: mapRubiesResponseCodeStrict(response.responseCode),
       responseCode: response.responseCode ?? "",
       responseMessage: response.responseMessage,
       vendorToken: extractVasToken(response),

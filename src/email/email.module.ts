@@ -9,7 +9,12 @@ import { AllowanceModule } from "../allowance/allowance.module";
   // forwardRef: AllowanceModule pulls in WhatsappModule, which pulls in the
   // services that in turn send these emails — same circular pattern already
   // used between Whatsapp/Allowance/Rubies, resolved the same way.
-  imports: [HttpModule, forwardRef(() => AllowanceModule)],
+  imports: [
+    // Axios defaults to no timeout at all, so a hung Resend socket would block
+    // the caller until the OS gave up on the TCP connection.
+    HttpModule.register({ timeout: 30_000, maxRedirects: 5 }),
+    forwardRef(() => AllowanceModule),
+  ],
   providers: [EmailService, EmailNotificationsService, EmailScheduler],
   exports: [EmailService, EmailNotificationsService],
 })
