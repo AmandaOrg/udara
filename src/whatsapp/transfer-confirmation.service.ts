@@ -258,7 +258,26 @@ export class TransferConfirmationService {
     }
 
     // Never trust a locally-cached balance — a live check right before authorizing.
-    const balance = await this.rubies.getBalance(user.rubiesAccountNumber);
+    // A Rubies blip here used to throw all the way out to the controller, which
+    // logged it and marked the message FAILED, so the user tapped Confirm and got
+    // literal silence. The row is untouched at this point, so the Confirm button in
+    // chat is still live: tell them to tap it again.
+    const balance = await this.rubies
+      .getBalance(user.rubiesAccountNumber)
+      .catch((err) => {
+        this.logger.warn(
+          `confirmTransfer: balance check failed for ${transaction.id}: ${String(err)}`,
+        );
+        return null;
+      });
+    if (balance === null) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "i couldn't check your balance just now. tap confirm again in a moment.",
+        user.id,
+      );
+      return;
+    }
     const totalCost =
       Number(transaction.amount) + Number(transaction.feeAmount);
     if (balance < totalCost) {

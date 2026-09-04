@@ -21,6 +21,7 @@ Stakeholder-visible behavior for a feature. **What** happens and **why**, not cl
 | [WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md](WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md) | [whatsapp-media-and-spend-pushback](../../initiatives/whatsapp-media-and-spend-pushback/plan.md) |
 | [AI_MONEY_INTENTS_SPEC.md](AI_MONEY_INTENTS_SPEC.md) | [ai-money-intents](../../initiatives/ai-money-intents/plan.md) |
 | [WEEKLY_REVIEW_LIMIT_ESCAPE_SPEC.md](WEEKLY_REVIEW_LIMIT_ESCAPE_SPEC.md) | [weekly-review-limit-escape](../../initiatives/weekly-review-limit-escape/plan.md) |
+| [PRODUCTION_HARDENING_SPEC.md](PRODUCTION_HARDENING_SPEC.md) | [production-hardening](../../initiatives/production-hardening/plan.md) |
 
 ## New spec
 

@@ -21,7 +21,9 @@ Postgres is on host port **5433**, not 5432. `DATABASE_URL` in `.env.example` ma
 
 ## Environment
 
-Boot-time structural checks live in [`src/config/env.validation.ts`](../src/config/env.validation.ts). Secrets for WhatsApp, Rubies, and AI are optional at boot so local/stub mode can start; the services that need them fail clearly on first real call.
+Boot-time structural checks live in [`src/config/env.validation.ts`](../src/config/env.validation.ts). Secrets for Rubies API access and AI are optional at boot so local/stub mode can start; the services that need them fail clearly on first real call.
+
+The two **webhook signing** secrets are the exception, because blank does not mean "unavailable", it means "accept forged requests". The app refuses to boot with `WHATSAPP_APP_SECRET` or `RUBIES_SECRET_KEY` blank unless you opt in with `ALLOW_UNSIGNED_WEBHOOKS=true`.
 
 Canonical catalog: [`.env.example`](../.env.example). Do not commit `.env` or `.env.e2e`.
 
@@ -32,9 +34,12 @@ WHATSAPP_DRY_RUN=true
 RUBIES_DRY_RUN=true
 AI_PROVIDER=stub
 WHATSAPP_WEBHOOK_VERIFY_TOKEN=e2e-verify-token
+ALLOW_UNSIGNED_WEBHOOKS=true
 ```
 
-Leave `WHATSAPP_APP_SECRET` and `RUBIES_SECRET_KEY` blank only for unsigned local acceptance. Set them before pointing a real number or production Rubies webhooks at this process.
+`ALLOW_UNSIGNED_WEBHOOKS` must never be set in a deployed environment. It is not keyed off `NODE_ENV` on purpose: nothing in the Railway deployment sets `NODE_ENV`, since the `Dockerfile` that does is unused, so a `NODE_ENV` check would never fire where it matters.
+
+`LOG_LEVEL` names the most verbose level to emit (`error`, `warn`, `log`, `debug`, `verbose`) and defaults to `log`. Nest's own default enables `debug`, which is how an inbound-payload debug line came to print customer PINs in production. Raise it locally, never in a deployed environment.
 
 Inbound voice notes need `DEEPGRAM_API_KEY` on the **same process that receives the WhatsApp webhook** (local `.env` does not apply to Railway). Optional `DEEPGRAM_STT_MODEL` defaults to `nova-3`. Without the key, Udara asks the user to type. `WHATSAPP_DRY_RUN=true` still skips outbound Graph sends; inbound media download still runs so voice and photos can be understood.
 

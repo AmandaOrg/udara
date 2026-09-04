@@ -32,9 +32,10 @@ export class WhatsappSignatureGuard implements CanActivate {
     const appSecret = this.config.get<string>("WHATSAPP_APP_SECRET");
 
     if (!appSecret) {
-      // Dev-mode escape hatch: no real Meta App Secret configured yet (this is a
-      // personal-tool scaffold, not a production deployment). Loudly logged so this
-      // is never silently insecure — set WHATSAPP_APP_SECRET before going live.
+      // Local/e2e escape hatch, reachable only when ALLOW_UNSIGNED_WEBHOOKS=true:
+      // env validation refuses to boot without this secret otherwise (see
+      // config/env.validation.ts), so a deployed environment can no longer end up
+      // here by forgetting a variable.
       this.logger.warn(
         "WHATSAPP_APP_SECRET is not set — accepting this webhook request WITHOUT signature verification.",
       );

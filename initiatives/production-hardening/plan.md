@@ -1,0 +1,313 @@
+# Initiative: production hardening
+
+Companion spec: `docs/specs/PRODUCTION_HARDENING_SPEC.md`
+Companion tech design: `docs/tech-design/PRODUCTION_HARDENING_TECH.md`
+
+## How to use this document
+
+Living document. Update phase status, progress log, checklist, and the tracking table on every state change. Do not leave the table stale relative to phase headers.
+
+Findings are numbered as in [`docs/PRODUCTION_ASSESSMENT.md`](../../docs/PRODUCTION_ASSESSMENT.md) (C1–C5, H1–H8). When a finding is fixed, mark it there too rather than deleting it.
+
+## Problem
+
+Udara is live and moving real money. A full assessment of `main @ 0ba5135` on 2026-09-04 found five critical and eight high-severity defects. Two are actively harmful right now: customer PINs and identity numbers are being written to production logs, and a gateway error from Rubies is recorded as a failed transfer even when the debit succeeded.
+
+The rest fall into three groups: money-state transitions that are not atomic, so correctness rests on an unverified assumption about Rubies-side idempotency; missing operational basics (no health check, no timeouts, no error tracking, no rate limiting, schedulers that double-fire); and an LLM boundary that lets model-authored digits reach a transfer wizard.
+
+## Evidence
+
+[`docs/PRODUCTION_ASSESSMENT.md`](../../docs/PRODUCTION_ASSESSMENT.md) carries every finding with `file:line` references and the verification method. Baseline at assessment time: 671 unit tests passing, `tsc` clean, `security:check` passing, `npm audit` reporting 23 vulnerabilities.
+
+Key traced paths:
+
+- [`src/whatsapp/whatsapp.controller.ts:72`](../../src/whatsapp/whatsapp.controller.ts) logs the raw payload before `redactRawPayload` runs.
+- [`src/rubies/rubies.service.ts:141-147`](../../src/rubies/rubies.service.ts) returns any error body as a verdict; `mapRubiesResponseCode(undefined)` is `FAILED`.
+- [`src/whatsapp/transfer-confirmation.service.ts`](../../src/whatsapp/transfer-confirmation.service.ts) transitions status by read-then-unconditional-update at every site.
+- [`src/allowance/allowance.service.ts:251-266`](../../src/allowance/allowance.service.ts) writes `amountSpent` from a stale read instead of an increment.
+
+## Scope
+
+Defect repair only, across eight phases: log and webhook containment; money-path atomicity and recovery; operability (health, Sentry, throttling, replica-safe schedulers); non-destructive data-layer work; LLM safety; the thirteen weekly-review review findings on `0ba5135`; housekeeping; and wiring the settings-change and exit path, which is in scope because the consented terms promise it and no code can reach it.
+
+## Non-goals
+
+- Feature proposals from the assessment (ops console, fee ledger, funnel analytics, payday funding, goal buckets, circles, referral, cashback, Pidgin, statement upload). Recorded, not built here.
+- Destructive database work. Dropping the unused `bvn`/`nin` columns and any retention or purge job are deferred by explicit decision to a separate change with a backup taken first.
+- The orchestrator `ActiveMode` redesign for the weekly review. Targeted fixes only, by explicit decision.
+- Changing what CI runs beyond adding the new invariant, per `AGENTS.md`.
+
+## Decisions taken before work started
+
+Recorded here because `docs/SECURITY.md` §4.7 requires a human confirmation for changes that alter S1–S12 or widen what the LLM can trigger.
+
+| Decision | Choice | Affects |
+| --- | --- | --- |
+| Destructive DB work | Deferred to a separate change | Phase 4 |
+| New dependencies | Add `@nestjs/terminus`, `@nestjs/throttler`, `@sentry/node` | Phase 3 |
+| Weekly review depth | Targeted fixes, not the orchestrator redesign | Phase 6 |
+| Managers path | Wire the full chat path | Phase 8 |
+| Webhook secret enforcement | Fail closed behind an explicit opt-out, **not** `NODE_ENV` | Phase 1 |
+
+The last one alters the observable meaning of S2 and S3 and retires a row in the `SECURITY.md` known-risks table. `NODE_ENV` was rejected as the discriminator because it is set only in the unused `Dockerfile`, so a `NODE_ENV` check would silently never fire on Railway.
+
+Phase 8 widens what the LLM can trigger and needs an ADR in `docs/decisions/` before it lands.
+
+## Phase 1 — Log and webhook containment
+
+**Status:** completed
+**Started:** 2026-09-04
+**Completed:** 2026-09-04
+**Owner:** Egwu David Samuel
+
+Scope narrowed after the design review: the Rubies response-semantics fix and HTTP timeouts moved to Phase 2, because both convert "wrong answer" into "no answer, retry later" and the retry net does not exist yet. See the ordering table in the tech design.
+
+### Deliverables
+
+- [x] Raw unredacted payload no longer logged (C1); stray `console.log` removed
+- [x] Explicit production log levels, debug off by default
+- [x] New S13 invariant in `scripts/check-security.js` and the `SECURITY.md` table
+- [x] Webhook secrets required unless explicitly opted out (C3); `SECURITY.md` risk row retired
+- [x] Real signature verdict recorded on `RubiesWebhookEvent`
+- [x] `getBalance` inside `confirmTransfer` no longer produces total silence on a Rubies blip
+
+### Acceptance tests
+
+- [x] A Flow reply carrying a PIN produces no log line containing it — the payload is never serialized; only a message count is logged
+- [x] Boot fails when a webhook secret is blank and the opt-out is unset — `env.validation.spec.ts`, 14 cases
+- [x] A failed balance check during confirm produces a retry message, not silence — `transfer-confirmation.service.spec.ts`
+- [x] `security:check` fails if the raw-payload log is reintroduced — S13 regex verified against both removed lines
+
+### Progress log
+
+- 2026-09-04: Phase complete. `security:check` (281 files), `docs:check`, `tsc --noEmit` clean; full suite 49 suites / 689 tests passing, up from 671. Ran: `npm run security:check`, `npm run docs:check`, `npx tsc --noEmit -p tsconfig.json`, `npx jest`.
+- 2026-09-04: Also added `app.enableShutdownHooks()` and a `bootstrap().catch` while in `main.ts` — both were Phase 3 items but belong to the same file and carry no risk.
+- 2026-09-04: `ALLOW_UNSIGNED_WEBHOOKS=true` appended to the local gitignored `.env`, which had a blank `WHATSAPP_APP_SECRET` and would otherwise no longer boot locally.
+
+### Risk
+
+- **Open, needs a human:** Railway must have both secrets set and must NOT have `ALLOW_UNSIGNED_WEBHOOKS`. If either secret is currently blank there, this phase turns a silent vulnerability into a visible boot failure on deploy. Verify before deploying.
+- **Open, needs a human:** existing Railway logs should be treated as containing customer PINs, OTPs, BVN/NIN and dates of birth. Rotate or expire them.
+
+## Phase 2 — Money-path correctness
+
+**Status:** not started
+
+Sub-ordered per the design review. Each step is independently deployable and no intermediate state is worse than today.
+
+### Deliverables, in order
+
+- [ ] **2a** Conditional status claims on every transfer and bill transition (C5). The `PENDING_PIN → CONFIRMED` claim is the single highest-value line in this initiative
+- [ ] **2a** `applyTransferResult` claims only from `CONFIRMED` (claim, refetch, then side effects), closing the forged-webhook jump; unexpected status logged loudly, already-terminal silently
+- [ ] **2a** P2002 on `overrideHistory.create` handled as already-recorded
+- [ ] **2b** Allowance spend claimed atomically and incremented as a `Decimal`, not stale-read (H1)
+- [ ] **2b** `getOrCreateTodayAllowance` tolerates the create race
+- [ ] **2c** Recovery jobs: stuck bills, executed-but-unapplied spend, unresolved sweeps. Separate crons, advisory lock, `take` + `orderBy` + age bounds
+- [ ] **2d** Per-call HTTP timeouts: 10s interactive, 60s money movement, 20s background
+- [ ] **2e** Rubies response type guard; `mapRubiesResponseCodeStrict` at the four money sites only; `listBanks` and `validateVasCustomer` degrade locally (C2)
+- [ ] **2f** Fee sweep lease with attempts, deterministic reference, 24h recovery cap (H7)
+- [ ] **2g** Re-quote at confirm on changed terms or age; `cancelPendingForUser` extended to `PENDING_PIN` (C4)
+
+### Acceptance tests
+
+- [ ] Each transition bails on `count === 0` under a simulated concurrent claim
+- [ ] Two pending transfers cannot both consume the same headroom
+- [ ] An executed transfer whose side effects throw is recovered by the repair job
+- [ ] An HTML gateway body resolves to `PENDING`, leaving the row `CONFIRMED` for reconciliation
+- [ ] A bank-list failure still lets the wizard reply, rather than going silent
+- [ ] The fee retry job can re-claim a row it already attempted
+
+### Progress log
+
+-
+
+### Risk
+
+- Largest edit surface in the codebase. Existing Prisma mocks are plain object literals without `updateMany`, `$transaction` supports only the array form, and several assertions are exact object literals or call counts — including one that pins the buggy allowance arithmetic itself.
+- **Hard ordering constraint:** bill reconciliation (2c) must land before `purchaseVas` is allowed to throw (2e). Inverting them trades a wrong "it failed" message for a silently stuck payment and no message at all.
+- Do **not** hard-expire pending rows: that would break `resumePendingTransferUi` and `resumeAfterPinSetup`, whose whole purpose is resuming an old confirm. Re-quote instead.
+- `mapRubiesResponseCode` keeps its current contract; it is also applied to webhook-supplied input and its `null → FAILED` behaviour is pinned by a deliberate test.
+
+## Phase 3 — Operability
+
+**Status:** not started
+
+### Deliverables
+
+- [ ] `/health` route, shutdown hooks, `bootstrap()` error handling
+- [ ] Sentry behind an optional DSN, plus a global exception filter that keeps stack traces
+- [ ] Webhook-edge throttling and a per-user cost cap; audio gated behind the pre-account check
+- [ ] Replica-safe nudges, manager replies, and email loops; crons kept out of the CLI
+- [ ] Provider timeouts actually honoured on Anthropic and Gemini; LLM logging failures non-fatal
+
+### Acceptance tests
+
+- [ ] `/health` reports database reachability
+- [ ] A duplicate scheduler tick sends exactly one message
+- [ ] A hung provider call aborts rather than running past the orchestrator's race
+
+### Progress log
+
+-
+
+### Risk
+
+- Three new dependencies. Sentry is inert until a DSN is set in Railway.
+
+## Phase 4 — Data layer, non-destructive
+
+**Status:** not started
+
+### Deliverables
+
+- [ ] Indexes on `Transaction`, `WhatsappMessage.fromNumber`, `SettingsChangeRequest`, `OnboardingSession`
+- [ ] Explicit connection limit, documented
+- [ ] Conversation and onboarding history trimmed on write
+- [ ] Empty-string `waMessageId` no longer written to a unique column
+- [ ] Migration drift on `WeeklyReview.updatedAt` corrected
+
+### Acceptance tests
+
+- [ ] `prisma migrate deploy` applies cleanly from scratch
+- [ ] Session history stops growing without bound across repeated turns
+
+### Progress log
+
+-
+
+### Risk
+
+- Index creation on a live table. Sizes are small today; confirm before applying.
+
+## Phase 5 — LLM safety
+
+**Status:** not started
+
+### Deliverables
+
+- [ ] Account, phone and meter digits dropped unless attested by the user or a visible photo (H5)
+- [ ] Reply text sanitised against the same attested corpus
+- [ ] Third-party names delimited where interpolated into the system prompt
+- [ ] Contextual secret scrubber before persistence and before the model (H6)
+- [ ] Second redaction list reconciled with `SENSITIVE_FLOW_FIELDS`
+- [ ] Onboarding LLM call wrapped with a timeout and fallback; restart and help escape hatches
+- [ ] `temperature: 0` removed; Deepgram language and keyterms set
+
+### Acceptance tests
+
+- [ ] A model-invented account number never reaches the wizard
+- [ ] A typed BVN is not persisted verbatim, while an 11-digit airtime number still works
+- [ ] A provider failure mid-onboarding produces a reply, not silence
+
+### Progress log
+
+-
+
+### Risk
+
+- The scrubber must stay narrow. A blanket 11-digit rule would destroy Nigerian mobile numbers and break airtime.
+- Golden dialogues must be updated in the same change.
+
+## Phase 6 — Weekly-review fixes
+
+**Status:** not started
+
+### Deliverables
+
+- [ ] Review branch moved after the wizard checks
+- [ ] Lenient limit parser added; `parseNairaAmount` left strict for its four wizard callers
+- [ ] Wait never dropped silently; false completion ack suppressed
+- [ ] Synthetic photo placeholder text ignored
+- [ ] Monday answers recompute today's allowance; partial-week copy corrected
+- [ ] TTL expressed as a query predicate; no-op touch write removed
+- [ ] Stale `SENT` reviews rejected; unreachable branch deleted; duplicates consolidated
+
+### Acceptance tests
+
+- [ ] `5000 naira`, `make it 5k`, `5,000.` set the limit
+- [ ] `cancel` during an active bill draft cancels the draft, not the review
+- [ ] A captionless photo leaves the wait open
+
+### Progress log
+
+-
+
+### Risk
+
+- Behaviour was changed once already in `0ba5135`. Router-level tests must pin the user-visible outcome, not the internals.
+
+## Phase 7 — Housekeeping
+
+**Status:** not started
+
+### Deliverables
+
+- [ ] Fake values replace real-looking identifiers in scripts and specs
+- [ ] `npm audit` advisories resolved
+- [ ] Dead orchestrator-era code and its specs deleted
+- [ ] Docs drift corrected
+
+### Acceptance tests
+
+- [ ] `security:check` and `docs:check` pass
+- [ ] Full suite green after deletions
+
+### Progress log
+
+-
+
+### Risk
+
+- Removing the classifier token touches the provider factory used by all five providers.
+
+## Phase 8 — Settings-change and exit path
+
+**Status:** not started
+
+### Deliverables
+
+- [ ] ADR in `docs/decisions/` for widening what the LLM may trigger
+- [ ] `settings_request` surface, sanitised closed-enum hints, executor dispatch
+- [ ] Admin decision path on a restricted module, never `AppModule`
+- [ ] `reviewRequest` guarded by status; approval and restriction lift made atomic
+- [ ] Golden cases added; `PRODUCT_BEHAVIOR.md` corrected
+
+### Acceptance tests
+
+- [ ] A filed request cannot be approved before `eligibleAt`
+- [ ] The new surface cannot move money
+- [ ] A rejected request cannot later be flipped to approved
+
+### Progress log
+
+-
+
+### Risk
+
+- The only phase that widens the LLM's reach. Ships last, alone.
+
+## Tracking table
+
+| Phase | Description | Status |
+| --- | --- | --- |
+| 1 | Log and webhook containment | completed |
+| 2 | Money-path correctness | not started |
+| 3 | Operability | not started |
+| 4 | Data layer, non-destructive | not started |
+| 5 | LLM safety | not started |
+| 6 | Weekly-review fixes | not started |
+| 7 | Housekeeping | not started |
+| 8 | Settings-change and exit path | not started |
+
+Allowed status: `not started` · `in progress` · `blocked` · `completed` · `deleted`
+
+## Deferred
+
+- Dropping the `bvn` / `nin` columns and any retention or purge job, pending a database backup.
+- The orchestrator `ActiveMode` redesign for the weekly review.
+- Every feature proposal in the assessment.
+- Prompt caching and the classifier-then-persona split, both cost work rather than defect repair.
+
+## Decisions
+
+ADRs in [`docs/decisions/`](../../docs/decisions/README.md). Phase 8 requires one before it lands.

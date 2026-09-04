@@ -42,6 +42,13 @@ Each row is enforced in code and verified by `npm run security:check`. Do not re
 | S10 | Request-path code never shells out or disables TLS | `src/` excluding `src/cli/` |
 | S11 | No credentials in the repository | whole tree |
 | S12 | Security-critical files have unit tests | colocated `*.spec.ts` |
+| S13 | Webhook controllers never serialize the inbound payload into a log line | `whatsapp.controller.ts` + `rubies-webhook.controller.ts` |
+
+### Why S13 matters
+
+The redaction boundary in `sensitive-fields.util.ts` only protects what is *persisted*. `WhatsappController` receives the decrypted Flow submission and logs run before `recordInboundIfNew` redacts anything, so a single `JSON.stringify(payload)` in that handler puts every PIN, reset OTP, BVN, NIN and date of birth into the log sink in plaintext — bypassing S5 entirely, one line earlier. That is not hypothetical; it shipped, and the fix is why this rule exists.
+
+Log shape, never content. To debug an inbound message, read the persisted `WhatsappMessage` row, which is redacted.
 
 ### Why S9 matters
 
@@ -153,7 +160,7 @@ Tracked deliberately, not forgotten.
 
 | Risk | Current state | Required before real customer traffic |
 | --- | --- | --- |
-| Unsigned webhooks accepted when the secret is blank | Both guards log a loud warning and allow the request, so local and e2e runs work without Meta or Rubies credentials | Set `WHATSAPP_APP_SECRET` and `RUBIES_SECRET_KEY` in every non-local environment and confirm forged requests are rejected |
+| Unsigned webhooks accepted when the secret is blank | **Retired 2026-09-04.** Boot now fails when either secret is blank unless `ALLOW_UNSIGNED_WEBHOOKS=true` is set explicitly, so the escape hatch has to be asked for rather than being the accidental default. Local and e2e set the flag; deployed environments do not. `RubiesWebhookEvent.signatureValid` now records the real verdict instead of hardcoding `true` | Confirm both secrets are set in Railway and that the flag is absent there |
 | E2e and golden suites are not in CI | CI runs lint, build, unit tests, docs and security checks | Run `npm run e2e` and `npm run orchestrator:golden` before any release |
 | Fee sweep silently skipped | Skipped with a warning when `RUBIES_FEES_ACCOUNT_NUMBER` is unset | Configure the fees account; fees are recorded but unmoved until then |
 | Provider secrets live in `.env` | No secret manager in this repo | Use the deployment platform's secret store; never bake into an image |

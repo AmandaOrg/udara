@@ -116,10 +116,59 @@ describe("RubiesSignatureGuard", () => {
     expect(() => guard.canActivate(context)).toThrow(UnauthorizedException);
   });
 
-  // Documented dev-mode escape hatch, mirroring the WhatsApp guard.
+  // Documented dev-mode escape hatch, mirroring the WhatsApp guard. Reachable
+  // only when ALLOW_UNSIGNED_WEBHOOKS=true, since env validation refuses to boot
+  // with the secret blank otherwise.
   it("accepts unsigned requests when no signing secret is configured", () => {
     const guard = makeGuard(undefined);
 
     expect(guard.canActivate(makeContext({}))).toBe(true);
+  });
+
+  /**
+   * RubiesWebhookEvent.signatureValid used to be hardcoded `true`, so every event
+   * that came through the unsigned escape hatch was durably recorded as verified.
+   * The controller now reads this flag, so the audit trail can distinguish a real
+   * Rubies callback from anything else that reached the endpoint.
+   */
+  describe("records the verdict on the request", () => {
+    function captureRequest(
+      headers: Record<string, unknown>,
+      body: Buffer | null = rawBody,
+    ) {
+      const req: Record<string, unknown> = { headers, rawBody: body };
+      const context = {
+        switchToHttp: () => ({ getRequest: () => req }),
+      } as any;
+      return { req, context };
+    }
+
+    it("marks a verified request as verified", () => {
+      const { req, context } = captureRequest({
+        "x-webhook-signature": sign(rawBody, secret, nowSeconds()),
+      });
+
+      makeGuard(secret).canActivate(context);
+
+      expect(req.rubiesSignatureVerified).toBe(true);
+    });
+
+    it("marks an unsigned request as NOT verified even though it is allowed", () => {
+      const { req, context } = captureRequest({});
+
+      expect(makeGuard(undefined).canActivate(context)).toBe(true);
+      expect(req.rubiesSignatureVerified).toBe(false);
+    });
+
+    it("leaves the verdict false when the signature is rejected", () => {
+      const { req, context } = captureRequest({
+        "x-webhook-signature": sign(rawBody, "attacker-secret", nowSeconds()),
+      });
+
+      expect(() => makeGuard(secret).canActivate(context)).toThrow(
+        UnauthorizedException,
+      );
+      expect(req.rubiesSignatureVerified).toBe(false);
+    });
   });
 });

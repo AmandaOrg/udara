@@ -12,6 +12,17 @@ import { Request } from "express";
 const MAX_CLOCK_SKEW_SECONDS = 300; // Rubies' documented replay-protection tolerance
 
 /**
+ * Set by the guard so the controller can record what actually happened rather
+ * than asserting success. `RubiesWebhookEvent.signatureValid` previously
+ * hardcoded `true`, which was a lie on the unsigned-local path and made the
+ * audit trail claim every event had been verified.
+ */
+export interface SignatureCheckedRequest extends Request {
+  rawBody?: Buffer;
+  rubiesSignatureVerified?: boolean;
+}
+
+/**
  * Verifies Rubies' X-Webhook-Signature header — confirmed against the live
  * RubiesSme API docs (fetched during planning, not guessed):
  *
@@ -30,15 +41,17 @@ export class RubiesSignatureGuard implements CanActivate {
   constructor(private readonly config: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const req = context
-      .switchToHttp()
-      .getRequest<Request & { rawBody?: Buffer }>();
+    const req = context.switchToHttp().getRequest<SignatureCheckedRequest>();
+    req.rubiesSignatureVerified = false;
     // RUBIES_SECRET_KEY doubles as the webhook signing secret (whsec_...) — see
     // the .env.example comment for why this reuses the existing var instead of
     // introducing a new one.
     const signingSecret = this.config.get<string>("RUBIES_SECRET_KEY");
 
     if (!signingSecret) {
+      // Reachable only when ALLOW_UNSIGNED_WEBHOOKS=true: env validation refuses
+      // to boot without this secret otherwise (see config/env.validation.ts), so
+      // a production deploy can no longer land here by forgetting a variable.
       this.logger.warn(
         "RUBIES_SECRET_KEY is not set — accepting this webhook request WITHOUT signature verification.",
       );
@@ -86,6 +99,7 @@ export class RubiesSignatureGuard implements CanActivate {
       throw new UnauthorizedException("Invalid X-Webhook-Signature");
     }
 
+    req.rubiesSignatureVerified = true;
     return true;
   }
 }

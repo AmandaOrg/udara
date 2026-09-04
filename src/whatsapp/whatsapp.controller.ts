@@ -48,7 +48,6 @@ export class WhatsappController {
   ) {
     const expected = this.config.get<string>("WHATSAPP_WEBHOOK_VERIFY_TOKEN");
     if (mode === "subscribe" && token === expected) {
-      console.log("success");
       res.status(200).send(challenge);
     } else {
       res.sendStatus(403);
@@ -69,8 +68,14 @@ export class WhatsappController {
   async receive(@Body() payload: unknown, @Res() res: Response) {
     res.sendStatus(200);
 
-    this.logger.debug(`Inbound webhook payload: ${JSON.stringify(payload)}`);
+    // S13: never serialize the inbound payload into a log line. This runs
+    // *before* WhatsappMessageService applies redactSensitive/redactRawPayload,
+    // so anything logged here is the raw Flow submission — the plaintext PIN,
+    // reset OTP, BVN/NIN and date of birth. A previous debug line here defeated
+    // the entire redaction boundary in sensitive-fields.util.ts. Log shape, never
+    // content; use the persisted (redacted) WhatsappMessage row to debug.
     const parsedMessages = parseInboundPayload(payload);
+    this.logger.debug(`Inbound webhook: ${parsedMessages.length} message(s)`);
 
     for (const parsed of parsedMessages) {
       try {

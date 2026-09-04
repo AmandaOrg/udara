@@ -8,6 +8,7 @@ Canonical home for Udara knowledge that should survive a chat session. Code comm
 | --- | --- | --- | --- |
 | Security gate (mandatory) | [SECURITY.md](SECURITY.md) | Invariants + `scripts/check-security.js` | A guard, redaction rule, or LLM boundary changes |
 | Product behavior (verified) | [PRODUCT_BEHAVIOR.md](PRODUCT_BEHAVIOR.md) | Code + this file | Discipline rules, routing, or safety boundaries change |
+| Production assessment (snapshot) | [PRODUCTION_ASSESSMENT.md](PRODUCTION_ASSESSMENT.md) | The assessment itself, dated | A finding is fixed — mark it, do not delete it |
 | Architecture | [ARCHITECTURE.md](ARCHITECTURE.md) | Nest modules + Prisma | Module graph, request flow, or integrations change |
 | Orchestrator direction | [ai-orchestrator-architecture-plan.md](ai-orchestrator-architecture-plan.md) | The plan itself | Orchestrator phases land or change scope |
 | Development | [DEVELOPMENT.md](DEVELOPMENT.md) | `.env.example` + scripts | Setup, env, or local workflow change |

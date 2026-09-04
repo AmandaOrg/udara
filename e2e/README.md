@@ -23,7 +23,9 @@ WHATSAPP_DRY_RUN=true
 RUBIES_DRY_RUN=true
 AI_PROVIDER=stub
 WHATSAPP_WEBHOOK_VERIFY_TOKEN=e2e-verify-token
-# Leave WHATSAPP_APP_SECRET and RUBIES_SECRET_KEY blank for local unsigned acceptance
+# Leave WHATSAPP_APP_SECRET and RUBIES_SECRET_KEY blank for local unsigned acceptance,
+# which now requires opting in explicitly or the server will not boot:
+ALLOW_UNSIGNED_WEBHOOKS=true
 
 npm run start:dev
 ```

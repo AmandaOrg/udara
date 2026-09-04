@@ -16,8 +16,12 @@ import {
  * are validated as optional strings: this is a dev scaffold with no real credentials
  * yet, and the services that actually need them (signature guards, Rubies/LLM clients)
  * raise their own clear errors when a call is attempted without one configured. As
- * later phases add new required-at-runtime vars (WHATSAPP_APP_SECRET, AI_PROVIDER,
- * RUBIES_STAGE, etc.), extend this class rather than leaving them unchecked.
+ * later phases add new required-at-runtime vars (AI_PROVIDER, RUBIES_STAGE, etc.),
+ * extend this class rather than leaving them unchecked.
+ *
+ * The two webhook signing secrets are the exception: they are structurally optional
+ * here but enforced below in `assertWebhookSecretsPresent`, because a blank value
+ * silently disables signature verification rather than failing loudly.
  */
 class EnvironmentVariables {
   @IsUrl({
@@ -174,6 +178,48 @@ class EnvironmentVariables {
   @Min(1)
   @Max(65535)
   PORT: number;
+
+  @IsOptional()
+  @IsString()
+  ALLOW_UNSIGNED_WEBHOOKS?: string;
+
+  @IsOptional()
+  @IsString()
+  LOG_LEVEL?: string;
+}
+
+/** Webhook signing secrets. Blank means "accept forged requests", so blank is opt-in. */
+const WEBHOOK_SECRETS = ["WHATSAPP_APP_SECRET", "RUBIES_SECRET_KEY"] as const;
+
+function isBlank(value: unknown): boolean {
+  return typeof value !== "string" || value.trim() === "";
+}
+
+/**
+ * S2/S3: both signature guards fall back to accepting unverified requests when
+ * their secret is blank, which is what makes local and e2e runs possible without
+ * Meta or Rubies credentials. Left implicit, one missing variable in a deployed
+ * environment silently turns the webhooks into an open endpoint — anyone can drive
+ * the bot as any phone number or fabricate an incoming credit.
+ *
+ * So the escape hatch has to be asked for. Note this deliberately does NOT key off
+ * NODE_ENV: nothing in the deployment sets it (the Dockerfile that does is unused —
+ * Railway builds with Railpack), so a NODE_ENV check would never fire in the one
+ * environment it exists to protect.
+ */
+function assertWebhookSecretsPresent(config: Record<string, unknown>): void {
+  if (String(config.ALLOW_UNSIGNED_WEBHOOKS ?? "").trim() === "true") return;
+
+  const missing = WEBHOOK_SECRETS.filter((key) => isBlank(config[key]));
+  if (missing.length === 0) return;
+
+  throw new Error(
+    `Invalid environment configuration:\n` +
+      missing.map((key) => `  ${key}: must not be blank`).join("\n") +
+      `\n\nThese sign the inbound webhooks. Without them the signature guards accept ` +
+      `unverified requests from anyone.\nSet them, or set ALLOW_UNSIGNED_WEBHOOKS=true ` +
+      `to opt into unsigned webhooks for local and e2e runs.`,
+  );
 }
 
 export function validate(
@@ -193,6 +239,10 @@ export function validate(
       .join("\n");
     throw new Error(`Invalid environment configuration:\n${details}`);
   }
+
+  // Deliberately after validateSync: @IsOptional() short-circuits every other
+  // validator on an empty value, so this cannot be expressed as a decorator.
+  assertWebhookSecretsPresent(config);
 
   return validated;
 }

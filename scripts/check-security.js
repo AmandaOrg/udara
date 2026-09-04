@@ -199,6 +199,38 @@ for (const invariant of INVARIANTS) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// S13: patterns that must NOT appear. The inverse of INVARIANTS above.
+// ---------------------------------------------------------------------------
+
+const FORBIDDEN = [
+  {
+    id: 'S13',
+    file: 'src/whatsapp/whatsapp.controller.ts',
+    pattern: /JSON\.stringify\(\s*payload/,
+    message:
+      'the inbound payload must never be serialized here — it carries the plaintext PIN, reset OTP, BVN/NIN and DOB from Flow replies, and this runs before redaction',
+  },
+  {
+    id: 'S13',
+    file: 'src/rubies/rubies-webhook.controller.ts',
+    pattern: /JSON\.stringify\(\s*payload/,
+    message:
+      'the inbound payload must never be serialized here — it carries counterparty account numbers, account names and narration',
+  },
+];
+
+for (const rule of FORBIDDEN) {
+  const source = readIfExists(rule.file);
+  if (source === null) continue; // absence is INVARIANTS' problem, not this rule's
+  const lines = source.split(/\r?\n/);
+  lines.forEach((line, index) => {
+    if (rule.pattern.test(line) && !isWaived(lines, index)) {
+      fail(rule.id, `${rule.file}:${index + 1}: ${rule.message}`);
+    }
+  });
+}
+
 // S9 — the orchestrator module must not gain send or banking providers.
 const orchestratorModule = readIfExists('src/orchestrator/orchestrator.module.ts');
 if (orchestratorModule === null) {

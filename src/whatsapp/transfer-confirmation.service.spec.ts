@@ -383,6 +383,29 @@ describe("TransferConfirmationService", () => {
       );
     });
 
+    /**
+     * A Rubies blip on the pre-authorisation balance check used to throw all the
+     * way out to WhatsappController, which logged it and marked the message
+     * FAILED — so the user tapped Confirm and got nothing at all. The row is
+     * untouched at that point, so the Confirm button is still live and the right
+     * answer is to say so.
+     */
+    it("asks the user to retry, rather than going silent, when the balance check fails", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
+      rubies.getBalance.mockRejectedValue(new Error("Could not reach Rubies"));
+
+      await expect(service.confirmTransfer("txn-1")).resolves.toBeUndefined();
+
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("tap confirm again"),
+        "user-1",
+      );
+      expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+      // Critically: the row must NOT be moved to FAILED — nothing is known yet.
+      expect(prisma.transaction.update).not.toHaveBeenCalled();
+    });
+
     it("does NOT create an OverrideHistory row for a NORMAL transfer", async () => {
       prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
       prisma.transaction.findUniqueOrThrow.mockResolvedValue(

@@ -1,4 +1,4 @@
-import { Body, Controller, Logger, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Logger, Post, Req, UseGuards } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { TransferConfirmationService } from "../whatsapp/transfer-confirmation.service";
@@ -6,7 +6,10 @@ import { BillPaymentConfirmationService } from "../whatsapp/bill-payment-confirm
 import { AllowanceService } from "../allowance/allowance.service";
 import { EmailNotificationsService } from "../email/email-notifications.service";
 import { displayFirstNameOrThere } from "../common/display-name.util";
-import { RubiesSignatureGuard } from "./rubies-signature.guard";
+import {
+  RubiesSignatureGuard,
+  SignatureCheckedRequest,
+} from "./rubies-signature.guard";
 import { mapRubiesResponseCode, RubiesService } from "./rubies.service";
 import {
   OnboardingStage,
@@ -58,7 +61,10 @@ export class RubiesWebhookController {
 
   @UseGuards(RubiesSignatureGuard)
   @Post()
-  async receive(@Body() payload: RubiesNotification) {
+  async receive(
+    @Body() payload: RubiesNotification,
+    @Req() req: SignatureCheckedRequest,
+  ) {
     const eventType =
       payload.drCr === "CR"
         ? RubiesWebhookEventType.INCOMING_CREDIT
@@ -71,7 +77,11 @@ export class RubiesWebhookController {
         eventType,
         rubiesReference: payload.paymentReference,
         rawPayload: payload as unknown as Prisma.InputJsonValue,
-        signatureValid: true, // the guard above already enforced this before we got here
+        // The real verdict, not an assertion. The guard lets an unsigned request
+        // through when RUBIES_SECRET_KEY is deliberately unset (local/e2e), and
+        // recording those as verified made the audit trail useless for telling a
+        // genuine Rubies callback from anything else that reached the endpoint.
+        signatureValid: req.rubiesSignatureVerified === true,
         processedAt: new Date(),
       },
     });
@@ -82,8 +92,11 @@ export class RubiesWebhookController {
       } else if (eventType === RubiesWebhookEventType.TRANSFER_STATUS) {
         await this.handleTransferStatus(payload);
       } else {
+        // Reference only — the payload carries counterparty account numbers,
+        // account names and narration, none of which belong in a log sink. The
+        // full body is already persisted on the RubiesWebhookEvent row above.
         this.logger.warn(
-          `Unrecognized Rubies webhook event (no drCr): ${JSON.stringify(payload)}`,
+          `Unrecognized Rubies webhook event (no drCr), reference=${payload.paymentReference ?? "none"}`,
         );
       }
     } catch (err) {
@@ -115,8 +128,10 @@ export class RubiesWebhookController {
       where: { rubiesAccountNumber: payload.creditAccount },
     });
     if (!user) {
+      // Identify by payment reference, not by NUBAN — the account number is the
+      // counterparty's PII and the reference is enough to find the event row.
       this.logger.warn(
-        `Incoming credit to unrecognized account ${payload.creditAccount}`,
+        `Incoming credit to an account with no matching user, reference=${payload.paymentReference}`,
       );
       return;
     }
