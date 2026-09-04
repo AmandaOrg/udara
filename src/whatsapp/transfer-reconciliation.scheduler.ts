@@ -43,7 +43,12 @@ export class TransferReconciliationScheduler {
    * load-shedding, not correctness — correctness comes from the atomic claims,
    * since the webhook races these jobs regardless of what happens here.
    */
-  private running = { transfers: false, bills: false, allowance: false };
+  private running = {
+    transfers: false,
+    bills: false,
+    allowance: false,
+    fees: false,
+  };
 
   constructor(
     private readonly prisma: PrismaService,
@@ -234,6 +239,24 @@ export class TransferReconciliationScheduler {
       }
     } finally {
       this.running.allowance = false;
+    }
+  }
+
+  /**
+   * Override fees that were charged but never collected. Runs on a slower
+   * cadence than the transfer jobs because the money is ours, not the
+   * customer's, and each attempt is a real debit against their wallet.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async retryUnsweptFees() {
+    if (this.running.fees) return;
+    this.running.fees = true;
+    try {
+      await this.transferConfirmation.retryUnsweptFees();
+    } catch (err) {
+      this.logger.error(`fee sweep retry failed: ${String(err)}`);
+    } finally {
+      this.running.fees = false;
     }
   }
 

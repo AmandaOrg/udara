@@ -467,6 +467,14 @@ model Transaction {
   // itself later succeeds. See TransferConfirmationService.sweepFeeToFeesAccount.
   feeSweptAt        DateTime?
   feeSweepReference String?
+  // The sweep is a second, separate transfer out of the user's wallet, and it
+  // runs after the main debit — so the most likely failure is that the wallet
+  // no longer covers it. It therefore needs retrying, which means the claim has
+  // to be a *lease* rather than a latch: a predicate like "feeSweepReference is
+  // null" would match on the first attempt and never again, permanently
+  // disabling the retry job on the rows it exists to recover.
+  feeSweepAttempts  Int       @default(0)
+  feeSweepLastTryAt DateTime?
 
   rubiesReference String? // external reference once executed via Rubies
 

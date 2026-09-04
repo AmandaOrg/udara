@@ -350,6 +350,9 @@ describe("TransferConfirmationService", () => {
         feeAmount: 0,
         type: TransactionType.NORMAL,
         idempotencyKey: "idem-1",
+        // Fresh by default. confirmTransfer re-quotes a transfer that has sat
+        // too long rather than executing on the figures the user saw back then.
+        createdAt: new Date(),
         user,
         recipient,
         ...overrides,
@@ -439,6 +442,9 @@ describe("TransferConfirmationService", () => {
         feeAmount: 0,
         type: TransactionType.NORMAL,
         idempotencyKey: "idem-1",
+        // Fresh by default. confirmTransfer re-quotes a transfer that has sat
+        // too long rather than executing on the figures the user saw back then.
+        createdAt: new Date(),
         user,
         recipient,
         ...overrides,
@@ -461,6 +467,61 @@ describe("TransferConfirmationService", () => {
         },
         data: { status: TransactionStatus.PENDING_PIN },
       });
+    });
+
+    /**
+     * The spend type and fee were frozen when the transfer was proposed and
+     * never re-checked, so a user could set one up inside the spending window,
+     * sit on the Confirm button until it closed, and still send at the old
+     * zero-fee terms. Several sends could likewise each fit the allowance when
+     * proposed and all execute.
+     */
+    it("re-quotes instead of executing when the fee changed while it waited", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
+      rubies.getBalance.mockResolvedValue(50_000);
+      allowance.evaluateSpend.mockResolvedValue({
+        type: TransactionType.EARLY_ACCESS,
+        feeAmount: 1010,
+        waived: false,
+        remainingToday: 10_000,
+      });
+
+      await service.confirmTransfer("txn-1");
+
+      // No PIN, no money — the row stays PENDING_CONFIRMATION and the customer
+      // is shown the terms they would actually be authorising.
+      expect(pinGate.requestTransferPin).not.toHaveBeenCalled();
+      expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ feeAmount: 1010 }),
+        }),
+      );
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("moved while it was waiting"),
+        expect.any(Array),
+        "user-1",
+      );
+    });
+
+    it("re-quotes a transfer that has been sitting too long, even on unchanged terms", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(
+        pendingTransaction({
+          createdAt: new Date(Date.now() - 20 * 60 * 1000),
+        }),
+      );
+      rubies.getBalance.mockResolvedValue(50_000);
+
+      await service.confirmTransfer("txn-1");
+
+      expect(pinGate.requestTransferPin).not.toHaveBeenCalled();
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("waiting a while"),
+        expect.any(Array),
+        "user-1",
+      );
     });
 
     it("does not open a PIN challenge when another handler already claimed the transfer", async () => {
@@ -916,17 +977,46 @@ describe("TransferConfirmationService", () => {
             idempotencyKey: "idem-1-fee",
           }),
         );
-        expect(prisma.transaction.update).toHaveBeenCalledWith(
+        // The reference is written by the lease *before* the call, deterministic
+        // so a later status query can find it; feeSweptAt only on success.
+        expect(prisma.transaction.updateMany).toHaveBeenCalledWith(
           expect.objectContaining({
             data: expect.objectContaining({
-              feeSweepReference: "FEE-REF-1",
-              feeSweptAt: expect.any(Date),
+              feeSweepReference: "idem-1-fee",
+              feeSweepAttempts: { increment: 1 },
             }),
+          }),
+        );
+        expect(prisma.transaction.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ feeSweptAt: expect.any(Date) }),
           }),
         );
       });
 
-      it("records the reference but not feeSweptAt when the sweep itself comes back PENDING", async () => {
+      it("does not send a second sweep while one is already leased", async () => {
+        config.get.mockImplementation((key: string, fallback?: unknown) =>
+          key === "RUBIES_FEES_ACCOUNT_NUMBER" ? "9998887777" : fallback,
+        );
+        prisma.transaction.findUniqueOrThrow.mockResolvedValue(
+          executedWithFee(),
+        );
+        // Only the *lease* claim loses — the status claim must still win, or the
+        // method would bail before ever reaching the sweep and the test would
+        // pass for the wrong reason. The lease is the call keyed on feeSweptAt.
+        prisma.transaction.updateMany.mockImplementation(
+          (args: { where: Record<string, unknown> }) =>
+            Promise.resolve({
+              count: "feeSweptAt" in args.where ? 0 : 1,
+            }),
+        );
+
+        await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+        expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+      });
+
+      it("leaves the row unswept and retryable when the sweep comes back PENDING", async () => {
         config.get.mockImplementation((key: string, fallback?: unknown) =>
           key === "RUBIES_FEES_ACCOUNT_NUMBER" ? "9998887777" : fallback,
         );
@@ -941,13 +1031,45 @@ describe("TransferConfirmationService", () => {
 
         await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
 
-        expect(prisma.transaction.update).toHaveBeenCalledWith(
+        // feeSweptAt is never written on a non-SUCCESS, so the retry job can
+        // pick the row up again once the lease expires.
+        expect(prisma.transaction.update).not.toHaveBeenCalledWith(
           expect.objectContaining({
-            data: expect.objectContaining({
-              feeSweepReference: "FEE-REF-2",
-              feeSweptAt: undefined,
-            }),
+            data: expect.objectContaining({ feeSweptAt: expect.any(Date) }),
           }),
+        );
+      });
+
+      /**
+       * The lease has to stay re-claimable. A claim predicate of
+       * "feeSweepReference is null" would match on the very first attempt and
+       * never again, so the retry job could never recover the rows it exists for.
+       */
+      it("retries a fee that never swept, and stops after the attempt ceiling", async () => {
+        config.get.mockImplementation((key: string, fallback?: unknown) =>
+          key === "RUBIES_FEES_ACCOUNT_NUMBER" ? "9998887777" : fallback,
+        );
+        prisma.transaction.findMany.mockResolvedValue([
+          { ...executedWithFee(), user },
+        ]);
+        rubies.initiateTransfer.mockResolvedValue({
+          reference: "FEE-REF-3",
+          status: "SUCCESS",
+          responseCode: "00",
+        });
+
+        await service.retryUnsweptFees();
+
+        const where = prisma.transaction.findMany.mock.calls.at(-1)![0].where;
+        expect(where).toMatchObject({
+          feeSweptAt: null,
+          feeSweepAttempts: { lt: 5 },
+        });
+        // Bounded to a day: the fee debits the customer's own wallet, so a late
+        // sweep is a surprise debit against money they have already spent.
+        expect(where.executedAt.gte).toBeInstanceOf(Date);
+        expect(rubies.initiateTransfer).toHaveBeenCalledWith(
+          expect.objectContaining({ idempotencyKey: "idem-1-fee" }),
         );
       });
 

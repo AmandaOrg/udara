@@ -25,6 +25,24 @@ import { TransactionType as LocalTransactionType } from "../common/enums/transac
 export const CONFIRM_BUTTON_PREFIX = "confirm_transfer:";
 export const CANCEL_BUTTON_PREFIX = "cancel_transfer:";
 
+/**
+ * Past this, a pending transfer is re-quoted before it can execute, so nothing
+ * moves on figures the customer saw a long time ago. Not a hard expiry: killing
+ * the row would break resumePendingTransferUi and resumeAfterPinSetup, both of
+ * which exist precisely to resume an old confirm.
+ */
+const CONFIRM_RE_QUOTE_AFTER_MS = 10 * 60 * 1000;
+
+/** How long a sweep attempt holds the row before another caller may retry it. */
+const FEE_SWEEP_LEASE_MS = 5 * 60 * 1000;
+/** After this many tries the fee is an ops problem, not a retry problem. */
+const FEE_SWEEP_MAX_ATTEMPTS = 5;
+/**
+ * Stop retrying after a day. The fee comes out of the customer's own wallet, so
+ * a late sweep is a surprise debit against money they have already spent.
+ */
+const FEE_SWEEP_GIVE_UP_MS = 24 * 60 * 60 * 1000;
+
 /** User-facing label for spend classification on confirm buttons. */
 export function formatSpendTypeLabel(
   type: LocalTransactionType,
@@ -295,6 +313,47 @@ export class TransferConfirmationService {
       return;
     }
 
+    // The spend type and fee were frozen when the transfer was proposed and were
+    // never re-checked, so a user could sit on the Confirm button until the
+    // spending window closed and still send at the old zero-fee terms, or stack
+    // several sends that each fitted the allowance when proposed.
+    //
+    // Re-quote rather than hard-fail. An age limit that simply killed the row
+    // would break the two paths whose whole job is resuming an old confirm:
+    // resumePendingTransferUi, and resumeAfterPinSetup after a first-time PIN
+    // choice. Nothing executes on terms older than the limit without a fresh
+    // tap, and the customer always sees the figures they are authorising.
+    const stale =
+      Date.now() - transaction.createdAt.getTime() > CONFIRM_RE_QUOTE_AFTER_MS;
+    const fresh = await this.allowance.evaluateSpend(
+      transaction.userId,
+      Number(transaction.amount),
+    );
+    const termsChanged =
+      fresh.type !== (transaction.type as unknown as LocalTransactionType) ||
+      fresh.feeAmount !== Number(transaction.feeAmount);
+
+    if (stale || termsChanged) {
+      await this.prisma.transaction.updateMany({
+        where: {
+          id: transaction.id,
+          status: TransactionStatus.PENDING_CONFIRMATION,
+        },
+        data: {
+          type: fresh.type as unknown as TransactionType,
+          feeAmount: fresh.feeAmount,
+        },
+      });
+      await this.sendConfirmationRequest(
+        { ...transaction, type: fresh.type as unknown as TransactionType },
+        user,
+        fresh,
+        balance,
+        termsChanged,
+      );
+      return; // stays PENDING_CONFIRMATION — the user re-authorises what they can see
+    }
+
     // First transfer ever, no PIN on file: set one before anything moves.
     // The transaction stays PENDING_CONFIRMATION so the user can tap Confirm
     // again once their PIN exists, rather than silently losing the transfer.
@@ -334,6 +393,56 @@ export class TransferConfirmationService {
     );
     if (!claimed) return;
     await this.pinGate.requestTransferPin(user, transaction.id);
+  }
+
+  /**
+   * Re-renders the Confirm/Cancel buttons with current terms, for a transfer
+   * whose fee or spend type moved while it sat unconfirmed, or which simply sat
+   * too long. Deliberately does not touch the status: the row stays
+   * PENDING_CONFIRMATION and the customer authorises the figures in front of
+   * them, rather than the ones they saw before the window closed.
+   */
+  private async sendConfirmationRequest(
+    transaction: Pick<Transaction, "id" | "amount" | "type">,
+    user: User,
+    evaluation: {
+      type: LocalTransactionType;
+      feeAmount: number;
+      waived: boolean;
+      remainingToday: number;
+    },
+    balance: number,
+    termsChanged: boolean,
+  ): Promise<void> {
+    const amount = Number(transaction.amount);
+    const lines = [
+      termsChanged
+        ? "the terms on this one moved while it was waiting, so here it is again:"
+        : "this has been waiting a while, so let's confirm it again:",
+      `Amount: ₦${amount.toLocaleString("en-NG")}`,
+    ];
+
+    const feeLine = formatSpendFeeLine(
+      evaluation.type,
+      evaluation.feeAmount,
+      evaluation.waived,
+    );
+    if (feeLine) lines.push(feeLine);
+
+    lines.push(
+      `Account balance after this: ₦${Math.max(0, balance - amount - evaluation.feeAmount).toLocaleString("en-NG")}`,
+      `Allowance left today after this: ₦${Math.max(0, evaluation.remainingToday - amount).toLocaleString("en-NG")}`,
+    );
+
+    await this.whatsapp.sendInteractiveButtons(
+      user.whatsappNumber,
+      lines.join("\n"),
+      [
+        { id: `${CONFIRM_BUTTON_PREFIX}${transaction.id}`, title: "Confirm" },
+        { id: `${CANCEL_BUTTON_PREFIX}${transaction.id}`, title: "Cancel" },
+      ],
+      user.id,
+    );
   }
 
   /**
@@ -532,29 +641,40 @@ export class TransferConfirmationService {
     );
   }
 
-  /** Cancels all PENDING_CONFIRMATION transfers for a user (orchestrator cancel_surface). */
+  /**
+   * Cancels a user's un-executed transfers (orchestrator cancel_surface).
+   *
+   * Covers PENDING_PIN as well as PENDING_CONFIRMATION. The PIN-awaiting state is
+   * the more dangerous one to leave lying around, because it carries a live PIN
+   * challenge that could still be answered later and execute a transfer the user
+   * believes they abandoned.
+   */
   async cancelPendingForUser(
     userId: string,
     options?: { silent?: boolean },
   ): Promise<void> {
+    const cancellable = [
+      TransactionStatus.PENDING_CONFIRMATION,
+      TransactionStatus.PENDING_PIN,
+    ];
     const pending = await this.prisma.transaction.findMany({
-      where: {
-        userId,
-        status: TransactionStatus.PENDING_CONFIRMATION,
-      },
+      where: { userId, status: { in: cancellable } },
       include: { user: true },
     });
     for (const transaction of pending) {
       // Claimed, not blind-updated: between the findMany above and this write the
-      // user may have tapped Confirm, and cancelling a transfer whose Rubies call
-      // is already in flight would leave the ledger contradicting the money.
+      // user may have tapped Confirm or answered the PIN, and cancelling a
+      // transfer whose Rubies call is already in flight would leave the ledger
+      // contradicting the money.
       const cancelled = await this.claimStatus(
         transaction.id,
-        TransactionStatus.PENDING_CONFIRMATION,
+        transaction.status as TransactionStatus,
         { status: TransactionStatus.CANCELLED },
       );
       if (!cancelled) continue;
-      if (!options?.silent) {
+      // A PIN-awaiting transfer is never dropped silently: the user was asked for
+      // something and deserves to know the ask is withdrawn.
+      if (!options?.silent || transaction.status === TransactionStatus.PENDING_PIN) {
         await this.whatsapp.sendText(
           transaction.user.whatsappNumber,
           "Cancelled, nothing was sent.",
@@ -797,6 +917,35 @@ export class TransferConfirmationService {
       RUBIES_MFB_BANK_CODE,
     );
 
+    // Deterministic, and the exact key sent to Rubies — a randomly generated one
+    // could never be found again by a status query. Distinct from the main
+    // transfer's key so Rubies tracks the two independently.
+    const feeReference = `${transaction.idempotencyKey ?? transaction.id}-fee`;
+
+    // Lease the sweep before calling Rubies. Claiming on `feeSweptAt: null`
+    // alone would let two concurrent appliers both send; claiming on the
+    // reference being null would latch after the first try and make the row
+    // permanently unrecoverable. The lease expires, so a process that dies
+    // mid-call releases the row instead of stranding it.
+    const now = new Date();
+    const { count } = await this.prisma.transaction.updateMany({
+      where: {
+        id: transaction.id,
+        feeSweptAt: null,
+        feeSweepAttempts: { lt: FEE_SWEEP_MAX_ATTEMPTS },
+        OR: [
+          { feeSweepLastTryAt: null },
+          { feeSweepLastTryAt: { lt: new Date(now.getTime() - FEE_SWEEP_LEASE_MS) } },
+        ],
+      },
+      data: {
+        feeSweepReference: feeReference,
+        feeSweepLastTryAt: now,
+        feeSweepAttempts: { increment: 1 },
+      },
+    });
+    if (count === 0) return; // already swept, in flight elsewhere, or given up on
+
     try {
       const feesAccountName = await this.resolveFeesAccountName(
         feesAccountNumber,
@@ -810,28 +959,52 @@ export class TransferConfirmationService {
         toAccountName: feesAccountName,
         amount: feeAmount,
         narration: `Udara ${transaction.type.toLowerCase()} fee`,
-        // Deliberately distinct from the main transfer's idempotencyKey so
-        // Rubies (and our own dedup) tracks the two transfers independently.
-        idempotencyKey: `${transaction.idempotencyKey ?? transaction.id}-fee`,
+        idempotencyKey: feeReference,
       });
 
-      await this.prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          feeSweepReference: result.reference,
-          feeSweptAt: result.status === "SUCCESS" ? new Date() : undefined,
-        },
-      });
-
-      if (result.status !== "SUCCESS") {
-        this.logger.warn(
-          `Fee sweep for transaction ${transaction.id} came back ${result.status} — not marked as swept, needs manual reconciliation if it never resolves`,
-        );
+      if (result.status === "SUCCESS") {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { feeSweptAt: new Date() },
+        });
+        return;
       }
+
+      this.logger.warn(
+        `Fee sweep for transaction ${transaction.id} came back ${result.status} — will be retried`,
+      );
     } catch (err) {
       this.logger.error(
         `Failed to sweep ₦${feeAmount} fee for transaction ${transaction.id} to the fees account: ${String(err)}`,
       );
+    }
+  }
+
+  /**
+   * Retries fee sweeps that never resolved.
+   *
+   * Bounded to a day on purpose. The fee debits the customer's own wallet, so a
+   * retry firing days later is a surprise debit against a balance they have
+   * since spent down — a support incident on a product whose whole promise is
+   * that money does not move without them seeing it. Past the window the fee is
+   * written off to an ops line rather than taken.
+   */
+  async retryUnsweptFees(now: Date = new Date()): Promise<void> {
+    const pending = await this.prisma.transaction.findMany({
+      where: {
+        status: TransactionStatus.EXECUTED,
+        feeAmount: { gt: 0 },
+        feeSweptAt: null,
+        feeSweepAttempts: { lt: FEE_SWEEP_MAX_ATTEMPTS },
+        executedAt: { gte: new Date(now.getTime() - FEE_SWEEP_GIVE_UP_MS) },
+      },
+      orderBy: { executedAt: "asc" },
+      take: 100,
+      include: { user: true },
+    });
+
+    for (const transaction of pending) {
+      await this.sweepFeeToFeesAccount(transaction, transaction.user);
     }
   }
 
