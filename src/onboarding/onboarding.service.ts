@@ -86,6 +86,30 @@ const PLAN_REVIEW_ADJUST = "plan_review:adjust";
  * stages that don't need judgment — see the docblock in ai/prompts/onboarding.prompts.ts
  * for exactly which stages are which and why).
  */
+/**
+ * Onboarding turns are not on the orchestrator's 8.5s budget — nobody is
+ * mid-wizard — but they still need a ceiling, or a hung provider leaves a new
+ * user staring at a typing indicator.
+ */
+const ONBOARDING_LLM_TIMEOUT_MS = 20_000;
+
+/**
+ * Pre-account get-me-out words, matched before the stage machine.
+ *
+ * Deliberately explicit. Vaguer words like "what" or "huh" are perfectly
+ * ordinary answers during onboarding — someone asked their income can reasonably
+ * reply "what" — and swallowing those would replace a real answer with a canned
+ * one, which is the opposite of the problem this solves.
+ */
+const HELP_WORDS =
+  /^(help|start over|restart|i'?m stuck|i am stuck|what can i do)[\s!?.]*$/i;
+
+const HELP_TEXT = [
+  "no wahala. here's where we are: i'm setting you up, and i can't move money or open your account until we finish.",
+  "you can answer in your own words, i'll ask again if i don't get it. if a form didn't open, say so and i'll send it again.",
+  "if you'd rather not continue, just stop replying and nothing happens — no account is created and no money moves.",
+].join("\n\n");
+
 /** Turns kept on the row; the model sees the last 20. */
 const STORED_HISTORY_LIMIT = 60;
 
@@ -174,6 +198,20 @@ export class OnboardingService {
   async handleInboundText(user: User, text: string): Promise<void> {
     const session = await this.getOrStartSession(user.id);
     await this.appendMessage(session.id, "user", text);
+
+    // Escape hatches, checked before the stage machine. Several stages accept
+    // only one shape of answer and re-send the same prompt to anything else —
+    // so a user who could not produce that answer (no fixed income to state, a
+    // question they did not understand) had no way out at all, and no way to
+    // ask for one, before they even had an account.
+    if (HELP_WORDS.test(text.trim())) {
+      await this.chunkedMessenger.sendChunkedReply(
+        user.whatsappNumber,
+        HELP_TEXT,
+        user.id,
+      );
+      return;
+    }
 
     switch (user.onboardingStage) {
       case OnboardingStage.DISCOVERY:
@@ -504,12 +542,31 @@ export class OnboardingService {
       ...this.sessionMessagesToLlm(session),
     ];
 
-    const result = await this.llm.complete({
-      messages,
-      tool: promptResult.tool,
-      purpose: LlmCallPurpose.ONBOARDING_EXTRACTION,
-      userId: user.id,
-    });
+    // Wrapped, timed out, and answered. This call had none of those: a provider
+    // blip threw all the way to the controller, which logged it and marked the
+    // message FAILED, so a user midway through onboarding — before they have an
+    // account, before they have any reason to trust this thing — got complete
+    // silence, and got it again on every retry.
+    let result;
+    try {
+      result = await this.llm.complete({
+        messages,
+        tool: promptResult.tool,
+        purpose: LlmCallPurpose.ONBOARDING_EXTRACTION,
+        userId: user.id,
+        timeoutMs: ONBOARDING_LLM_TIMEOUT_MS,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Onboarding LLM turn failed for user ${user.id} at ${stage}: ${String(err)}`,
+      );
+      await this.chunkedMessenger.sendChunkedReply(
+        user.whatsappNumber,
+        "sorry, i didn't catch that. could you say it again?",
+        user.id,
+      );
+      return;
+    }
     const log = await this.llmLogger.log({
       userId: user.id,
       purpose: LlmCallPurpose.ONBOARDING_EXTRACTION,

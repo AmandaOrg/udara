@@ -50,7 +50,11 @@ export function isBillPaymentUtterance(text: string): boolean {
   return inferBillSurfaceFromText(text) != null;
 }
 
-export function sanitizeBillHintFields(raw?: Record<string, unknown>): {
+export function sanitizeBillHintFields(
+  raw?: Record<string, unknown>,
+  /** Provenance check for digits, supplied by sanitizeTransferHints. */
+  digitOk: (digits: string) => boolean = () => true,
+): {
   msisdn?: string;
   telcoHint?: string;
   meter?: string;
@@ -64,9 +68,17 @@ export function sanitizeBillHintFields(raw?: Record<string, unknown>): {
   } = {};
   if (!raw || typeof raw !== "object") return hints;
 
-  if (typeof raw.msisdn === "string" || typeof raw.phone === "string") {
-    const digits = String(raw.msisdn ?? raw.phone).replace(/\D/g, "");
-    if (digits.length >= 10 && digits.length <= 13) {
+  // `??` only skips null and undefined, so a numeric msisdn used to win over a
+  // string phone and the wrong field was read. Prefer whichever is a string.
+  const rawMsisdn =
+    typeof raw.msisdn === "string"
+      ? raw.msisdn
+      : typeof raw.phone === "string"
+        ? raw.phone
+        : null;
+  if (rawMsisdn !== null) {
+    const digits = rawMsisdn.replace(/\D/g, "");
+    if (digits.length >= 10 && digits.length <= 13 && digitOk(digits)) {
       hints.msisdn = digits;
     }
   }
@@ -78,7 +90,7 @@ export function sanitizeBillHintFields(raw?: Record<string, unknown>): {
 
   if (typeof raw.meter === "string") {
     const digits = raw.meter.replace(/\D/g, "");
-    if (digits.length >= 10 && digits.length <= 13) {
+    if (digits.length >= 10 && digits.length <= 13 && digitOk(digits)) {
       hints.meter = digits;
     }
   }

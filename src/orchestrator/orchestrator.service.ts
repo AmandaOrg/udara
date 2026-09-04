@@ -71,6 +71,8 @@ import {
   transferHintsToRaw,
   TransferWizardHints,
 } from "./transfer-hints.util";
+import { buildAttestedDigits } from "./attested-digits.util";
+import { sanitizeReplyText } from "./sanitize-reply.util";
 
 const ACTION_TYPES: ReadonlySet<string> = new Set([
   "reply_only",
@@ -85,6 +87,21 @@ const ACTION_TYPES: ReadonlySet<string> = new Set([
  * for the life of the conversation.
  */
 const STORED_HISTORY_LIMIT = 50;
+
+/**
+ * Wraps a string that came from outside us before it goes into the system
+ * prompt.
+ *
+ * A bank-supplied account name is chosen by whoever owns the destination
+ * account, and a saved nickname is typed by the user. Both were interpolated
+ * raw into the live-facts block, which is system-role text — so a counterparty
+ * could name their account something that reads as an instruction and have it
+ * arrive where the model trusts it most. Delimiting and stripping newlines
+ * keeps them unmistakably data.
+ */
+function quoteUntrusted(value: string): string {
+  return `«${value.replace(/\s+/g, " ").slice(0, 80)}»`;
+}
 
 @Injectable()
 export class OrchestratorService {
@@ -137,6 +154,26 @@ export class OrchestratorService {
     );
     const eligibleSurfaces = getEligibleSurfaces(user);
 
+    // Provenance corpus for any digits the model proposes. Shape checks alone
+    // would let it hand the transfer wizard an account number it invented, or
+    // one lifted from a scam screenshot the user forwarded. An image visible
+    // this turn is the deliberate exception — reading a payee's digits off a
+    // photo is a supported feature, and those digits are in no text.
+    const hintOptions = {
+      attestedDigits: buildAttestedDigits([
+        text,
+        ...history.map((m) =>
+          typeof m.content === "string" ? m.content : undefined,
+        ),
+        this.lastPhotoFromContext(session)?.accountNumber,
+        this.lastPhotoFromContext(session)?.msisdn,
+        storedHints.accountNumber,
+        storedHints.msisdn,
+        storedHints.meter,
+      ]),
+      allowUnattestedDigits: imageVisible,
+    };
+
     let logId: string | null = null;
 
     try {
@@ -150,7 +187,11 @@ export class OrchestratorService {
         purpose: LlmCallPurpose.ORCHESTRATOR_TURN,
         userId: user.id,
         maxTokens: 512,
-        temperature: 0,
+        // No temperature. Determinism here comes from the forced tool call and
+        // the validator, not from a sampling parameter — and current Claude 5
+        // models reject a non-default temperature with a 400, which would send
+        // every free-text turn to the fallback menu the day anyone switched
+        // AI_PROVIDER to anthropic.
         timeoutMs: ORCHESTRATOR_LLM_TIMEOUT_MS,
       };
 
@@ -204,7 +245,7 @@ export class OrchestratorService {
       }
 
       if (spendCheckPending) {
-        const incoming = sanitizeTransferHints(proposal.action.extracted_hints);
+        const incoming = sanitizeTransferHints(proposal.action.extracted_hints, hintOptions);
         proposal = {
           ...proposal,
           action: {
@@ -232,15 +273,29 @@ export class OrchestratorService {
         session.id,
         text,
         validated,
-        sanitizeTransferHints(proposal.action.extracted_hints),
+        sanitizeTransferHints(proposal.action.extracted_hints, hintOptions),
         spendCheckPending,
       );
 
       if (imageVisible) {
         await this.writeLastPhoto(
           session.id,
-          sanitizeTransferHints(proposal.action.extracted_hints),
+          sanitizeTransferHints(proposal.action.extracted_hints, hintOptions),
         );
+      }
+
+      // Last gate before anything reaches the user. Everything the model sees is
+      // user-role content — including forwarded screenshots — so a reply can
+      // otherwise relay an attacker's account number or link in Udara's voice.
+      const cleaned = sanitizeReplyText(
+        validated.message,
+        hintOptions.attestedDigits,
+      );
+      if (cleaned.removed) {
+        this.logger.warn(
+          `Stripped an unattested number or link from the reply to user ${user.id}`,
+        );
+        validated = { ...validated, message: cleaned.text };
       }
 
       const launchedSurface =
@@ -574,10 +629,11 @@ export class OrchestratorService {
     }
 
     if (lastSent) {
-      const who =
+      const who = quoteUntrusted(
         lastSent.recipient?.accountName ??
-        lastSent.recipient?.accountNumber ??
-        "recipient";
+          lastSent.recipient?.accountNumber ??
+          "recipient",
+      );
       lines.push(
         `- Last completed transfer: ₦${Number(lastSent.amount).toLocaleString("en-NG")} to ${who}. This already succeeded. Thanks or "great" → reply_only, do NOT start transfer_wizard or the menu.`,
       );
@@ -627,7 +683,7 @@ export class OrchestratorService {
       const names = savedRecipients
         .map((r: Recipient) => {
           const nick = (r as Recipient & { nickname?: string | null }).nickname;
-          return nick ?? r.accountName ?? r.accountNumber;
+          return quoteUntrusted(nick ?? r.accountName ?? r.accountNumber);
         })
         .filter(Boolean)
         .slice(0, 6)

@@ -1,5 +1,6 @@
 import { RecipientLabel } from "@prisma/client";
 import { parseNairaAmount } from "../common/naira-amount.util";
+import { isAttested } from "./attested-digits.util";
 import {
   inferBillSurfaceFromText,
   isBillPaymentUtterance,
@@ -38,11 +39,34 @@ export interface TransferWizardHints {
  * Sanitizes raw LLM extracted_hints for transfer_wizard. Rejects malformed
  * or implausible values rather than guessing — partial valid hints are kept.
  */
+/**
+ * Options for provenance checking. Shape alone is not enough for digits that
+ * end up naming where money goes — see attested-digits.util.ts.
+ */
+export type SanitizeHintOptions = {
+  /** Digit runs the user actually supplied, from buildAttestedDigits. */
+  attestedDigits?: string;
+  /** True when the user sent a photo the model can see this turn. */
+  allowUnattestedDigits?: boolean;
+};
+
 export function sanitizeTransferHints(
   raw?: Record<string, unknown>,
+  options: SanitizeHintOptions = {},
 ): TransferWizardHints {
   const hints: TransferWizardHints = {};
   if (!raw || typeof raw !== "object") return hints;
+
+  // When no corpus is supplied the check is skipped entirely, so existing
+  // callers that have no user text to offer keep their current behaviour.
+  const checkDigits = options.attestedDigits !== undefined;
+  const digitOk = (digits: string) =>
+    !checkDigits ||
+    isAttested(
+      digits,
+      options.attestedDigits as string,
+      options.allowUnattestedDigits,
+    );
 
   const amount = parseNairaAmount(raw.amount);
   if (amount != null) {
@@ -51,7 +75,9 @@ export function sanitizeTransferHints(
 
   if (typeof raw.account_number === "string") {
     const digits = raw.account_number.replace(/\D/g, "");
-    if (digits.length === 10) {
+    // A ten-digit string the user never typed is either invented or lifted from
+    // something they forwarded. Neither belongs in a transfer wizard.
+    if (digits.length === 10 && digitOk(digits)) {
       hints.accountNumber = digits;
     }
   }
@@ -95,7 +121,7 @@ export function sanitizeTransferHints(
     }
   }
 
-  Object.assign(hints, sanitizeBillHintFields(raw));
+  Object.assign(hints, sanitizeBillHintFields(raw, digitOk));
 
   return hints;
 }

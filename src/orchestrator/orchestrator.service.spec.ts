@@ -281,7 +281,10 @@ describe("OrchestratorService", () => {
           expect.objectContaining({
             role: "system",
             content: expect.stringMatching(
-              /Active mode: free[\s\S]*Last completed transfer: ₦800 to SAMUEL DAVID EGWU/,
+              // The name is delimited: it is chosen by whoever owns the
+              // destination account, so it must read as data inside a system
+              // prompt, not as text the model might act on.
+              /Active mode: free[\s\S]*Last completed transfer: ₦800 to «SAMUEL DAVID EGWU»/,
             ),
           }),
         ]),

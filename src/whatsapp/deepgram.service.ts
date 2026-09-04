@@ -15,6 +15,31 @@ const STT_TIMEOUT_MS = 20_000;
 const STT_MAX_BYTES = 16 * 1024 * 1024;
 const TRANSCRIPT_MAX_CHARS = 8_000;
 
+/**
+ * Vocabulary the decoder should lean toward. Money words first: a misheard
+ * amount is the most expensive kind of error on this product.
+ */
+const STT_KEYTERMS = [
+  "naira",
+  "airtime",
+  "data",
+  "transfer",
+  "balance",
+  "allowance",
+  "MTN",
+  "Airtel",
+  "Glo",
+  "9mobile",
+  "GTBank",
+  "Access",
+  "Zenith",
+  "Opay",
+  "Kuda",
+  "Moniepoint",
+  "NEPA",
+  "meter",
+];
+
 export interface TranscribeResult {
   ok: boolean;
   text: string;
@@ -69,11 +94,18 @@ export class DeepgramService {
       return { ok: false, text: "", language: null, error: "too_large" };
     }
 
+    // language, not detect_language: the users are Nigerian and speak English or
+    // Pidgin, and auto-detect regularly mis-identifies Pidgin as something else
+    // and returns a transcript that then goes to the orchestrator as if it were
+    // authoritative. Keyterms bias the decoder toward the vocabulary this
+    // product actually hears — amounts, telcos, banks — which is where a
+    // misheard word costs the most.
     const params = new URLSearchParams({
       model: this.sttModel(),
       smart_format: "true",
-      detect_language: "true",
+      language: this.config.get<string>("DEEPGRAM_LANGUAGE", "en") || "en",
     });
+    for (const term of STT_KEYTERMS) params.append("keyterm", term);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), STT_TIMEOUT_MS);

@@ -139,6 +139,10 @@ class EnvironmentVariables {
   @IsString()
   DEEPGRAM_STT_MODEL?: string;
 
+  @IsOptional()
+  @IsString()
+  DEEPGRAM_LANGUAGE?: string;
+
   @IsInt()
   @Min(0)
   @Max(23)

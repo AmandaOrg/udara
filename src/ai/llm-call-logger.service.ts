@@ -3,7 +3,27 @@ import { PrismaService } from "../prisma/prisma.service";
 import { LlmCompleteResult } from "./llm.types";
 import { LlmCallPurpose, Prisma } from "@prisma/client";
 
-const REDACTED_KEYS = ["bvn", "nin", "dateOfBirth", "email"];
+// Mirrors SENSITIVE_FLOW_FIELDS in whatsapp/sensitive-fields.util.ts, plus the
+// camelCase spellings a model is likely to echo. The two lists had drifted: this
+// one carried no pin, otp, id_number or date_of_birth at all, despite a comment
+// in the other claiming they mirrored each other.
+const REDACTED_KEYS = [
+  "bvn",
+  "nin",
+  "dateOfBirth",
+  "date_of_birth",
+  "email",
+  "pin",
+  "pin_confirm",
+  "pinConfirm",
+  "new_pin",
+  "newPin",
+  "current_pin",
+  "currentPin",
+  "otp",
+  "id_number",
+  "idNumber",
+];
 
 /**
  * The AI audit trail — "every output is a proposal, never a command" made

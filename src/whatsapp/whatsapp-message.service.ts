@@ -1,3 +1,4 @@
+import { scrubFreeTextSecrets } from "./scrub-free-text.util";
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import {
@@ -73,12 +74,16 @@ export class WhatsappMessageService {
           direction: WhatsappMessageDirection.INBOUND,
           type: parsed.type,
           fromNumber: parsed.from,
-          textBody:
+          // Scrubbed for labelled secrets. Field-name redaction covers the
+          // Flow path completely but cannot help when a user types their PIN or
+          // BVN as an ordinary message, which happens when a Flow fails to open.
+          textBody: scrubOptional(
             parsed.type === WhatsappMessageType.TEXT
               ? parsed.text
               : parsed.type === WhatsappMessageType.IMAGE
                 ? parsed.caption
                 : undefined,
+          ),
           buttonPayload:
             parsed.type === WhatsappMessageType.BUTTON_REPLY
               ? parsed.buttonId
@@ -122,10 +127,11 @@ export class WhatsappMessageService {
     });
   }
 
+  /** Used for voice transcripts, which are just as capable of carrying a spoken PIN. */
   async updateTextBody(id: string, textBody: string) {
     return this.prisma.whatsappMessage.update({
       where: { id },
-      data: { textBody },
+      data: { textBody: scrubFreeTextSecrets(textBody) },
     });
   }
 
@@ -157,4 +163,9 @@ export class WhatsappMessageService {
       },
     });
   }
+}
+
+/** scrubFreeTextSecrets, but transparent about undefined. */
+function scrubOptional(text: string | undefined): string | undefined {
+  return text === undefined ? undefined : scrubFreeTextSecrets(text);
 }
