@@ -44,7 +44,15 @@ export class EmailScheduler {
     const users = await this.findActiveUsers();
     this.logger.log(`Weekly summary email: ${users.length} active user(s)`);
     for (const user of users) {
-      await this.emailNotifications.sendWeeklySummary(user, now);
+      // Per-user, because one throw used to abort the whole tick and
+      // everyone after that user simply never got their summary.
+      try {
+        await this.emailNotifications.sendWeeklySummary(user, now);
+      } catch (err) {
+        this.logger.error(
+          `weekly summary failed for user ${user.id}: ${String(err)}`,
+        );
+      }
     }
   }
 
@@ -58,7 +66,15 @@ export class EmailScheduler {
     const users = await this.findActiveUsers();
     this.logger.log(`Monthly summary email: ${users.length} active user(s)`);
     for (const user of users) {
-      await this.emailNotifications.sendMonthlySummary(user, now);
+      // Per-user, because one throw used to abort the whole tick and
+      // everyone after that user simply never got their summary.
+      try {
+        await this.emailNotifications.sendMonthlySummary(user, now);
+      } catch (err) {
+        this.logger.error(
+          `monthly summary failed for user ${user.id}: ${String(err)}`,
+        );
+      }
     }
   }
 }

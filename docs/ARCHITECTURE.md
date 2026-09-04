@@ -20,6 +20,7 @@ How inbound events become outbound WhatsApp messages and database writes.
 ```
 src/
   main.ts / app.module.ts
+  health/          GET /health — database reachability
   prisma/          Global PrismaService
   config/          env.validation.ts
   allowance/       WindowService, FeeCalculator, AllowanceService, schedulers
@@ -86,6 +87,20 @@ Prisma models (see [`prisma/schema.prisma`](../prisma/schema.prisma)): `User`, `
 ## CLI
 
 [`src/cli/`](../src/cli/) boots a stub Prisma + orchestrator for golden dialogues and fixtures. It must not call Meta or Rubies.
+
+## Operational safety
+
+| Concern | Mechanism |
+| --- | --- |
+| Health | `GET /health` (Terminus) pings Postgres |
+| Shutdown | `enableShutdownHooks()` so Prisma disconnects on SIGTERM |
+| Errors | Sentry when `SENTRY_DSN` is set, plus a global filter that keeps stack traces |
+| Flood control | Throttler at the edge; a per-user inbound cap in the router, counted off `WhatsappMessage` |
+| Duplicate work | Every money transition is an atomic status claim; nudges, emails and weekly reviews claim a unique row before sending |
+| Recovery | Schedulers reconcile stuck transfers and bills, repair unapplied spend, retry unswept fees, and report anything past a 7-day horizon |
+| Crons in CLIs | `DISABLE_SCHEDULERS=true`, set by the CLI tools themselves |
+
+Schedulers are not leader-elected. Correctness comes from the claims above, so a double run is harmless rather than prevented; in-process flags shed the duplicated load.
 
 ## Known structural notes
 

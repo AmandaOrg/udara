@@ -5,7 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AllowanceService } from "./allowance.service";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { EmailNotificationsService } from "../email/email-notifications.service";
-import { NudgeType, User } from "@prisma/client";
+import { NudgeType, Prisma, User } from "@prisma/client";
 import { getWatHour, startOfWatDayInstant } from "../common/wat-time.util";
 
 const FREE_FORM_WINDOW_MS = 24 * 60 * 60 * 1000; // Meta blocks free-form sends past 24h since the user's last inbound message
@@ -71,20 +71,12 @@ export class AllowanceScheduler {
     if (dueUsers.length === 0) return;
 
     for (const user of dueUsers) {
-      const alreadySent = await this.prisma.nudgeLog.findFirst({
-        where: {
-          userId: user.id,
-          type: NudgeType.WINDOW_OPEN,
-          sentAt: { gte: today },
-        },
-      });
-      if (alreadySent) continue;
-
       try {
         await this.sendNudge(
           user,
           NudgeType.WINDOW_OPEN,
           "Your day is unlocked - today's allowance is ready to spend.",
+          `WINDOW_OPEN:${user.id}:${today.toISOString().slice(0, 10)}`,
         );
         // Same once-per-day guarantee, independently keyed on EmailLog so a
         // WhatsApp-side failure can't suppress the email or vice versa.
@@ -122,13 +114,14 @@ export class AllowanceScheduler {
     ].join("\n\n");
 
     for (const user of dueUsers) {
-      const alreadySent = await this.prisma.nudgeLog.findFirst({
-        where: { userId: user.id, type: NudgeType.HABIT_FORMING_FOLLOWUP },
-      });
-      if (alreadySent) continue;
-
       try {
-        await this.sendNudge(user, NudgeType.HABIT_FORMING_FOLLOWUP, text);
+        // No date in the key: this one is once per user, ever.
+        await this.sendNudge(
+          user,
+          NudgeType.HABIT_FORMING_FOLLOWUP,
+          text,
+          `HABIT_FORMING_FOLLOWUP:${user.id}`,
+        );
       } catch (err) {
         this.logger.error(
           `Failed to send habit-forming follow-up to user ${user.id}: ${String(err)}`,
@@ -146,38 +139,75 @@ export class AllowanceScheduler {
     user: User,
     type: NudgeType,
     text: string,
+    dedupeKey: string,
   ): Promise<void> {
     const withinFreeFormWindow =
       !!user.lastInboundMessageAt &&
       Date.now() - user.lastInboundMessageAt.getTime() < FREE_FORM_WINDOW_MS;
 
-    if (withinFreeFormWindow) {
-      await this.whatsapp.sendText(user.whatsappNumber, text, user.id);
-      await this.prisma.nudgeLog.create({
-        data: { userId: user.id, type, channel: "freeform" },
-      });
-      return;
-    }
+    const templateName = withinFreeFormWindow
+      ? null
+      : (this.config.get<string>("WHATSAPP_WINDOW_OPEN_TEMPLATE_NAME") ??
+        null);
 
-    const templateName = this.config.get<string>(
-      "WHATSAPP_WINDOW_OPEN_TEMPLATE_NAME",
-    );
-    if (!templateName) {
+    if (!withinFreeFormWindow && !templateName) {
       this.logger.warn(
         `Skipping ${type} nudge for user ${user.id} — outside the 24h free-form window and no template configured (WHATSAPP_WINDOW_OPEN_TEMPLATE_NAME)`,
       );
       return;
     }
 
+    // Claim before sending, not after. The previous order — check, send, then
+    // record — meant two replicas, or one tick overlapping the next, both read
+    // "not sent yet" and both sent. Template sends are billed per message.
+    //
+    // The tradeoff is the same one EmailService and the weekly review already
+    // make: if the send fails after the claim, this nudge is skipped rather than
+    // retried. For a courtesy message that is the right way round — a missed
+    // nudge is a non-event, a duplicate one is a bill and an annoyance.
+    if (!(await this.claimNudge(user.id, type, dedupeKey, templateName))) {
+      return;
+    }
+
+    if (withinFreeFormWindow) {
+      await this.whatsapp.sendText(user.whatsappNumber, text, user.id);
+      return;
+    }
     await this.whatsapp.sendTemplate(
       user.whatsappNumber,
-      templateName,
+      templateName as string,
       "en_US",
       undefined,
       user.id,
     );
-    await this.prisma.nudgeLog.create({
-      data: { userId: user.id, type, channel: "template", templateName },
-    });
+  }
+
+  /** Returns false when another replica or tick already owns this nudge. */
+  private async claimNudge(
+    userId: string,
+    type: NudgeType,
+    dedupeKey: string,
+    templateName: string | null,
+  ): Promise<boolean> {
+    try {
+      await this.prisma.nudgeLog.create({
+        data: {
+          userId,
+          type,
+          dedupeKey,
+          channel: templateName ? "template" : "freeform",
+          templateName: templateName ?? undefined,
+        },
+      });
+      return true;
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
+        return false;
+      }
+      throw err;
+    }
   }
 }

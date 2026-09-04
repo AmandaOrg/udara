@@ -26,6 +26,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   let actionExecutor: { execute: jest.Mock; sendSafeFallback: jest.Mock };
   let deepgram: { isConfigured: jest.Mock; transcribe: jest.Mock };
   let inboundMessages: { updateTextBody: jest.Mock };
+  let rateLimit: { check: jest.Mock };
   let service: WhatsappRouterService;
 
   const user = {
@@ -114,6 +115,12 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     inboundMessages = {
       updateTextBody: jest.fn().mockResolvedValue(undefined),
     };
+    // Under the limit by default; the throttling tests override it.
+    rateLimit = {
+      check: jest
+        .fn()
+        .mockResolvedValue({ limited: false, justCrossed: false }),
+    };
 
     service = new WhatsappRouterService(
       prisma as any,
@@ -129,7 +136,38 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       weeklyReview as any,
       deepgram as any,
       inboundMessages as any,
+      rateLimit as any,
     );
+  });
+
+  describe("inbound rate limit", () => {
+    it("drops the message before any handler once the user is over the limit", async () => {
+      rateLimit.check.mockResolvedValue({ limited: true, justCrossed: false });
+
+      await service.route(
+        { id: "m1", type: "TEXT", textBody: "hello", fromNumber: "234801" } as any,
+      );
+
+      // Nothing that costs money runs: no LLM, no onboarding turn, no reply.
+      expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+      expect(onboarding.handleInboundText).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+    });
+
+    it("says why, exactly once, on the message that crosses the line", async () => {
+      rateLimit.check.mockResolvedValue({ limited: true, justCrossed: true });
+
+      await service.route(
+        { id: "m1", type: "TEXT", textBody: "hello", fromNumber: "234801" } as any,
+      );
+
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("a lot of messages"),
+        expect.any(String),
+      );
+      expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    });
   });
 
   it("routes free text through orchestrator then action executor", async () => {

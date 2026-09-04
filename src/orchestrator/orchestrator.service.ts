@@ -130,7 +130,7 @@ export class OrchestratorService {
     );
     const eligibleSurfaces = getEligibleSurfaces(user);
 
-    let logId: string | undefined;
+    let logId: string | null = null;
 
     try {
       const llmParams = {

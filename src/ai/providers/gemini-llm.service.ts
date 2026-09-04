@@ -174,17 +174,32 @@ export class GeminiLlmService implements LlmService {
     }
 
     const start = Date.now();
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "x-goog-api-key": apiKey,
-          "Content-Type": "application/json",
+    // params.timeoutMs was accepted and ignored here, so when the orchestrator's
+    // own 8.5s race gave up the request kept running — and kept costing — with
+    // its result thrown away. Bedrock and OpenRouter already abort properly.
+    const controller = new AbortController();
+    const timer =
+      params.timeoutMs != null
+        ? setTimeout(() => controller.abort(), params.timeoutMs)
+        : null;
+
+    let res: Response;
+    try {
+      res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "x-goog-api-key": apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
         },
-        body: JSON.stringify(body),
-      },
-    );
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
 
     const latencyMs = Date.now() - start;
     const json = (await res.json()) as GeminiResponse;

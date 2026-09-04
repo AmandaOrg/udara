@@ -41,6 +41,14 @@ ALLOW_UNSIGNED_WEBHOOKS=true
 
 `LOG_LEVEL` names the most verbose level to emit (`error`, `warn`, `log`, `debug`, `verbose`) and defaults to `log`. Nest's own default enables `debug`, which is how an inbound-payload debug line came to print customer PINs in production. Raise it locally, never in a deployed environment.
 
+`SENTRY_DSN` turns on error reporting; unset, unhandled errors reach the log stream only. Request bodies, headers and cookies are stripped before send.
+
+`DISABLE_SCHEDULERS=true` stops every `@Cron` from registering. The CLI tools set it themselves, because they boot the whole `AppModule` to reach its providers and would otherwise turn the machine running them into a second replica. Never set it on the server.
+
+## Health
+
+`GET /health` reports database reachability and is the only non-webhook route. Point the platform's health check at it: without one, a container that boots but cannot reach Postgres stays in the rotation and silently drops every message it acks.
+
 Inbound voice notes need `DEEPGRAM_API_KEY` on the **same process that receives the WhatsApp webhook** (local `.env` does not apply to Railway). Optional `DEEPGRAM_STT_MODEL` defaults to `nova-3`. Without the key, Udara asks the user to type. `WHATSAPP_DRY_RUN=true` still skips outbound Graph sends; inbound media download still runs so voice and photos can be understood.
 
 ## Migrations

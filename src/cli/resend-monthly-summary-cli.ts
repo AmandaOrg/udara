@@ -53,6 +53,13 @@ async function main() {
     process.exit(1);
   }
 
+  // This boots the full AppModule to reach its providers, which also starts
+  // every @Cron in the app — so an operator running this against production
+  // becomes a second replica for as long as the command is open, firing the
+  // every-minute reconciliation and the managers' reply job from their laptop.
+  // Set before the module is evaluated.
+  process.env.DISABLE_SCHEDULERS = "true";
+
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ["error", "warn", "log"],
   });

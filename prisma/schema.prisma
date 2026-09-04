@@ -653,6 +653,19 @@ model NudgeLog {
   channel      String // "template" | "freeform"
   templateName String?
 
+  // Idempotency guard, same shape and reasoning as EmailLog.dedupeKey. Dedup
+  // used to be findFirst-then-send-then-create, which is not a guard at all:
+  // two replicas (or a tick overlapping the next) both read "not sent" and both
+  // sent, and template sends are billed per message by Meta. The row is now
+  // claimed *before* the send, so the loser collides on this index instead.
+  //
+  // Encodes what the nudge is about, which differs by type: WINDOW_OPEN is once
+  // per user per WAT day, HABIT_FORMING_FOLLOWUP once per user ever.
+  //
+  // Nullable so the column could be added to a populated table — Postgres allows
+  // many NULLs in a unique index. Every new row sets it.
+  dedupeKey String? @unique
+
   @@index([userId, type, sentAt])
 }
 

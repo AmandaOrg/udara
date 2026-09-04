@@ -7,6 +7,7 @@ describe("ManagerConversationService", () => {
     user: { findUniqueOrThrow: jest.Mock; update: jest.Mock };
     settingsChangeRequest: {
       update: jest.Mock;
+      updateMany: jest.Mock;
       findUniqueOrThrow: jest.Mock;
       findMany: jest.Mock;
     };
@@ -33,6 +34,9 @@ describe("ManagerConversationService", () => {
       },
       settingsChangeRequest: {
         update: jest.fn(),
+        // The delayed reply claims initialReplySentAt before generating and
+        // sending; count 1 means this caller won the claim.
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findUniqueOrThrow: jest.fn(),
         findMany: jest.fn(),
       },
@@ -141,12 +145,10 @@ describe("ManagerConversationService", () => {
         "generated procedural reply",
         "user-1",
       );
-      expect(prisma.settingsChangeRequest.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: "req-1" },
-          data: { initialReplySentAt: expect.any(Date) },
-        }),
-      );
+      expect(prisma.settingsChangeRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: "req-1", initialReplySentAt: null },
+        data: { initialReplySentAt: expect.any(Date) },
+      });
     });
 
     it("falls back to the deterministic template (still quoting statedGoal and eligibleAt) when the LLM call throws", async () => {
@@ -157,7 +159,7 @@ describe("ManagerConversationService", () => {
       const [, message] = chunkedMessenger.sendChunkedReply.mock.calls[0];
       expect(message).toContain("buy a landed property this year");
       expect(message).toContain(eligibleAt.toDateString());
-      expect(prisma.settingsChangeRequest.update).toHaveBeenCalledWith(
+      expect(prisma.settingsChangeRequest.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           data: { initialReplySentAt: expect.any(Date) },
         }),
@@ -208,7 +210,23 @@ describe("ManagerConversationService", () => {
       await expect(service.sendInitialReply("req-1")).rejects.toThrow(
         "Meta API down",
       );
-      expect(prisma.settingsChangeRequest.update).not.toHaveBeenCalled();
+      // The claim is released, not merely left unset, so the next tick can pick
+      // it up again. Asserting `update` was not called would pass trivially now
+      // that the claim goes through updateMany, and prove nothing.
+      expect(prisma.settingsChangeRequest.updateMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: { initialReplySentAt: null } }),
+      );
+    });
+
+    it("does not generate or send when another replica already claimed the reply", async () => {
+      prisma.settingsChangeRequest.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.sendInitialReply("req-1");
+
+      // The expensive half — an LLM round-trip and a multi-chunk send — is
+      // exactly what used to happen twice under two replicas.
+      expect(llm.complete).not.toHaveBeenCalled();
+      expect(chunkedMessenger.sendChunkedReply).not.toHaveBeenCalled();
     });
   });
 
@@ -280,13 +298,20 @@ describe("ManagerConversationService", () => {
     it("queries for PENDING requests past their initialReplyDueAt with no initialReplySentAt", async () => {
       prisma.settingsChangeRequest.findMany.mockResolvedValue([]);
       await service.findDueInitialReplies();
-      expect(prisma.settingsChangeRequest.findMany).toHaveBeenCalledWith({
-        where: {
-          initialReplyDueAt: { lte: expect.any(Date) },
-          initialReplySentAt: null,
-          status: SettingsChangeStatus.PENDING,
-        },
-      });
+      expect(prisma.settingsChangeRequest.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            // Bounded on both sides: without the floor, an undeliverable
+            // request stayed eligible forever and cost an LLM call a minute.
+            initialReplyDueAt: {
+              lte: expect.any(Date),
+              gte: expect.any(Date),
+            },
+            initialReplySentAt: null,
+            status: SettingsChangeStatus.PENDING,
+          },
+        }),
+      );
     });
   });
 });

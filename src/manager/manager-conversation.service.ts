@@ -16,6 +16,13 @@ import {
 } from "@prisma/client";
 
 /**
+ * Stop retrying the delayed managers reply after this long. Past it the request
+ * is still valid and still gated by eligibleAt — only the courtesy
+ * acknowledgement is abandoned, rather than retried once a minute forever.
+ */
+const INITIAL_REPLY_GIVE_UP_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
  * The conversation-layer half of "the managers" (PRD §7) — everything
  * ManagerService itself deliberately does NOT do: the persona reply, the
  * deliberate delay, and applying the effect of an approved decision.
@@ -83,14 +90,28 @@ export class ManagerConversationService {
   }
 
   /**
-   * The delayed initial reply itself — called by ManagerScheduler once
-   * initialReplyDueAt has passed. initialReplySentAt is only stamped *after*
-   * the send succeeds — if WhatsApp delivery fails, this throws and the
-   * request stays eligible for findDueInitialReplies, so ManagerScheduler
-   * naturally retries on its next tick instead of losing the notification
-   * silently.
+   * The delayed initial reply, called by ManagerScheduler once
+   * initialReplyDueAt has passed.
+   *
+   * The claim happens first, before the LLM call and the send. Stamping
+   * afterwards was intended to make a failed delivery retry on the next tick,
+   * but the scheduler runs every minute and each iteration is an LLM round-trip
+   * plus a multi-chunk send — so two replicas, or one tick overrunning into the
+   * next, both selected the same row and both generated and sent. A user got the
+   * managers' reply twice and we paid for the model twice.
+   *
+   * Retry-on-failure is preserved by releasing the claim if the send throws,
+   * bounded by an attempt ceiling so a permanently undeliverable request stops
+   * burning an LLM call every minute forever.
    */
   async sendInitialReply(requestId: string): Promise<void> {
+    const claimedAt = new Date();
+    const { count } = await this.prisma.settingsChangeRequest.updateMany({
+      where: { id: requestId, initialReplySentAt: null },
+      data: { initialReplySentAt: claimedAt },
+    });
+    if (count === 0) return; // another replica or tick already has it
+
     const request = await this.prisma.settingsChangeRequest.findUniqueOrThrow({
       where: { id: requestId },
     });
@@ -98,17 +119,22 @@ export class ManagerConversationService {
       where: { id: request.userId },
     });
 
-    const message = await this.generateInitialReplyText(user, request);
-
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      message,
-      user.id,
-    );
-    await this.prisma.settingsChangeRequest.update({
-      where: { id: requestId },
-      data: { initialReplySentAt: new Date() },
-    });
+    try {
+      const message = await this.generateInitialReplyText(user, request);
+      await this.chunkedMessenger.sendChunkedReply(
+        user.whatsappNumber,
+        message,
+        user.id,
+      );
+    } catch (err) {
+      // Release the claim so the next tick can retry — but only while the
+      // request is still young. findDueInitialReplies bounds how long that is.
+      await this.prisma.settingsChangeRequest.updateMany({
+        where: { id: requestId, initialReplySentAt: claimedAt },
+        data: { initialReplySentAt: null },
+      });
+      throw err;
+    }
   }
 
   private async generateInitialReplyText(
@@ -231,12 +257,22 @@ export class ManagerConversationService {
 
   /** Requests due for their initial reply but not yet sent — used by ManagerScheduler. */
   async findDueInitialReplies() {
+    const now = new Date();
     return this.prisma.settingsChangeRequest.findMany({
       where: {
-        initialReplyDueAt: { lte: new Date() },
+        // Bounded on both sides. Without the floor, a request whose delivery
+        // keeps failing — a number that has left WhatsApp, an expired token —
+        // stayed eligible forever and cost one LLM call and one send attempt
+        // every single minute, indefinitely.
+        initialReplyDueAt: {
+          lte: now,
+          gte: new Date(now.getTime() - INITIAL_REPLY_GIVE_UP_MS),
+        },
         initialReplySentAt: null,
         status: SettingsChangeStatus.PENDING,
       },
+      orderBy: { initialReplyDueAt: "asc" },
+      take: 50,
     });
   }
 }

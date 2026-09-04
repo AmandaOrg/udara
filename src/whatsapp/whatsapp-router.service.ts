@@ -57,6 +57,7 @@ import { isMenuShortcut, menuPayloadFromUtterance } from "./menu-shortcut.util";
 import { isShortCompletionAck } from "../orchestrator/transfer-hints.util";
 import { parseNairaAmount } from "../common/naira-amount.util";
 import { DeepgramService } from "./deepgram.service";
+import { InboundRateLimitService } from "./inbound-rate-limit.service";
 import { OrchestratorTurnOptions } from "../orchestrator/orchestrator.types";
 
 const AUDIO_TYPE_INSTEAD =
@@ -91,6 +92,7 @@ export class WhatsappRouterService {
     private readonly weeklyReview: WeeklyReviewService,
     private readonly deepgram: DeepgramService,
     private readonly inboundMessages: WhatsappMessageService,
+    private readonly rateLimit: InboundRateLimitService,
   ) {}
 
   async route(
@@ -98,6 +100,20 @@ export class WhatsappRouterService {
     sensitive: SensitiveFields = {},
   ): Promise<void> {
     const user = await this.findOrCreateUser(message.fromNumber);
+
+    // Before any handler: past this point a message can cost an LLM call, a
+    // media download and a transcription, and nothing else bounds that.
+    const rate = await this.rateLimit.check(user.id);
+    if (rate.limited) {
+      if (rate.justCrossed) {
+        await this.whatsapp.sendText(
+          message.fromNumber,
+          "that's a lot of messages at once. give me a few minutes and try again.",
+          user.id,
+        );
+      }
+      return;
+    }
 
     switch (message.type) {
       case WhatsappMessageType.AUDIO:

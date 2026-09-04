@@ -1,10 +1,11 @@
 import { AllowanceScheduler } from "./allowance.scheduler";
-import { NudgeType } from "@prisma/client";
+import { NudgeType, Prisma } from "@prisma/client";
 
 describe("AllowanceScheduler", () => {
   let prisma: {
     user: { findMany: jest.Mock };
     nudgeLog: { findFirst: jest.Mock; create: jest.Mock };
+
     dailyAllowance: Record<string, never>;
   };
   let allowance: { getOrCreateTodayAllowance: jest.Mock };
@@ -118,11 +119,12 @@ describe("AllowanceScheduler", () => {
       expect(whatsapp.sendTemplate).not.toHaveBeenCalled();
       expect(prisma.nudgeLog.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: {
+          data: expect.objectContaining({
             userId: "user-1",
             type: NudgeType.WINDOW_OPEN,
             channel: "freeform",
-          },
+            dedupeKey: expect.stringContaining("WINDOW_OPEN:user-1:"),
+          }),
         }),
       );
     });
@@ -144,12 +146,12 @@ describe("AllowanceScheduler", () => {
       expect(whatsapp.sendText).not.toHaveBeenCalled();
       expect(prisma.nudgeLog.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: {
+          data: expect.objectContaining({
             userId: "user-1",
             type: NudgeType.WINDOW_OPEN,
             channel: "template",
             templateName: "window_open_v1",
-          },
+          }),
         }),
       );
     });
@@ -177,31 +179,48 @@ describe("AllowanceScheduler", () => {
       expect(whatsapp.sendText).not.toHaveBeenCalled();
     });
 
+    /**
+     * Dedup is now the unique index on dedupeKey, claimed before the send.
+     * The old order — findFirst, send, then create — was not a guard at all:
+     * two replicas both read "not sent" and both sent, and Meta bills per
+     * template message.
+     */
     it("does not send a second nudge the same day (NudgeLog dedup)", async () => {
       const user = makeUser();
       prisma.user.findMany.mockResolvedValue([user]);
-      prisma.nudgeLog.findFirst.mockResolvedValue({ id: "existing-nudge" });
+      prisma.nudgeLog.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("dup", {
+          code: "P2002",
+          clientVersion: "5",
+        }),
+      );
 
       await scheduler.sendWindowOpenNudges();
 
       expect(whatsapp.sendText).not.toHaveBeenCalled();
-      expect(prisma.nudgeLog.create).not.toHaveBeenCalled();
+      expect(whatsapp.sendTemplate).not.toHaveBeenCalled();
     });
 
-    it("leaves no NudgeLog row if the WhatsApp send itself fails, so the next tick retries", async () => {
+    /**
+     * Deliberate tradeoff, the same one EmailService and the weekly review
+     * already make: the claim is taken first, so a send that fails afterwards is
+     * skipped rather than retried. For a courtesy nudge that is the right way
+     * round — a missed one is a non-event, a duplicate is a bill.
+     */
+    it("does not retry a nudge whose send failed after the claim", async () => {
       const user = makeUser();
       prisma.user.findMany.mockResolvedValue([user]);
       whatsapp.sendText.mockRejectedValue(new Error("Meta API down"));
 
       await expect(scheduler.sendWindowOpenNudges()).resolves.not.toThrow();
 
-      expect(prisma.nudgeLog.create).not.toHaveBeenCalled();
+      expect(prisma.nudgeLog.create).toHaveBeenCalled();
     });
 
     it("does nothing when no users are due this hour", async () => {
       prisma.user.findMany.mockResolvedValue([]);
       await scheduler.sendWindowOpenNudges();
-      expect(prisma.nudgeLog.findFirst).not.toHaveBeenCalled();
+      expect(prisma.nudgeLog.create).not.toHaveBeenCalled();
     });
   });
 
@@ -233,17 +252,20 @@ describe("AllowanceScheduler", () => {
           }),
         }),
       );
-      const findFirstCall = prisma.nudgeLog.findFirst.mock.calls[0][0];
-      expect(findFirstCall.where).toEqual({
-        userId: "user-1",
-        type: NudgeType.HABIT_FORMING_FOLLOWUP,
-      });
+      // No date in the key: once per user, ever, unlike the daily WINDOW_OPEN.
+      const created = prisma.nudgeLog.create.mock.calls[0][0];
+      expect(created.data.dedupeKey).toBe("HABIT_FORMING_FOLLOWUP:user-1");
     });
 
     it("never sends a second time once already logged", async () => {
       const user = makeUser({ onboardingCompletedAt: new Date() });
       prisma.user.findMany.mockResolvedValue([user]);
-      prisma.nudgeLog.findFirst.mockResolvedValue({ id: "already-sent" });
+      prisma.nudgeLog.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("dup", {
+          code: "P2002",
+          clientVersion: "5",
+        }),
+      );
 
       await scheduler.sendHabitFormingFollowUps();
 

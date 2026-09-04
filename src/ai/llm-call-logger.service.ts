@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { LlmCompleteResult } from "./llm.types";
 import { LlmCallPurpose, Prisma } from "@prisma/client";
@@ -15,9 +15,30 @@ const REDACTED_KEYS = ["bvn", "nin", "dateOfBirth", "email"];
  */
 @Injectable()
 export class LlmCallLoggerService {
+  private readonly logger = new Logger(LlmCallLoggerService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Best-effort. This is an audit trail, not part of the turn: a database blip
+   * while writing it used to throw into the orchestrator's catch-all and turn a
+   * perfectly good model reply into the fallback menu. Losing a log row is a
+   * far smaller problem than losing the answer the user was waiting for.
+   */
   async log(params: {
+    userId?: string;
+    purpose: LlmCallPurpose;
+    result: LlmCompleteResult;
+  }): Promise<{ id: string | null }> {
+    try {
+      return await this.createLog(params);
+    } catch (err) {
+      this.logger.error(`Failed to record LLM call: ${String(err)}`);
+      return { id: null };
+    }
+  }
+
+  private async createLog(params: {
     userId?: string;
     purpose: LlmCallPurpose;
     result: LlmCompleteResult;
@@ -38,18 +59,24 @@ export class LlmCallLoggerService {
     });
   }
 
+  /** Best-effort for the same reason as log() above. */
   async markApplied(
-    logId: string,
+    logId: string | null,
     validationResult: unknown,
     appliedToUser: boolean,
   ) {
-    return this.prisma.llmCallLog.update({
-      where: { id: logId },
-      data: {
-        validationResult: validationResult as Prisma.InputJsonValue,
-        appliedToUser,
-      },
-    });
+    if (!logId) return;
+    try {
+      await this.prisma.llmCallLog.update({
+        where: { id: logId },
+        data: {
+          validationResult: validationResult as Prisma.InputJsonValue,
+          appliedToUser,
+        },
+      });
+    } catch (err) {
+      this.logger.error(`Failed to mark LLM call applied: ${String(err)}`);
+    }
   }
 }
 

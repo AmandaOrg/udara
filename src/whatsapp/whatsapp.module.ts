@@ -17,6 +17,7 @@ import { PinGateService } from "./pin-gate.service";
 import { WeeklyReviewService } from "./weekly-review.service";
 import { WeeklyReviewScheduler } from "./weekly-review.scheduler";
 import { DeepgramService } from "./deepgram.service";
+import { InboundRateLimitService } from "./inbound-rate-limit.service";
 import { EmailModule } from "../email/email.module";
 import { ActionExecutorService } from "../orchestrator/action-executor.service";
 import { OrchestratorModule } from "../orchestrator/orchestrator.module";
@@ -70,6 +71,7 @@ import { AiModule } from "../ai/ai.module";
     WeeklyReviewService,
     WeeklyReviewScheduler,
     DeepgramService,
+    InboundRateLimitService,
   ],
   exports: [
     WhatsappService,

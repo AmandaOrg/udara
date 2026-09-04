@@ -1,5 +1,7 @@
 import { NestFactory } from "@nestjs/core";
 import { LogLevel, Logger, ValidationPipe } from "@nestjs/common";
+import { initSentry } from "./common/sentry";
+import { AllExceptionsFilter } from "./common/all-exceptions.filter";
 import { AppModule } from "./app.module";
 
 const ALL_LOG_LEVELS: LogLevel[] = [
@@ -28,6 +30,9 @@ function resolveLogLevels(): LogLevel[] {
 }
 
 async function bootstrap() {
+  // Before Nest, so instrumentation is in place for the first request.
+  const sentryEnabled = initSentry();
+
   // rawBody: true preserves the raw request bytes alongside the parsed JSON body —
   // required for webhook signature verification (WhatsApp's X-Hub-Signature-256,
   // Rubies' X-Webhook-Signature), since HMAC has to run over the exact bytes sent,
@@ -37,13 +42,20 @@ async function bootstrap() {
     logger: resolveLogLevels(),
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalFilters(new AllExceptionsFilter());
   // Without this, PrismaService.onModuleDestroy never runs: Railway sends
   // SIGTERM on every deploy and the process would drop its connections mid-flight
   // instead of draining them.
   app.enableShutdownHooks();
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   await app.listen(port);
-  new Logger("Bootstrap").log(`Udara is running on port ${port}`);
+  const logger = new Logger("Bootstrap");
+  logger.log(`Udara is running on port ${port}`);
+  if (!sentryEnabled) {
+    logger.warn(
+      "SENTRY_DSN is not set — unhandled errors will only reach the log stream.",
+    );
+  }
 }
 
 bootstrap().catch((err) => {

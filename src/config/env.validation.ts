@@ -186,6 +186,18 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   LOG_LEVEL?: string;
+
+  @IsOptional()
+  @IsString()
+  SENTRY_DSN?: string;
+
+  @IsOptional()
+  @IsString()
+  SENTRY_ENVIRONMENT?: string;
+
+  @IsOptional()
+  @IsString()
+  DISABLE_SCHEDULERS?: string;
 }
 
 /** Webhook signing secrets. Blank means "accept forged requests", so blank is opt-in. */

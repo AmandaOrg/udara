@@ -43,7 +43,12 @@ export class AnthropicLlmService implements LlmService {
           `${this.apiKeyEnvKey} is not set — cannot make a ${this.role} LLM call.`,
         );
       }
-      this.client = new Anthropic({ apiKey });
+      // The SDK defaults to a 10-minute timeout and 2 automatic retries, so a
+      // slow call kept running long after the orchestrator's own 8.5s race had
+      // given up on it and fallen back to the menu — paying for a result nobody
+      // would read, up to three times. The per-call timeout below overrides this
+      // default; the retry count is what the SDK would otherwise hide.
+      this.client = new Anthropic({ apiKey, timeout: 30_000, maxRetries: 1 });
     }
     return this.client;
   }
@@ -89,7 +94,7 @@ export class AnthropicLlmService implements LlmService {
           ? { type: "tool", name: params.tool.name }
           : { type: "auto" }
         : undefined,
-    });
+    }, params.timeoutMs != null ? { timeout: params.timeoutMs } : undefined);
     const latencyMs = Date.now() - start;
 
     const toolUseBlock = response.content.find(
