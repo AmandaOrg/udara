@@ -281,10 +281,12 @@ export class TransferConfirmationService {
     const totalCost =
       Number(transaction.amount) + Number(transaction.feeAmount);
     if (balance < totalCost) {
-      await this.prisma.transaction.update({
-        where: { id: transaction.id },
-        data: { status: TransactionStatus.FAILED },
-      });
+      const failed = await this.claimStatus(
+        transaction.id,
+        TransactionStatus.PENDING_CONFIRMATION,
+        { status: TransactionStatus.FAILED },
+      );
+      if (!failed) return;
       await this.whatsapp.sendText(
         user.whatsappNumber,
         `That transfer needs ₦${totalCost.toLocaleString("en-NG")} but your Udara account only has ₦${balance.toLocaleString("en-NG")}. Cancelled.`,
@@ -309,23 +311,60 @@ export class TransferConfirmationService {
     // Locked out from earlier wrong attempts: refuse now rather than opening
     // a challenge that cannot succeed.
     if (this.pinGate.isLocked(user)) {
-      await this.prisma.transaction.update({
-        where: { id: transaction.id },
-        data: { status: TransactionStatus.CANCELLED },
-      });
+      const cancelled = await this.claimStatus(
+        transaction.id,
+        TransactionStatus.PENDING_CONFIRMATION,
+        { status: TransactionStatus.CANCELLED },
+      );
+      if (!cancelled) return;
       await this.pinGate.notifyLocked(user);
       return;
     }
 
     // All pre-flight guards have passed, but money does NOT move here. The
-    // transfer now needs a PIN: moving to PENDING_PIN also closes the
-    // PENDING_CONFIRMATION guard above, so a second tap of the confirm button
-    // can't open a second challenge for the same transaction.
-    await this.prisma.transaction.update({
-      where: { id: transaction.id },
-      data: { status: TransactionStatus.PENDING_PIN },
-    });
+    // transfer now needs a PIN. The status read at the top of this method is a
+    // snapshot from before a live balance HTTP call, so it cannot be the guard:
+    // two Confirm taps arrive as two concurrent webhooks and both would reach
+    // here, minting two PIN challenges for one transaction. Claiming the
+    // transition is what makes the second tap a no-op.
+    const claimed = await this.claimStatus(
+      transaction.id,
+      TransactionStatus.PENDING_CONFIRMATION,
+      { status: TransactionStatus.PENDING_PIN },
+    );
+    if (!claimed) return;
     await this.pinGate.requestTransferPin(user, transaction.id);
+  }
+
+  /**
+   * Moves a transaction from one status to another, atomically, and reports
+   * whether this caller is the one that did it.
+   *
+   * Every money-state transition has to go through here. A read-then-write
+   * (`findUnique`, check `status`, `update`) looks safe but is not: the
+   * controller acks the webhook and then processes, so two taps of the same
+   * button are two concurrent executions, and each one's status check happens
+   * before the other's write. The loser must do nothing, not repeat the work.
+   *
+   * Modelled on PinService.consumeChallenge, which already does this for the
+   * single-use PIN token.
+   */
+  private async claimStatus(
+    transactionId: string,
+    from: TransactionStatus,
+    data: Prisma.TransactionUpdateManyMutationInput,
+  ): Promise<boolean> {
+    const { count } = await this.prisma.transaction.updateMany({
+      where: { id: transactionId, status: from },
+      data,
+    });
+    if (count === 0) {
+      this.logger.warn(
+        `transaction ${transactionId} was not in ${from} — another handler claimed it first`,
+      );
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -425,12 +464,20 @@ export class TransferConfirmationService {
       );
     }
 
-    // Marks the transaction as acted-on before calling Rubies — a second
-    // concurrent execution hits the PENDING_PIN guard above, not this path.
-    await this.prisma.transaction.update({
-      where: { id: transaction.id },
-      data: { status: TransactionStatus.CONFIRMED, confirmedAt: new Date() },
-    });
+    // The single most important claim in this service. Multiple valid PIN
+    // challenges can exist for one transaction by design — confirmTransfer mints
+    // one, every wrong-PIN retry mints another, and resumePendingTransferUi mints
+    // one more — and consumeChallenge is single-use *per token*, so N tokens can
+    // yield N valid execute outcomes. The status read above is a snapshot, so
+    // without this claim two of them both reach Rubies with the same
+    // idempotencyKey, and only Rubies-side reference dedup (which nothing here
+    // verifies) stands between that and debiting the customer twice.
+    const claimed = await this.claimStatus(
+      transaction.id,
+      TransactionStatus.PENDING_PIN,
+      { status: TransactionStatus.CONFIRMED, confirmedAt: new Date() },
+    );
+    if (!claimed) return;
 
     const result = await this.rubies.initiateTransfer({
       fromAccountNumber: user.rubiesAccountNumber,
@@ -472,10 +519,12 @@ export class TransferConfirmationService {
     )
       return;
 
-    await this.prisma.transaction.update({
-      where: { id: transactionId },
-      data: { status: TransactionStatus.CANCELLED },
-    });
+    const cancelled = await this.claimStatus(
+      transactionId,
+      TransactionStatus.PENDING_CONFIRMATION,
+      { status: TransactionStatus.CANCELLED },
+    );
+    if (!cancelled) return;
     await this.whatsapp.sendText(
       transaction.user.whatsappNumber,
       "Cancelled, nothing was sent.",
@@ -496,10 +545,15 @@ export class TransferConfirmationService {
       include: { user: true },
     });
     for (const transaction of pending) {
-      await this.prisma.transaction.update({
-        where: { id: transaction.id },
-        data: { status: TransactionStatus.CANCELLED },
-      });
+      // Claimed, not blind-updated: between the findMany above and this write the
+      // user may have tapped Confirm, and cancelling a transfer whose Rubies call
+      // is already in flight would leave the ledger contradicting the money.
+      const cancelled = await this.claimStatus(
+        transaction.id,
+        TransactionStatus.PENDING_CONFIRMATION,
+        { status: TransactionStatus.CANCELLED },
+      );
+      if (!cancelled) continue;
       if (!options?.silent) {
         await this.whatsapp.sendText(
           transaction.user.whatsappNumber,
@@ -511,35 +565,32 @@ export class TransferConfirmationService {
   }
 
   /**
-   * Shared by confirmTransfer's synchronous SUCCESS/FAILED path and the
-   * reconciliation scheduler (for transactions that came back PENDING and
-   * only resolved later). Idempotent at the status-update level: re-applying
-   * the same terminal status is a no-op via AllowanceService.recordSpend's
-   * own idempotency guard.
+   * Shared by executeVerifiedTransfer's synchronous SUCCESS/FAILED path, the
+   * Rubies webhook, and the reconciliation scheduler. All three can fire for the
+   * same transaction, so the transition is claimed rather than checked: without
+   * it, two of them run the whole side-effect block — duplicate "Done" message,
+   * duplicate OverrideHistory row (which then throws P2002), and a duplicate fee
+   * sweep to Rubies.
+   *
+   * The claim is scoped to CONFIRMED specifically. A transaction only reaches
+   * CONFIRMED immediately before the Rubies call, so any transfer Rubies has
+   * money for is CONFIRMED or already terminal. That also closes the forged or
+   * misrouted webhook path, where a SUCCESS event for a row still awaiting its
+   * PIN would otherwise jump it straight to EXECUTED and debit the allowance for
+   * money that never moved.
    */
   async applyTransferResult(
     transactionId: string,
     status: "SUCCESS" | "FAILED",
     rubiesReference?: string,
   ): Promise<void> {
-    const transaction = await this.prisma.transaction.findUniqueOrThrow({
-      where: { id: transactionId },
-      include: { user: true, recipient: true },
-    });
-
-    if (
-      transaction.status === TransactionStatus.EXECUTED ||
-      transaction.status === TransactionStatus.FAILED
-    ) {
-      return; // already resolved
-    }
-
     const newStatus =
       status === "SUCCESS"
         ? TransactionStatus.EXECUTED
         : TransactionStatus.FAILED;
-    await this.prisma.transaction.update({
-      where: { id: transactionId },
+
+    const { count } = await this.prisma.transaction.updateMany({
+      where: { id: transactionId, status: TransactionStatus.CONFIRMED },
       data: {
         status: newStatus,
         rubiesReference,
@@ -548,17 +599,61 @@ export class TransferConfirmationService {
       },
     });
 
+    if (count === 0) {
+      // Two very different situations, and conflating them would hide a real bug.
+      const current = await this.prisma.transaction.findUnique({
+        where: { id: transactionId },
+        select: { status: true },
+      });
+      if (
+        current?.status === TransactionStatus.EXECUTED ||
+        current?.status === TransactionStatus.FAILED
+      ) {
+        return; // benign: another handler already resolved it
+      }
+      this.logger.error(
+        `applyTransferResult(${transactionId}) rejected: status is ${current?.status ?? "missing"}, not CONFIRMED. ` +
+          `A result arrived for a transfer that was never sent.`,
+      );
+      return;
+    }
+
+    // Re-read after the claim: updateMany cannot include relations, and the side
+    // effects below need the user and recipient rows.
+    const transaction = await this.prisma.transaction.findUniqueOrThrow({
+      where: { id: transactionId },
+      include: { user: true, recipient: true },
+    });
+
     if (newStatus === TransactionStatus.EXECUTED) {
       if (transaction.type !== TransactionType.NORMAL) {
-        await this.prisma.overrideHistory.create({
-          data: {
-            userId: transaction.userId,
-            transactionId: transaction.id,
-            type: transaction.type,
-            feeAmount: transaction.feeAmount,
-            waived: Number(transaction.feeAmount) === 0,
-          },
-        });
+        try {
+          await this.prisma.overrideHistory.create({
+            data: {
+              userId: transaction.userId,
+              transactionId: transaction.id,
+              type: transaction.type,
+              feeAmount: transaction.feeAmount,
+              waived: Number(transaction.feeAmount) === 0,
+            },
+          });
+        } catch (err) {
+          // transactionId is @unique. The status claim above should make a second
+          // apply impossible, so this is belt-and-braces: an override row that
+          // already exists is the correct end state, and throwing here would
+          // abandon the spend recording and the user's receipt below.
+          if (
+            !(
+              err instanceof Prisma.PrismaClientKnownRequestError &&
+              err.code === "P2002"
+            )
+          ) {
+            throw err;
+          }
+          this.logger.warn(
+            `OverrideHistory already recorded for transaction ${transaction.id}`,
+          );
+        }
       }
       // Best-effort: never let a fee-sweep problem affect the transaction
       // the user already saw succeed — see sweepFeeToFeesAccount.

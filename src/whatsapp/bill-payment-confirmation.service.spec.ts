@@ -13,6 +13,7 @@ describe("BillPaymentConfirmationService", () => {
       findUnique: jest.Mock;
       findUniqueOrThrow: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
     };
   };
   let allowance: {
@@ -45,6 +46,9 @@ describe("BillPaymentConfirmationService", () => {
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn(),
         update: jest.fn().mockResolvedValue(undefined),
+        // Status transitions are conditional claims; count 1 means this caller
+        // won the race. See TransferConfirmationService.claimStatus.
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     allowance = {
@@ -146,8 +150,9 @@ describe("BillPaymentConfirmationService", () => {
       expect.stringContaining("Token: 1234-5678-9012"),
       user.id,
     );
-    expect(prisma.billPayment.update).toHaveBeenCalledWith(
+    expect(prisma.billPayment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: { id: "bill-1", status: BillPaymentStatus.CONFIRMED },
         data: expect.objectContaining({ vendorToken: "1234-5678-9012" }),
       }),
     );

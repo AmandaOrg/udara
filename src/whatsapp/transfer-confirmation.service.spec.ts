@@ -39,6 +39,7 @@ describe("TransferConfirmationService", () => {
       findFirst: jest.Mock;
       findMany: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
     };
     overrideHistory: { create: jest.Mock };
     dailyAllowance: { findMany: jest.Mock };
@@ -103,6 +104,11 @@ describe("TransferConfirmationService", () => {
         findFirst: jest.fn(),
         findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn(),
+        // Money-state transitions are conditional claims, not blind updates:
+        // `updateMany({ where: { id, status: <expected> } })` returning count 1
+        // means this caller won the race. Default to winning; individual tests
+        // override with { count: 0 } to exercise the loser path.
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       overrideHistory: { create: jest.fn() },
       dailyAllowance: { findMany: jest.fn().mockResolvedValue([]) },
@@ -373,9 +379,13 @@ describe("TransferConfirmationService", () => {
       await service.confirmTransfer("txn-1");
 
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
-      expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { status: TransactionStatus.FAILED } }),
-      );
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "txn-1",
+          status: TransactionStatus.PENDING_CONFIRMATION,
+        },
+        data: { status: TransactionStatus.FAILED },
+      });
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
         expect.stringContaining("only has"),
@@ -403,7 +413,7 @@ describe("TransferConfirmationService", () => {
       );
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
       // Critically: the row must NOT be moved to FAILED — nothing is known yet.
-      expect(prisma.transaction.update).not.toHaveBeenCalled();
+      expect(prisma.transaction.updateMany).not.toHaveBeenCalled();
     });
 
     it("does NOT create an OverrideHistory row for a NORMAL transfer", async () => {
@@ -442,13 +452,26 @@ describe("TransferConfirmationService", () => {
 
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
       expect(pinGate.requestTransferPin).toHaveBeenCalledWith(user, "txn-1");
-      expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            status: TransactionStatus.PENDING_PIN,
-          }),
-        }),
-      );
+      // Claimed from PENDING_CONFIRMATION, so a second Confirm tap arriving
+      // concurrently cannot mint a second PIN challenge for the same transfer.
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "txn-1",
+          status: TransactionStatus.PENDING_CONFIRMATION,
+        },
+        data: { status: TransactionStatus.PENDING_PIN },
+      });
+    });
+
+    it("does not open a PIN challenge when another handler already claimed the transfer", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
+      rubies.getBalance.mockResolvedValue(50_000);
+      prisma.transaction.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.confirmTransfer("txn-1");
+
+      expect(pinGate.requestTransferPin).not.toHaveBeenCalled();
+      expect(rubies.initiateTransfer).not.toHaveBeenCalled();
     });
 
     it("sends the setup form, and does not transfer, when the user has no PIN yet", async () => {
@@ -499,13 +522,13 @@ describe("TransferConfirmationService", () => {
 
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
       expect(pinGate.notifyLocked).toHaveBeenCalled();
-      expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            status: TransactionStatus.CANCELLED,
-          }),
-        }),
-      );
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "txn-1",
+          status: TransactionStatus.PENDING_CONFIRMATION,
+        },
+        data: { status: TransactionStatus.CANCELLED },
+      });
     });
 
     it("refuses to execute a transaction that never passed through the PIN gate", async () => {
@@ -566,13 +589,12 @@ describe("TransferConfirmationService", () => {
 
       await service.executeVerifiedTransfer("txn-1");
 
-      expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            status: TransactionStatus.CONFIRMED,
-          }),
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: { id: "txn-1", status: TransactionStatus.PENDING_PIN },
+        data: expect.objectContaining({
+          status: TransactionStatus.CONFIRMED,
         }),
-      );
+      });
       expect(rubies.initiateTransfer).toHaveBeenCalledWith(
         expect.objectContaining({
           fromAccountNumber: "7712345678",
@@ -580,11 +602,10 @@ describe("TransferConfirmationService", () => {
           idempotencyKey: "idem-1",
         }),
       );
-      expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: TransactionStatus.EXECUTED }),
-        }),
-      );
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: { id: "txn-1", status: TransactionStatus.CONFIRMED },
+        data: expect.objectContaining({ status: TransactionStatus.EXECUTED }),
+      });
       expect(allowance.recordSpend).toHaveBeenCalledWith("txn-1");
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
@@ -636,11 +657,10 @@ describe("TransferConfirmationService", () => {
 
       await service.executeVerifiedTransfer("txn-1");
 
-      expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: TransactionStatus.FAILED }),
-        }),
-      );
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: { id: "txn-1", status: TransactionStatus.CONFIRMED },
+        data: expect.objectContaining({ status: TransactionStatus.FAILED }),
+      });
       expect(allowance.recordSpend).not.toHaveBeenCalled();
     });
 
@@ -656,8 +676,8 @@ describe("TransferConfirmationService", () => {
 
       await service.executeVerifiedTransfer("txn-1");
 
-      // Only the one CONFIRMED update — no second update pushing it to EXECUTED/FAILED.
-      expect(prisma.transaction.update).toHaveBeenCalledTimes(1);
+      // Only the one CONFIRMED claim — no second claim pushing it to EXECUTED/FAILED.
+      expect(prisma.transaction.updateMany).toHaveBeenCalledTimes(1);
       expect(allowance.recordSpend).not.toHaveBeenCalled();
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
@@ -677,11 +697,13 @@ describe("TransferConfirmationService", () => {
 
       await service.cancelTransfer("txn-1");
 
-      expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { status: TransactionStatus.CANCELLED },
-        }),
-      );
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "txn-1",
+          status: TransactionStatus.PENDING_CONFIRMATION,
+        },
+        data: { status: TransactionStatus.CANCELLED },
+      });
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
         expect.stringContaining("Cancelled"),
@@ -696,26 +718,44 @@ describe("TransferConfirmationService", () => {
         user,
       });
       await service.cancelTransfer("txn-1");
-      expect(prisma.transaction.update).not.toHaveBeenCalled();
+      expect(prisma.transaction.updateMany).not.toHaveBeenCalled();
     });
   });
 
   describe("applyTransferResult", () => {
+    /**
+     * Three callers can fire for the same transaction — the synchronous path, the
+     * Rubies webhook, and the reconciliation scheduler — so the CONFIRMED claim
+     * is what stops two of them running the side-effect block twice.
+     */
     it("is idempotent — a second call on an already-EXECUTED transaction is a no-op", async () => {
-      prisma.transaction.findUniqueOrThrow.mockResolvedValue({
-        id: "txn-1",
+      prisma.transaction.updateMany.mockResolvedValue({ count: 0 });
+      prisma.transaction.findUnique.mockResolvedValue({
         status: TransactionStatus.EXECUTED,
-        user,
-        recipient,
-        amount: 5000,
-        type: TransactionType.NORMAL,
-        feeAmount: 0,
       });
 
       await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
 
-      expect(prisma.transaction.update).not.toHaveBeenCalled();
       expect(allowance.recordSpend).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+    });
+
+    /**
+     * A forged or misrouted Rubies webhook must not be able to jump a transfer
+     * that is still awaiting its PIN straight to EXECUTED, which would debit the
+     * allowance and send a receipt for money that never moved.
+     */
+    it("refuses a result for a transfer that was never sent, and says so loudly", async () => {
+      prisma.transaction.updateMany.mockResolvedValue({ count: 0 });
+      prisma.transaction.findUnique.mockResolvedValue({
+        status: TransactionStatus.PENDING_PIN,
+      });
+
+      await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+      expect(allowance.recordSpend).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+      expect(prisma.transferDraft.updateMany).not.toHaveBeenCalled();
     });
 
     it("resolves a still-CONFIRMED transaction to EXECUTED and records the spend", async () => {
@@ -731,11 +771,10 @@ describe("TransferConfirmationService", () => {
 
       await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
 
-      expect(prisma.transaction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: TransactionStatus.EXECUTED }),
-        }),
-      );
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: { id: "txn-1", status: TransactionStatus.CONFIRMED },
+        data: expect.objectContaining({ status: TransactionStatus.EXECUTED }),
+      });
       expect(allowance.recordSpend).toHaveBeenCalledWith("txn-1");
       expect(prisma.transferDraft.updateMany).toHaveBeenCalled();
     });

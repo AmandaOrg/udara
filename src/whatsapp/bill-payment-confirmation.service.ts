@@ -139,13 +139,32 @@ export class BillPaymentConfirmationService {
       throw new BadRequestException(`User ${user.id} has no Rubies account`);
     }
 
-    const balance = await this.rubies.getBalance(user.rubiesAccountNumber);
+    // Same reasoning as TransferConfirmationService.confirmTransfer: a Rubies
+    // blip here used to throw out to the controller and the user got nothing.
+    const balance = await this.rubies
+      .getBalance(user.rubiesAccountNumber)
+      .catch((err) => {
+        this.logger.warn(
+          `confirmBillPayment: balance check failed for ${payment.id}: ${String(err)}`,
+        );
+        return null;
+      });
+    if (balance === null) {
+      await this.whatsapp.sendText(
+        user.whatsappNumber,
+        "i couldn't check your balance just now. tap confirm again in a moment.",
+        user.id,
+      );
+      return;
+    }
     const totalCost = Number(payment.amount) + Number(payment.feeAmount);
     if (balance < totalCost) {
-      await this.prisma.billPayment.update({
-        where: { id: payment.id },
-        data: { status: BillPaymentStatus.FAILED },
-      });
+      const failed = await this.claimStatus(
+        payment.id,
+        BillPaymentStatus.PENDING_CONFIRMATION,
+        { status: BillPaymentStatus.FAILED },
+      );
+      if (!failed) return;
       await this.whatsapp.sendText(
         user.whatsappNumber,
         `That needs ₦${totalCost.toLocaleString("en-NG")} but your account only has ₦${balance.toLocaleString("en-NG")}. Cancelled.`,
@@ -165,19 +184,52 @@ export class BillPaymentConfirmationService {
     }
 
     if (this.pinGate.isLocked(user)) {
-      await this.prisma.billPayment.update({
-        where: { id: payment.id },
-        data: { status: BillPaymentStatus.CANCELLED },
-      });
+      const cancelled = await this.claimStatus(
+        payment.id,
+        BillPaymentStatus.PENDING_CONFIRMATION,
+        { status: BillPaymentStatus.CANCELLED },
+      );
+      if (!cancelled) return;
       await this.pinGate.notifyLocked(user);
       return;
     }
 
-    await this.prisma.billPayment.update({
-      where: { id: payment.id },
-      data: { status: BillPaymentStatus.PENDING_PIN },
-    });
+    // Claimed, not blind-updated — see TransferConfirmationService.claimStatus
+    // for why the status read at the top of this method cannot be the guard.
+    const claimed = await this.claimStatus(
+      payment.id,
+      BillPaymentStatus.PENDING_CONFIRMATION,
+      { status: BillPaymentStatus.PENDING_PIN },
+    );
+    if (!claimed) return;
     await this.pinGate.requestBillPaymentPin(user, payment.id);
+  }
+
+  /**
+   * Moves a bill payment from one status to another, atomically, reporting
+   * whether this caller won. Mirrors TransferConfirmationService.claimStatus;
+   * the two exist separately because Prisma types the two models' update inputs
+   * independently.
+   */
+  private async claimStatus(
+    billPaymentId: string,
+    from: BillPaymentStatus,
+    // Not Prisma.BillPaymentUpdateManyMutationInput: the bill-pay models are
+    // reached through a local enum shim (see prisma/bill-payment.enums.ts), so
+    // the generated namespace does not carry them here.
+    data: { status: BillPaymentStatus; confirmedAt?: Date },
+  ): Promise<boolean> {
+    const { count } = await this.prisma.billPayment.updateMany({
+      where: { id: billPaymentId, status: from },
+      data,
+    });
+    if (count === 0) {
+      this.logger.warn(
+        `bill payment ${billPaymentId} was not in ${from} — another handler claimed it first`,
+      );
+      return false;
+    }
+    return true;
   }
 
   async cancelBillPayment(billPaymentId: string): Promise<void> {
@@ -215,10 +267,12 @@ export class BillPaymentConfirmationService {
       include: { user: true },
     });
     for (const payment of pending) {
-      await this.prisma.billPayment.update({
-        where: { id: payment.id },
-        data: { status: BillPaymentStatus.CANCELLED },
-      });
+      const cancelled = await this.claimStatus(
+        payment.id,
+        BillPaymentStatus.PENDING_CONFIRMATION,
+        { status: BillPaymentStatus.CANCELLED },
+      );
+      if (!cancelled) continue;
       if (!options?.silent) {
         await this.whatsapp.sendText(
           payment.user.whatsappNumber,
@@ -254,10 +308,15 @@ export class BillPaymentConfirmationService {
       );
     }
 
-    await this.prisma.billPayment.update({
-      where: { id: payment.id },
-      data: { status: BillPaymentStatus.CONFIRMED, confirmedAt: new Date() },
-    });
+    // Claimed from PENDING_PIN before the VAS call, for the same reason as
+    // transfers: several valid PIN challenges can exist for one payment, so two
+    // concurrent executions would otherwise both reach Rubies.
+    const claimed = await this.claimStatus(
+      payment.id,
+      BillPaymentStatus.PENDING_PIN,
+      { status: BillPaymentStatus.CONFIRMED, confirmedAt: new Date() },
+    );
+    if (!claimed) return;
 
     const requestReference =
       payment.requestReference ?? payment.idempotencyKey ?? payment.id;
@@ -299,32 +358,45 @@ export class BillPaymentConfirmationService {
     rubiesReference?: string,
     vendorToken?: string,
   ): Promise<void> {
-    const payment = await this.prisma.billPayment.findUniqueOrThrow({
+    const existing = await this.prisma.billPayment.findUniqueOrThrow({
       where: { id: billPaymentId },
       include: { user: true },
     });
-
-    if (
-      payment.status === BillPaymentStatus.EXECUTED ||
-      payment.status === BillPaymentStatus.FAILED
-    ) {
-      return;
-    }
 
     const newStatus =
       status === "SUCCESS"
         ? BillPaymentStatus.EXECUTED
         : BillPaymentStatus.FAILED;
 
-    await this.prisma.billPayment.update({
-      where: { id: billPaymentId },
+    // Claimed from CONFIRMED only, so a result arriving for a payment that was
+    // never sent cannot debit the allowance and send a receipt. Mirrors
+    // TransferConfirmationService.applyTransferResult.
+    const { count } = await this.prisma.billPayment.updateMany({
+      where: { id: billPaymentId, status: BillPaymentStatus.CONFIRMED },
       data: {
         status: newStatus,
         rubiesReference,
-        vendorToken: vendorToken ?? payment.vendorToken ?? undefined,
-        executedAt: newStatus === BillPaymentStatus.EXECUTED ? new Date() : undefined,
+        vendorToken: vendorToken ?? existing.vendorToken ?? undefined,
+        executedAt:
+          newStatus === BillPaymentStatus.EXECUTED ? new Date() : undefined,
       },
     });
+
+    if (count === 0) {
+      if (
+        existing.status === BillPaymentStatus.EXECUTED ||
+        existing.status === BillPaymentStatus.FAILED
+      ) {
+        return; // benign: already resolved by another handler
+      }
+      this.logger.error(
+        `applyBillPaymentResult(${billPaymentId}) rejected: status is ${existing.status}, not CONFIRMED. ` +
+          `A result arrived for a purchase that was never sent.`,
+      );
+      return;
+    }
+
+    const payment = existing;
 
     if (newStatus === BillPaymentStatus.EXECUTED) {
       await this.allowance.recordBillPaymentSpend(payment.id);
