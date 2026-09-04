@@ -86,6 +86,9 @@ const PLAN_REVIEW_ADJUST = "plan_review:adjust";
  * stages that don't need judgment — see the docblock in ai/prompts/onboarding.prompts.ts
  * for exactly which stages are which and why).
  */
+/** Turns kept on the row; the model sees the last 20. */
+const STORED_HISTORY_LIMIT = 60;
+
 @Injectable()
 export class OnboardingService {
   private readonly logger = new Logger(OnboardingService.name);
@@ -125,7 +128,9 @@ export class OnboardingService {
     messages.push({ role, content, at: new Date().toISOString() });
     return this.prisma.onboardingSession.update({
       where: { id: sessionId },
-      data: { messages },
+      // Trimmed on write. Only the last 20 turns are sent to the model, but the
+      // stored array was unbounded and is read and rewritten whole every turn.
+      data: { messages: messages.slice(-STORED_HISTORY_LIMIT) },
     });
   }
 

@@ -79,6 +79,13 @@ const ACTION_TYPES: ReadonlySet<string> = new Set([
   "cancel_surface",
 ]);
 
+/**
+ * How many turns to keep on the row. The model only ever sees the last 12, so
+ * this is generous headroom for context while stopping the JSON blob growing
+ * for the life of the conversation.
+ */
+const STORED_HISTORY_LIMIT = 50;
+
 @Injectable()
 export class OrchestratorService {
   private readonly logger = new Logger(OrchestratorService.name);
@@ -828,7 +835,13 @@ export class OrchestratorService {
     messages.push({ role, content, at: new Date().toISOString() });
     return this.prisma.conversationSession.update({
       where: { id: sessionId },
-      data: { messages: messages as Prisma.InputJsonValue },
+      // Trimmed on write, not only on read. Only the last 12 turns are ever
+      // sent to the model, but the stored array grew without limit — and it is
+      // read whole and written whole twice per turn, so the row, the query and
+      // the JSON parse all grew linearly with the lifetime of the conversation.
+      data: {
+        messages: messages.slice(-STORED_HISTORY_LIMIT) as Prisma.InputJsonValue,
+      },
     });
   }
 

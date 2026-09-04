@@ -352,8 +352,8 @@ model Recipient {
   accountName   String?
   label         RecipientLabel @default(OTHER)
   // User-facing name for repeat sends ("james", "landlord") — not a bank field.
-  nickname   String?
-  lastUsedAt DateTime?
+  nickname      String?
+  lastUsedAt    DateTime?
 
   createdAt DateTime @default(now())
 
@@ -391,17 +391,17 @@ model BillPaymentDraft {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
-  category BillPaymentCategory @default(AIRTIME)
+  category BillPaymentCategory    @default(AIRTIME)
   step     BillPaymentDraftStep
   status   BillPaymentDraftStatus @default(ACTIVE)
 
-  billerCode  String?
-  productCode String?
-  telcoLabel  String?
+  billerCode   String?
+  productCode  String?
+  telcoLabel   String?
   productLabel String?
   customerName String?
-  amount      Decimal? @db.Decimal(14, 2)
-  msisdn      String?
+  amount       Decimal? @db.Decimal(14, 2)
+  msisdn       String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -414,23 +414,23 @@ model BillPayment {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
-  category    BillPaymentCategory @default(AIRTIME)
-  billerCode  String
-  productCode String
-  telcoLabel  String
+  category     BillPaymentCategory @default(AIRTIME)
+  billerCode   String
+  productCode  String
+  telcoLabel   String
   productLabel String?
   customerName String?
-  msisdn      String
-  amount      Decimal           @db.Decimal(14, 2)
-  type        TransactionType   @default(NORMAL)
-  status      BillPaymentStatus @default(PENDING_CONFIRMATION)
+  msisdn       String
+  amount       Decimal             @db.Decimal(14, 2)
+  type         TransactionType     @default(NORMAL)
+  status       BillPaymentStatus   @default(PENDING_CONFIRMATION)
 
   feeAmount Decimal @default(0) @db.Decimal(14, 2)
 
-  rubiesReference   String?
-  vendorToken       String?
-  requestReference  String? @unique
-  idempotencyKey    String? @unique
+  rubiesReference  String?
+  vendorToken      String?
+  requestReference String? @unique
+  idempotencyKey   String? @unique
 
   dailyAllowanceId     String?
   dailyAllowance       DailyAllowance? @relation(fields: [dailyAllowanceId], references: [id])
@@ -452,9 +452,9 @@ model Transaction {
   recipientId String
   recipient   Recipient @relation(fields: [recipientId], references: [id])
 
-  amount Decimal           @db.Decimal(14, 2)
-  type   TransactionType   @default(NORMAL)
-  status TransactionStatus @default(PENDING_CONFIRMATION)
+  amount       Decimal           @db.Decimal(14, 2)
+  type         TransactionType   @default(NORMAL)
+  status       TransactionStatus @default(PENDING_CONFIRMATION)
   // This send's stated purpose (spend-check / orchestrator label_hint) — may
   // differ from Recipient.label when the person was tagged on an earlier send.
   purposeLabel RecipientLabel?
@@ -491,6 +491,14 @@ model Transaction {
   executedAt  DateTime?
 
   overrideHistory OverrideHistory?
+
+  // Prisma does not index foreign keys on Postgres, so this table had nothing
+  // but its primary key and idempotencyKey. Every orchestrator turn scans it
+  // twice (pending confirms, last completed send) and the reconciler scans it
+  // once a minute.
+  @@index([userId, status, createdAt])
+  @@index([status, confirmedAt])
+  @@index([status, appliedToAllowanceAt])
 }
 
 // Denormalized record of every override applied — separate from Transaction
@@ -534,6 +542,11 @@ model SettingsChangeRequest {
   status       SettingsChangeStatus @default(PENDING)
   managerNotes String?
   resolvedAt   DateTime?
+
+  // The manager scheduler scans on (status, initialReplySentAt,
+  // initialReplyDueAt) every minute; there was no index at all.
+  @@index([status, initialReplySentAt, initialReplyDueAt])
+  @@index([userId, status])
 }
 
 // Raw conversation + extracted-field state for the onboarding flow.
@@ -548,6 +561,9 @@ model OnboardingSession {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Read on every pre-account turn, previously unindexed.
+  @@index([userId, createdAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +593,9 @@ model WhatsappMessage {
   processedAt      DateTime?
 
   @@index([userId, createdAt])
+  // ChunkedMessengerService reads the user's last inbound by fromNumber before
+  // every chunked reply; nothing indexed it.
+  @@index([fromNumber, createdAt])
 }
 
 // Post-onboarding conversation state. OnboardingSession stays dedicated to the
@@ -692,7 +711,7 @@ model PinChallenge {
   purpose       PinChallengePurpose
   transactionId String? // null for SETUP, RESET, and bill-pay PIN
   billPaymentId String?
-  billPayment   BillPayment? @relation(fields: [billPaymentId], references: [id])
+  billPayment   BillPayment?        @relation(fields: [billPaymentId], references: [id])
 
   // RESET only. The emailed one-time code, hashed with the same scrypt path
   // as the PIN itself — a 6-digit code is a 1,000,000-key space, so it is
@@ -780,7 +799,10 @@ model WeeklyReview {
   newDailyLimit Decimal?           @db.Decimal(14, 2) // set only if they adjusted
 
   createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  // @default matches the hand-written migration that added this column with
+  // DEFAULT CURRENT_TIMESTAMP; without it the next `migrate dev` would emit a
+  // spurious DROP DEFAULT.
+  updatedAt   DateTime  @default(now()) @updatedAt
   respondedAt DateTime?
 
   @@unique([userId, weekStartDate])

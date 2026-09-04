@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { Injectable } from "@nestjs/common";
 import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
@@ -29,6 +30,17 @@ interface MetaSendResponse {
  * doesn't have dedicated INTERACTIVE/TEMPLATE members, only inbound-content
  * types), full fidelity lives in rawPayload/textBody regardless.
  */
+/**
+ * Meta normally returns a message id, but not always — and `waMessageId` is a
+ * unique column. Falling back to the empty string meant the *second* send that
+ * lacked an id collided on that unique index and threw, after the message had
+ * already been delivered, aborting whatever sequence the caller was midway
+ * through. A synthetic id keeps the row honest and unique.
+ */
+function fallbackWaMessageId(id: string | undefined): string {
+  return id ?? `local-${randomUUID()}`;
+}
+
 @Injectable()
 export class WhatsappService {
   constructor(
@@ -75,7 +87,7 @@ export class WhatsappService {
       text: { body },
     };
     const response = await this.post(payload);
-    const waMessageId = response.messages?.[0]?.id ?? "";
+    const waMessageId = fallbackWaMessageId(response.messages?.[0]?.id);
     await this.messages.recordOutbound({
       waMessageId,
       to,
@@ -116,7 +128,7 @@ export class WhatsappService {
       },
     };
     const response = await this.post(payload);
-    const waMessageId = response.messages?.[0]?.id ?? "";
+    const waMessageId = fallbackWaMessageId(response.messages?.[0]?.id);
     await this.messages.recordOutbound({
       waMessageId,
       to,
@@ -170,7 +182,7 @@ export class WhatsappService {
       },
     };
     const response = await this.post(payload);
-    const waMessageId = response.messages?.[0]?.id ?? "";
+    const waMessageId = fallbackWaMessageId(response.messages?.[0]?.id);
     await this.messages.recordOutbound({
       waMessageId,
       to,
@@ -207,7 +219,7 @@ export class WhatsappService {
       },
     };
     const response = await this.post(payload);
-    const waMessageId = response.messages?.[0]?.id ?? "";
+    const waMessageId = fallbackWaMessageId(response.messages?.[0]?.id);
     await this.messages.recordOutbound({
       waMessageId,
       to,
@@ -265,7 +277,7 @@ export class WhatsappService {
       },
     };
     const response = await this.post(payload);
-    const waMessageId = response.messages?.[0]?.id ?? "";
+    const waMessageId = fallbackWaMessageId(response.messages?.[0]?.id);
     await this.messages.recordOutbound({
       waMessageId,
       to: params.to,

@@ -45,6 +45,10 @@ ALLOW_UNSIGNED_WEBHOOKS=true
 
 `DISABLE_SCHEDULERS=true` stops every `@Cron` from registering. The CLI tools set it themselves, because they boot the whole `AppModule` to reach its providers and would otherwise turn the machine running them into a second replica. Never set it on the server.
 
+## Database connections
+
+Set `connection_limit` on `DATABASE_URL` in every deployed environment, for example `?connection_limit=10&pool_timeout=20`. Prisma otherwise defaults to `num_cpus * 2 + 1`, and a container usually reports the host's CPU count, so a single replica can hold dozens of connections. A rolling deploy overlaps two instances, `prisma migrate deploy` opens its own at boot, and the cron jobs share the pool — enough to exhaust a small Postgres and start failing inside money paths.
+
 ## Health
 
 `GET /health` reports database reachability and is the only non-webhook route. Point the platform's health check at it: without one, a container that boots but cannot reach Postgres stays in the rotation and silently drops every message it acks.
