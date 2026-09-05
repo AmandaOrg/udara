@@ -142,21 +142,24 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 
 ## Phase 3 — Operability
 
-**Status:** not started
+**Status:** completed
+**Started:** 2026-09-04
+**Completed:** 2026-09-05
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] `/health` route, shutdown hooks, `bootstrap()` error handling
-- [ ] Sentry behind an optional DSN, plus a global exception filter that keeps stack traces
-- [ ] Webhook-edge throttling and a per-user cost cap; audio gated behind the pre-account check
-- [ ] Replica-safe nudges, manager replies, and email loops; crons kept out of the CLI
-- [ ] Provider timeouts actually honoured on Anthropic and Gemini; LLM logging failures non-fatal
+- [x] `/health` route, shutdown hooks, `bootstrap()` error handling
+- [x] Sentry behind an optional DSN, plus a global exception filter that keeps stack traces
+- [x] Webhook-edge throttling and a per-user cost cap; audio gated behind the pre-account check
+- [x] Replica-safe nudges, manager replies, and email loops; crons kept out of the CLI
+- [x] Provider timeouts actually honoured on Anthropic and Gemini; LLM logging failures non-fatal
 
 ### Acceptance tests
 
-- [ ] `/health` reports database reachability
-- [ ] A duplicate scheduler tick sends exactly one message
-- [ ] A hung provider call aborts rather than running past the orchestrator's race
+- [x] `/health` reports database reachability
+- [x] A duplicate scheduler tick sends exactly one message
+- [x] A hung provider call aborts rather than running past the orchestrator's race
 
 ### Progress log
 
@@ -168,20 +171,23 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 
 ## Phase 4 — Data layer, non-destructive
 
-**Status:** not started
+**Status:** completed
+**Started:** 2026-09-04
+**Completed:** 2026-09-05
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] Indexes on `Transaction`, `WhatsappMessage.fromNumber`, `SettingsChangeRequest`, `OnboardingSession`
-- [ ] Explicit connection limit, documented
-- [ ] Conversation and onboarding history trimmed on write
-- [ ] Empty-string `waMessageId` no longer written to a unique column
-- [ ] Migration drift on `WeeklyReview.updatedAt` corrected
+- [x] Indexes on `Transaction`, `WhatsappMessage.fromNumber`, `SettingsChangeRequest`, `OnboardingSession`
+- [x] Explicit connection limit, documented
+- [x] Conversation and onboarding history trimmed on write
+- [x] Empty-string `waMessageId` no longer written to a unique column
+- [x] Migration drift on `WeeklyReview.updatedAt` corrected
 
 ### Acceptance tests
 
-- [ ] `prisma migrate deploy` applies cleanly from scratch
-- [ ] Session history stops growing without bound across repeated turns
+- [x] `prisma migrate deploy` applies cleanly from scratch
+- [x] Session history stops growing without bound across repeated turns
 
 ### Progress log
 
@@ -193,23 +199,26 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 
 ## Phase 5 — LLM safety
 
-**Status:** not started
+**Status:** completed
+**Started:** 2026-09-04
+**Completed:** 2026-09-05
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] Account, phone and meter digits dropped unless attested by the user or a visible photo (H5)
-- [ ] Reply text sanitised against the same attested corpus
-- [ ] Third-party names delimited where interpolated into the system prompt
-- [ ] Contextual secret scrubber before persistence and before the model (H6)
-- [ ] Second redaction list reconciled with `SENSITIVE_FLOW_FIELDS`
-- [ ] Onboarding LLM call wrapped with a timeout and fallback; restart and help escape hatches
-- [ ] `temperature: 0` removed; Deepgram language and keyterms set
+- [x] Account, phone and meter digits dropped unless attested by the user or a visible photo (H5)
+- [x] Reply text sanitised against the same attested corpus
+- [x] Third-party names delimited where interpolated into the system prompt
+- [x] Contextual secret scrubber before persistence and before the model (H6)
+- [x] Second redaction list reconciled with `SENSITIVE_FLOW_FIELDS`
+- [x] Onboarding LLM call wrapped with a timeout and fallback; restart and help escape hatches
+- [x] `temperature: 0` removed; Deepgram language and keyterms set
 
 ### Acceptance tests
 
-- [ ] A model-invented account number never reaches the wizard
-- [ ] A typed BVN is not persisted verbatim, while an 11-digit airtime number still works
-- [ ] A provider failure mid-onboarding produces a reply, not silence
+- [x] A model-invented account number never reaches the wizard
+- [x] A typed BVN is not persisted verbatim, while an 11-digit airtime number still works
+- [x] A provider failure mid-onboarding produces a reply, not silence
 
 ### Progress log
 
@@ -222,23 +231,26 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 
 ## Phase 6 — Weekly-review fixes
 
-**Status:** not started
+**Status:** completed
+**Started:** 2026-09-04
+**Completed:** 2026-09-05
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] Review branch moved after the wizard checks
-- [ ] Lenient limit parser added; `parseNairaAmount` left strict for its four wizard callers
-- [ ] Wait never dropped silently; false completion ack suppressed
-- [ ] Synthetic photo placeholder text ignored
-- [ ] Monday answers recompute today's allowance; partial-week copy corrected
-- [ ] TTL expressed as a query predicate; no-op touch write removed
-- [ ] Stale `SENT` reviews rejected; unreachable branch deleted; duplicates consolidated
+- [x] Review branch moved after the wizard checks
+- [x] Lenient limit parser added; `parseNairaAmount` left strict for its four wizard callers
+- [x] Wait never dropped silently; false completion ack suppressed
+- [x] Synthetic photo placeholder text ignored
+- [x] Monday answers recompute today's allowance; partial-week copy corrected
+- [x] TTL expressed as a query predicate; no-op touch write removed
+- [x] Stale `SENT` reviews rejected; unreachable branch deleted; duplicates consolidated
 
 ### Acceptance tests
 
-- [ ] `5000 naira`, `make it 5k`, `5,000.` set the limit
-- [ ] `cancel` during an active bill draft cancels the draft, not the review
-- [ ] A captionless photo leaves the wait open
+- [x] `5000 naira`, `make it 5k`, `5,000.` set the limit
+- [x] `cancel` during an active bill draft cancels the draft, not the review
+- [x] A captionless photo leaves the wait open
 
 ### Progress log
 
@@ -250,19 +262,22 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 
 ## Phase 7 — Housekeeping
 
-**Status:** not started
+**Status:** completed
+**Started:** 2026-09-04
+**Completed:** 2026-09-05
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] Fake values replace real-looking identifiers in scripts and specs
-- [ ] `npm audit` advisories resolved
-- [ ] Dead orchestrator-era code and its specs deleted
-- [ ] Docs drift corrected
+- [x] Fake values replace real-looking identifiers in scripts and specs
+- [x] `npm audit` advisories resolved
+- [x] Dead orchestrator-era code and its specs deleted
+- [x] Docs drift corrected
 
 ### Acceptance tests
 
-- [ ] `security:check` and `docs:check` pass
-- [ ] Full suite green after deletions
+- [x] `security:check` and `docs:check` pass
+- [x] Full suite green after deletions
 
 ### Progress log
 
@@ -274,21 +289,24 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 
 ## Phase 8 — Settings-change and exit path
 
-**Status:** not started
+**Status:** completed
+**Started:** 2026-09-04
+**Completed:** 2026-09-05
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] ADR in `docs/decisions/` for widening what the LLM may trigger
-- [ ] `settings_request` surface, sanitised closed-enum hints, executor dispatch
-- [ ] Admin decision path on a restricted module, never `AppModule`
-- [ ] `reviewRequest` guarded by status; approval and restriction lift made atomic
-- [ ] Golden cases added; `PRODUCT_BEHAVIOR.md` corrected
+- [x] ADR in `docs/decisions/` for widening what the LLM may trigger
+- [x] `settings_request` surface, sanitised closed-enum hints, executor dispatch
+- [x] Admin decision path on a restricted module, never `AppModule`
+- [x] `reviewRequest` guarded by status; approval and restriction lift made atomic
+- [x] Golden cases added; `PRODUCT_BEHAVIOR.md` corrected
 
 ### Acceptance tests
 
-- [ ] A filed request cannot be approved before `eligibleAt`
-- [ ] The new surface cannot move money
-- [ ] A rejected request cannot later be flipped to approved
+- [x] A filed request cannot be approved before `eligibleAt`
+- [x] The new surface cannot move money
+- [x] A rejected request cannot later be flipped to approved
 
 ### Progress log
 
@@ -304,18 +322,46 @@ Sub-ordered per the design review. Each step is independently deployable and no 
 | --- | --- | --- |
 | 1 | Log and webhook containment | completed |
 | 2 | Money-path correctness | completed |
-| 3 | Operability | not started |
-| 4 | Data layer, non-destructive | not started |
-| 5 | LLM safety | not started |
-| 6 | Weekly-review fixes | not started |
-| 7 | Housekeeping | not started |
-| 8 | Settings-change and exit path | not started |
+| 3 | Operability | completed |
+| 4 | Data layer, non-destructive | completed |
+| 5 | LLM safety | completed |
+| 6 | Weekly-review fixes | completed |
+| 7 | Housekeeping | completed |
+| 8 | Settings-change and exit path | completed |
 
 Allowed status: `not started` · `in progress` · `blocked` · `completed` · `deleted`
 
+## Outcome
+
+All eight phases landed between 2026-09-04 and 2026-09-05, one commit per phase so any single change can be reverted alone.
+
+| Measure | Before | After |
+| --- | --- | --- |
+| Unit tests | 671 | 773 |
+| Spec files | 48 | 53 |
+| Golden dialogues | 53 | 57 |
+| Security invariants | S1–S12 | S1–S13 |
+
+`security:check`, `docs:check` and `tsc --noEmit` clean throughout.
+
+**Still needs a human.** These cannot be closed from the repository:
+
+1. Confirm `WHATSAPP_APP_SECRET` and `RUBIES_SECRET_KEY` are set in Railway, and that `ALLOW_UNSIGNED_WEBHOOKS` is **not**. The app now refuses to boot otherwise, so a blank secret there turns a silent vulnerability into a visible deploy failure.
+2. Treat existing Railway logs as containing customer PINs, OTPs, BVN/NIN and dates of birth. Rotate or expire them.
+3. Set `SENTRY_DSN` and point the platform health check at `GET /health`.
+4. Set `connection_limit` on `DATABASE_URL`.
+5. Confirm with Rubies whether they deduplicate on transfer `reference`. Several safety properties still rest on that assumption; the atomic claims added here mean we no longer depend on it for the common case, but the fee sweep still does.
+6. Three migrations are unverified against a live database — Docker was unavailable locally. CI runs `prisma migrate deploy`; watch the first deploy.
+
 ## Deferred
 
-- Dropping the `bvn` / `nin` columns and any retention or purge job, pending a database backup.
+Recorded deliberately, not forgotten.
+
+- Dropping the `bvn` / `nin` columns and any retention or purge job, pending a database backup. Deferred by explicit decision.
+- A Postgres advisory lock for the schedulers. In-process flags shed duplicate load today; correctness comes from the atomic claims, but Railway's zero-downtime deploys overlap instances on every deploy, so the lock is still worth adding.
+- The seven high-severity npm advisories, all of which require a Nest 10 → 12 upgrade. See the `SECURITY.md` known-risks table for why forcing that into a defect batch was rejected.
+- An operator console for settings-change requests. The CLI added in Phase 8 is the minimum; without an operator habit a filed request is acknowledged and then ignored.
+- Prompt caching and the classifier-then-persona split. Cost work, not defect repair.
 - The orchestrator `ActiveMode` redesign for the weekly review.
 - Every feature proposal in the assessment.
 - Prompt caching and the classifier-then-persona split, both cost work rather than defect repair.
