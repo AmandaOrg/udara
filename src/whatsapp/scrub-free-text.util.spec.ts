@@ -20,9 +20,7 @@ describe("scrubFreeTextSecrets", () => {
   });
 
   it("keeps the label so the message still reads sensibly", () => {
-    expect(scrubFreeTextSecrets("my pin is 1234")).toBe(
-      "my pin is [redacted]",
-    );
+    expect(scrubFreeTextSecrets("my pin is 1234")).toBe("my pin is [redacted]");
   });
 
   /**

@@ -674,7 +674,10 @@ export class TransferConfirmationService {
       if (!cancelled) continue;
       // A PIN-awaiting transfer is never dropped silently: the user was asked for
       // something and deserves to know the ask is withdrawn.
-      if (!options?.silent || transaction.status === TransactionStatus.PENDING_PIN) {
+      if (
+        !options?.silent ||
+        transaction.status === TransactionStatus.PENDING_PIN
+      ) {
         await this.whatsapp.sendText(
           transaction.user.whatsappNumber,
           "Cancelled, nothing was sent.",
@@ -762,12 +765,10 @@ export class TransferConfirmationService {
           // apply impossible, so this is belt-and-braces: an override row that
           // already exists is the correct end state, and throwing here would
           // abandon the spend recording and the user's receipt below.
-          if (
-            !(
-              err instanceof Prisma.PrismaClientKnownRequestError &&
-              err.code === "P2002"
-            )
-          ) {
+          if (!(
+            err instanceof Prisma.PrismaClientKnownRequestError &&
+            err.code === "P2002"
+          )) {
             throw err;
           }
           this.logger.warn(
@@ -935,7 +936,11 @@ export class TransferConfirmationService {
         feeSweepAttempts: { lt: FEE_SWEEP_MAX_ATTEMPTS },
         OR: [
           { feeSweepLastTryAt: null },
-          { feeSweepLastTryAt: { lt: new Date(now.getTime() - FEE_SWEEP_LEASE_MS) } },
+          {
+            feeSweepLastTryAt: {
+              lt: new Date(now.getTime() - FEE_SWEEP_LEASE_MS),
+            },
+          },
         ],
       },
       data: {

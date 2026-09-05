@@ -1,4 +1,4 @@
-import { Recipient } from '@prisma/client';
+import { Recipient } from "@prisma/client";
 
 /**
  * Match saved recipients by nickname or account name substring.

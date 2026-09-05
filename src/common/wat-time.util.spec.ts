@@ -3,7 +3,6 @@ import {
   getWatDateParts,
   startOfWatDayInstant,
   startOfPreviousWatMonthInstant,
-  startOfWatMonthInstant,
   formatPreviousWatMonthLabel,
   watDateBucketKey,
   startOfWatIsoWeekBucketKey,

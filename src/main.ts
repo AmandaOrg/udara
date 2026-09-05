@@ -4,13 +4,7 @@ import { initSentry } from "./common/sentry";
 import { AllExceptionsFilter } from "./common/all-exceptions.filter";
 import { AppModule } from "./app.module";
 
-const ALL_LOG_LEVELS: LogLevel[] = [
-  "error",
-  "warn",
-  "log",
-  "debug",
-  "verbose",
-];
+const ALL_LOG_LEVELS: LogLevel[] = ["error", "warn", "log", "debug", "verbose"];
 
 /**
  * Nest's default logger enables every level, including `debug` and `verbose`.

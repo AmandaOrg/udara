@@ -245,7 +245,10 @@ export class OrchestratorService {
       }
 
       if (spendCheckPending) {
-        const incoming = sanitizeTransferHints(proposal.action.extracted_hints, hintOptions);
+        const incoming = sanitizeTransferHints(
+          proposal.action.extracted_hints,
+          hintOptions,
+        );
         proposal = {
           ...proposal,
           action: {
@@ -896,7 +899,9 @@ export class OrchestratorService {
       // read whole and written whole twice per turn, so the row, the query and
       // the JSON parse all grew linearly with the lifetime of the conversation.
       data: {
-        messages: messages.slice(-STORED_HISTORY_LIMIT) as Prisma.InputJsonValue,
+        messages: messages.slice(
+          -STORED_HISTORY_LIMIT,
+        ) as Prisma.InputJsonValue,
       },
     });
   }

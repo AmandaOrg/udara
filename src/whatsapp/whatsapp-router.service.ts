@@ -13,7 +13,6 @@ import {
 import { BillPaymentActionsService } from "./bill-payment-actions.service";
 import { BillPaymentConfirmationService } from "./bill-payment-confirmation.service";
 import {
-  BILL_CANCEL_WORDS,
   BUNDLE_BUTTON_PREFIX,
   CANCEL_BILL_PREFIX,
   CONFIRM_BILL_PREFIX,
@@ -230,7 +229,7 @@ export class WhatsappRouterService {
     try {
       const { buffer, mimeType } = await this.whatsapp.downloadMedia(mediaId);
       const syntheticText = caption.length === 0;
-    const text = caption || "(user sent a photo)";
+      const text = caption || "(user sent a photo)";
       let image: OrchestratorTurnOptions["image"];
       if (buffer.length > 0 && buffer.length <= VISION_MAX_BYTES) {
         image = {
@@ -550,7 +549,11 @@ export class WhatsappRouterService {
         }
         const amount = parseLimitAnswer(text);
         if (amount != null) {
-          await this.weeklyReview.handleLimitAmount(user, awaitingLimit, amount);
+          await this.weeklyReview.handleLimitAmount(
+            user,
+            awaitingLimit,
+            amount,
+          );
           return;
         }
         // Not an answer, so drop the wait — but say so, and carry on with the

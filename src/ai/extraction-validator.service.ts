@@ -19,15 +19,6 @@ export interface MoneyStoryFields {
   priorAttempts: string;
 }
 
-
-const MENU_INTENT_VALUES: ReadonlySet<string> = new Set([
-  "BALANCE",
-  "LIMITS",
-  "ACCOUNT_DETAILS",
-  "TRANSFER",
-  "NONE",
-]);
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -120,5 +111,4 @@ export class ExtractionValidatorService {
       cleanedValue: { statedGoal, difficulty, priorAttempts },
     };
   }
-
 }

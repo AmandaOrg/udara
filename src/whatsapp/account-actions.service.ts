@@ -51,8 +51,6 @@ export const MENU_OVERVIEW = `i can help with:
 
 tap open menu if you want a button for any of those.`;
 
-
-
 const LABEL_ROWS = [
   { id: `${LABEL_BUTTON_PREFIX}RENT`, title: "🏠 Rent" },
   { id: `${LABEL_BUTTON_PREFIX}FOOD`, title: "🍔 Food" },
@@ -93,11 +91,7 @@ export class AccountActionsService {
   // =========================================================================
 
   async sendMainMenu(user: User): Promise<void> {
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
-      MENU_OVERVIEW,
-      user.id,
-    );
+    await this.whatsapp.sendText(user.whatsappNumber, MENU_OVERVIEW, user.id);
     await this.whatsapp.sendListMessage(
       user.whatsappNumber,
       "what would you like to do?",

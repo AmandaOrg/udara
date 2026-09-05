@@ -216,16 +216,19 @@ describe("ActionExecutorService", () => {
    */
   describe("settings_request", () => {
     it("files a request with the type the model identified", async () => {
-      await executor.execute(user as any, {
-        message: "i'll pass that to the managers",
-        actionType: "show_surface",
-        surfaceKey: "settings_request",
-        extractedHints: {
-          settingsChangeType: "EXIT_RESTRICTIONS",
-          settingsReason: "i want to stop using udara",
-        },
-        ok: true,
-      } as any);
+      await executor.execute(
+        user as any,
+        {
+          message: "i'll pass that to the managers",
+          actionType: "show_surface",
+          surfaceKey: "settings_request",
+          extractedHints: {
+            settingsChangeType: "EXIT_RESTRICTIONS",
+            settingsReason: "i want to stop using udara",
+          },
+          ok: true,
+        } as any,
+      );
 
       expect(managerConversation.fileChangeRequest).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -237,13 +240,16 @@ describe("ActionExecutorService", () => {
     });
 
     it("falls back to OTHER rather than guessing which rule they meant", async () => {
-      await executor.execute(user as any, {
-        message: "noted",
-        actionType: "show_surface",
-        surfaceKey: "settings_request",
-        extractedHints: {},
-        ok: true,
-      } as any);
+      await executor.execute(
+        user as any,
+        {
+          message: "noted",
+          actionType: "show_surface",
+          surfaceKey: "settings_request",
+          extractedHints: {},
+          ok: true,
+        } as any,
+      );
 
       expect(managerConversation.fileChangeRequest).toHaveBeenCalledWith(
         expect.objectContaining({ type: "OTHER" }),

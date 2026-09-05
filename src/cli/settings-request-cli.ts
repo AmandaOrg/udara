@@ -93,7 +93,9 @@ async function main() {
           [
             r.id,
             r.type.padEnd(18),
-            eligible ? "ELIGIBLE NOW" : `eligible ${r.eligibleAt.toDateString()}`,
+            eligible
+              ? "ELIGIBLE NOW"
+              : `eligible ${r.eligibleAt.toDateString()}`,
             `${r.user.name ?? "unnamed"} (${r.user.whatsappNumber})`,
             JSON.stringify(r.requestedChange),
             r.reason ? `reason: ${JSON.stringify(r.reason)}` : "",

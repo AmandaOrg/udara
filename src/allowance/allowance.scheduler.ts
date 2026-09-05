@@ -147,8 +147,7 @@ export class AllowanceScheduler {
 
     const templateName = withinFreeFormWindow
       ? null
-      : (this.config.get<string>("WHATSAPP_WINDOW_OPEN_TEMPLATE_NAME") ??
-        null);
+      : (this.config.get<string>("WHATSAPP_WINDOW_OPEN_TEMPLATE_NAME") ?? null);
 
     if (!withinFreeFormWindow && !templateName) {
       this.logger.warn(

@@ -432,16 +432,20 @@ export class RubiesService {
     const response = await this.post<{
       reference?: string;
       sessionId?: string;
-    }>("/baas-transaction/fund-transfer", {
-      amount: String(params.amount),
-      bankCode: params.toBankCode,
-      creditAccountNumber: params.toAccountNumber,
-      creditAccountName: params.toAccountName,
-      debitAccountNumber: params.fromAccountNumber,
-      debitAccountName: params.fromAccountName,
-      narration: params.narration,
-      reference: params.idempotencyKey,
-    }, { timeoutMs: MONEY_TIMEOUT_MS });
+    }>(
+      "/baas-transaction/fund-transfer",
+      {
+        amount: String(params.amount),
+        bankCode: params.toBankCode,
+        creditAccountNumber: params.toAccountNumber,
+        creditAccountName: params.toAccountName,
+        debitAccountNumber: params.fromAccountNumber,
+        debitAccountName: params.fromAccountName,
+        narration: params.narration,
+        reference: params.idempotencyKey,
+      },
+      { timeoutMs: MONEY_TIMEOUT_MS },
+    );
 
     return {
       reference: response.reference ?? params.idempotencyKey,
@@ -542,18 +546,21 @@ export class RubiesService {
       rechargeToken?: string;
       vendorToken?: string;
       extraData?: { token?: string; rechargeToken?: string };
-    }>("/baas-vas/purchase", {
-      reference: params.requestReference,
-      accountNumber: params.accountNumber,
-      billerCustomerId: params.billerCustomerId,
-      productCode: params.productCode,
-      amount: `${params.amount}.0`,
-      customerName: params.customerName,
-    }, { timeoutMs: MONEY_TIMEOUT_MS });
+    }>(
+      "/baas-vas/purchase",
+      {
+        reference: params.requestReference,
+        accountNumber: params.accountNumber,
+        billerCustomerId: params.billerCustomerId,
+        productCode: params.productCode,
+        amount: `${params.amount}.0`,
+        customerName: params.customerName,
+      },
+      { timeoutMs: MONEY_TIMEOUT_MS },
+    );
 
     return {
-      requestReference:
-        response.requestReference ?? params.requestReference,
+      requestReference: response.requestReference ?? params.requestReference,
       reference: response.reference ?? params.requestReference,
       status: mapRubiesResponseCodeStrict(response.responseCode),
       responseCode: response.responseCode ?? "",

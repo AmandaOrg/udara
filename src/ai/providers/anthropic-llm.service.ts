@@ -74,27 +74,30 @@ export class AnthropicLlmService implements LlmService {
       }));
 
     const start = Date.now();
-    const response = await client.messages.create({
-      model,
-      max_tokens: params.maxTokens ?? 1024,
-      temperature: params.temperature,
-      system: system || undefined,
-      messages: conversation,
-      tools: params.tool
-        ? [
-            {
-              name: params.tool.name,
-              description: params.tool.description,
-              input_schema: params.tool.schema as Anthropic.Tool.InputSchema,
-            },
-          ]
-        : undefined,
-      tool_choice: params.tool
-        ? params.forceTool
-          ? { type: "tool", name: params.tool.name }
-          : { type: "auto" }
-        : undefined,
-    }, params.timeoutMs != null ? { timeout: params.timeoutMs } : undefined);
+    const response = await client.messages.create(
+      {
+        model,
+        max_tokens: params.maxTokens ?? 1024,
+        temperature: params.temperature,
+        system: system || undefined,
+        messages: conversation,
+        tools: params.tool
+          ? [
+              {
+                name: params.tool.name,
+                description: params.tool.description,
+                input_schema: params.tool.schema as Anthropic.Tool.InputSchema,
+              },
+            ]
+          : undefined,
+        tool_choice: params.tool
+          ? params.forceTool
+            ? { type: "tool", name: params.tool.name }
+            : { type: "auto" }
+          : undefined,
+      },
+      params.timeoutMs != null ? { timeout: params.timeoutMs } : undefined,
+    );
     const latencyMs = Date.now() - start;
 
     const toolUseBlock = response.content.find(

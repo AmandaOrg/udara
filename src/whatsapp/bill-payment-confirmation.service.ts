@@ -237,10 +237,7 @@ export class BillPaymentConfirmationService {
       where: { id: billPaymentId },
       include: { user: true },
     });
-    if (
-      !payment ||
-      payment.status !== BillPaymentStatus.PENDING_CONFIRMATION
-    ) {
+    if (!payment || payment.status !== BillPaymentStatus.PENDING_CONFIRMATION) {
       return;
     }
 
@@ -430,7 +427,10 @@ export class BillPaymentConfirmationService {
     });
     if (pendingBill) {
       if (pendingBill.status === BillPaymentStatus.PENDING_PIN) {
-        await this.pinGate.requestBillPaymentPin(pendingBill.user, pendingBill.id);
+        await this.pinGate.requestBillPaymentPin(
+          pendingBill.user,
+          pendingBill.id,
+        );
       } else {
         await this.confirmBillPayment(pendingBill.id);
       }

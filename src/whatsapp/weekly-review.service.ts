@@ -10,7 +10,6 @@ import {
   watDateBucketKey,
 } from "../common/wat-time.util";
 import { displayFirstNameOrThere } from "../common/display-name.util";
-import { parseNairaAmount } from "../common/naira-amount.util";
 
 export const WEEKLY_REVIEW_PREFIX = "weekly:";
 export const WEEKLY_KEEP = "weekly:keep";
@@ -105,11 +104,7 @@ export class WeeklyReviewService {
     now: Date = new Date(),
   ): Promise<void> {
     if (!(await this.completeWithoutOverride(review, now))) return;
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
-      KEEP_LIMITS_ACK,
-      user.id,
-    );
+    await this.whatsapp.sendText(user.whatsappNumber, KEEP_LIMITS_ACK, user.id);
   }
 
   /**

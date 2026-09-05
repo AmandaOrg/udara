@@ -12,7 +12,10 @@ describe("TransferReconciliationScheduler", () => {
     transaction: { findMany: jest.Mock; count: jest.Mock };
     billPayment: { findMany: jest.Mock; count: jest.Mock };
   };
-  let rubies: { queryTransferStatus: jest.Mock; queryVasTransaction: jest.Mock };
+  let rubies: {
+    queryTransferStatus: jest.Mock;
+    queryVasTransaction: jest.Mock;
+  };
   let allowance: { recordSpend: jest.Mock; recordBillPaymentSpend: jest.Mock };
   let transferConfirmation: { applyTransferResult: jest.Mock };
   let billPaymentConfirmation: { applyBillPaymentResult: jest.Mock };
@@ -213,7 +216,9 @@ describe("TransferReconciliationScheduler", () => {
         { id: "txn-1" },
         { id: "txn-2" },
       ]);
-      allowance.recordSpend.mockRejectedValueOnce(new Error("no allowance row"));
+      allowance.recordSpend.mockRejectedValueOnce(
+        new Error("no allowance row"),
+      );
 
       await expect(scheduler.repairUnappliedSpend()).resolves.toBeUndefined();
 
@@ -233,7 +238,9 @@ describe("TransferReconciliationScheduler", () => {
     });
 
     it("reports work that is past the horizon and no longer retried", async () => {
-      prisma.transaction.count.mockResolvedValueOnce(2).mockResolvedValueOnce(1);
+      prisma.transaction.count
+        .mockResolvedValueOnce(2)
+        .mockResolvedValueOnce(1);
       prisma.billPayment.count.mockResolvedValue(3);
       const logged = jest
         .spyOn((scheduler as any).logger, "error")

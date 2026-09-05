@@ -256,8 +256,7 @@ function dateKey(date: Date): string {
 function monthlySummaryListHeaders(
   config: ConfigService,
 ): Record<string, string> {
-  const replyTo =
-    config.get<string>("RESEND_REPLY_TO") ?? "hello@useudara.com";
+  const replyTo = config.get<string>("RESEND_REPLY_TO") ?? "hello@useudara.com";
   const mailto = `mailto:${replyTo}?subject=${encodeURIComponent("Unsubscribe monthly summary")}`;
   return {
     "List-Unsubscribe": `<${mailto}>`,

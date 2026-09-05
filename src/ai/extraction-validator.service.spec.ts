@@ -119,5 +119,4 @@ describe("ExtractionValidatorService", () => {
       expect(validator.validateMoneyStory(args).accepted).toBe(false);
     });
   });
-
 });

@@ -31,7 +31,9 @@ function digitRuns(text: string): string[] {
  * Substrings count: a user who typed a 13-digit meter number has also
  * "supplied" the 11-digit reading of it that a model might echo back.
  */
-export function buildAttestedDigits(sources: (string | undefined | null)[]): string {
+export function buildAttestedDigits(
+  sources: (string | undefined | null)[],
+): string {
   return sources
     .filter((s): s is string => typeof s === "string" && s.length > 0)
     .map((s) => digitRuns(s).join(" "))

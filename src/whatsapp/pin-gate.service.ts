@@ -71,7 +71,10 @@ export class PinGateService {
   }
 
   /** PIN-entry Flow for a bill/airtime purchase that passed confirm. */
-  async requestBillPaymentPin(user: User, billPaymentId: string): Promise<void> {
+  async requestBillPaymentPin(
+    user: User,
+    billPaymentId: string,
+  ): Promise<void> {
     const challenge = await this.pin.createChallenge({
       userId: user.id,
       purpose: PinChallengePurpose.TRANSFER_AUTH,

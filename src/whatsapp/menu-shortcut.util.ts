@@ -49,10 +49,7 @@ export function isMenuShortcut(text: string): boolean {
 /** When a list tap arrives as plain text (row title), skip the LLM. */
 export function menuPayloadFromUtterance(text: string): string | null {
   const t = normalizeAsk(text)
-    .replace(
-      /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu,
-      "",
-    )
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, "")
     .replace(/\s+/g, " ")
     .trim();
   switch (t) {

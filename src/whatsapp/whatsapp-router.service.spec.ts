@@ -144,9 +144,12 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     it("drops the message before any handler once the user is over the limit", async () => {
       rateLimit.check.mockResolvedValue({ limited: true, justCrossed: false });
 
-      await service.route(
-        { id: "m1", type: "TEXT", textBody: "hello", fromNumber: "234801" } as any,
-      );
+      await service.route({
+        id: "m1",
+        type: "TEXT",
+        textBody: "hello",
+        fromNumber: "234801",
+      } as any);
 
       // Nothing that costs money runs: no LLM, no onboarding turn, no reply.
       expect(orchestrator.handleMessage).not.toHaveBeenCalled();
@@ -157,9 +160,12 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     it("says why, exactly once, on the message that crosses the line", async () => {
       rateLimit.check.mockResolvedValue({ limited: true, justCrossed: true });
 
-      await service.route(
-        { id: "m1", type: "TEXT", textBody: "hello", fromNumber: "234801" } as any,
-      );
+      await service.route({
+        id: "m1",
+        type: "TEXT",
+        textBody: "hello",
+        fromNumber: "234801",
+      } as any);
 
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
@@ -339,20 +345,23 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       });
     });
 
-    it.each(["7000", "7000 naira", "make it 7k", "7000 a day", "Seven thousand."])(
-      "reads %p as the answer it plainly is",
-      async (answer) => {
-        await service.route(makeMessage(answer));
+    it.each([
+      "7000",
+      "7000 naira",
+      "make it 7k",
+      "7000 a day",
+      "Seven thousand.",
+    ])("reads %p as the answer it plainly is", async (answer) => {
+      await service.route(makeMessage(answer));
 
-        expect(weeklyReview.handleLimitAmount).toHaveBeenCalledWith(
-          user,
-          awaiting,
-          7000,
-        );
-        expect(weeklyReview.abandonAwaitingLimit).not.toHaveBeenCalled();
-        expect(orchestrator.handleMessage).not.toHaveBeenCalled();
-      },
-    );
+      expect(weeklyReview.handleLimitAmount).toHaveBeenCalledWith(
+        user,
+        awaiting,
+        7000,
+      );
+      expect(weeklyReview.abandonAwaitingLimit).not.toHaveBeenCalled();
+      expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    });
 
     /**
      * The wait is still dropped for anything that is not an answer — otherwise

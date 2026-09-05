@@ -1,4 +1,4 @@
-import { Controller, Get } from "@nestjs/common";
+import { Controller, Get, Logger } from "@nestjs/common";
 import {
   HealthCheck,
   HealthCheckService,
@@ -20,6 +20,8 @@ import { PrismaService } from "../prisma/prisma.service";
  */
 @Controller("health")
 export class HealthController {
+  private readonly logger = new Logger(HealthController.name);
+
   constructor(
     private readonly health: HealthCheckService,
     private readonly prisma: PrismaService,
@@ -40,9 +42,13 @@ export class HealthController {
       await this.prisma.$queryRaw`SELECT 1`;
       return { database: { status: "up" } };
     } catch (err) {
-      return {
-        database: { status: "down", message: String(err) },
-      };
+      // The reason goes to the log stream, not the response body. Prisma's
+      // connection errors name the database host and port, and this route is
+      // unauthenticated — the caller only needs to know it is down.
+      this.logger.error(
+        `health check failed: ${err instanceof Error ? err.stack : String(err)}`,
+      );
+      return { database: { status: "down" } };
     }
   }
 }

@@ -16,7 +16,12 @@ CREATE INDEX "Transaction_status_appliedToAllowanceAt_idx" ON "Transaction"("sta
 CREATE INDEX "WhatsappMessage_fromNumber_createdAt_idx" ON "WhatsappMessage"("fromNumber", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "SettingsChangeRequest_status_initialReplySentAt_initialReply_idx" ON "SettingsChangeRequest"("status", "initialReplySentAt", "initialReplyDueAt");
+-- Name is Prisma's own truncation of the three-column default to Postgres's
+-- 63-character identifier limit — it drops characters from the middle and keeps
+-- the `_idx` suffix. Spelling it any other way still creates a working index,
+-- but Postgres would truncate the tail instead, and `migrate dev` would then
+-- report drift against this migration forever.
+CREATE INDEX "SettingsChangeRequest_status_initialReplySentAt_initialRepl_idx" ON "SettingsChangeRequest"("status", "initialReplySentAt", "initialReplyDueAt");
 
 -- CreateIndex
 CREATE INDEX "SettingsChangeRequest_userId_status_idx" ON "SettingsChangeRequest"("userId", "status");

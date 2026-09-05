@@ -64,10 +64,6 @@ function llmProvider(role: "classifier" | "conversation"): Provider {
     ExtractionValidatorService,
     LlmCallLoggerService,
   ],
-  exports: [
-    CONVERSATION_LLM,
-    ExtractionValidatorService,
-    LlmCallLoggerService,
-  ],
+  exports: [CONVERSATION_LLM, ExtractionValidatorService, LlmCallLoggerService],
 })
 export class AiModule {}

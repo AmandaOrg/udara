@@ -10,6 +10,8 @@ describe("htmlToPlainText", () => {
   });
 
   it("decodes common entities", () => {
-    expect(htmlToPlainText("<p>₦1,500 &amp; more</p>")).toContain("₦1,500 & more");
+    expect(htmlToPlainText("<p>₦1,500 &amp; more</p>")).toContain(
+      "₦1,500 & more",
+    );
   });
 });
