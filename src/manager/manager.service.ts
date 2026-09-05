@@ -52,13 +52,34 @@ export class ManagerService {
       );
     }
 
-    return this.prisma.settingsChangeRequest.update({
-      where: { id: requestId },
+    // Claimed from an undecided status. A plain update let a REJECTED request
+    // be flipped to APPROVED later, and let a second review silently overwrite
+    // the first — on the one decision that can lift a user's spending
+    // restrictions entirely.
+    const { count } = await this.prisma.settingsChangeRequest.updateMany({
+      where: {
+        id: requestId,
+        status: {
+          in: [
+            SettingsChangeStatus.PENDING,
+            SettingsChangeStatus.ELIGIBLE_FOR_REVIEW,
+          ],
+        },
+      },
       data: {
         status: decision as SettingsChangeStatus,
         managerNotes,
         resolvedAt: new Date(),
       },
+    });
+    if (count === 0) {
+      throw new BadRequestException(
+        `Request ${requestId} has already been decided (${request.status}). Decisions are final.`,
+      );
+    }
+
+    return this.prisma.settingsChangeRequest.findUniqueOrThrow({
+      where: { id: requestId },
     });
   }
 

@@ -10,6 +10,7 @@ describe("ActionExecutorService", () => {
   };
   let whatsapp: { sendText: jest.Mock };
   let pinGate: { requestPinReset: jest.Mock };
+  let managerConversation: { fileChangeRequest: jest.Mock };
   let billPaymentActions: {
     startAirtimeWizard: jest.Mock;
     startDataWizard: jest.Mock;
@@ -47,6 +48,9 @@ describe("ActionExecutorService", () => {
     };
     whatsapp = { sendText: jest.fn().mockResolvedValue({ waMessageId: "w1" }) };
     pinGate = { requestPinReset: jest.fn().mockResolvedValue(undefined) };
+    managerConversation = {
+      fileChangeRequest: jest.fn().mockResolvedValue({ id: "req-1" }),
+    };
     billPaymentActions = {
       startAirtimeWizard: jest.fn().mockResolvedValue(undefined),
       startDataWizard: jest.fn().mockResolvedValue(undefined),
@@ -63,6 +67,7 @@ describe("ActionExecutorService", () => {
       spendSummary as any,
       whatsapp as any,
       pinGate as any,
+      managerConversation as any,
     );
   });
 
@@ -203,5 +208,46 @@ describe("ActionExecutorService", () => {
 
     expect(accountActions.resumePendingTransfer).toHaveBeenCalledWith(user);
     expect(accountActions.startTransferWizard).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ADR-0001. The terms promise this path and nothing could reach it: the
+   * manager module's entry points had no caller outside their own directory.
+   */
+  describe("settings_request", () => {
+    it("files a request with the type the model identified", async () => {
+      await executor.execute(user as any, {
+        message: "i'll pass that to the managers",
+        actionType: "show_surface",
+        surfaceKey: "settings_request",
+        extractedHints: {
+          settingsChangeType: "EXIT_RESTRICTIONS",
+          settingsReason: "i want to stop using udara",
+        },
+        ok: true,
+      } as any);
+
+      expect(managerConversation.fileChangeRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "user-1",
+          type: "EXIT_RESTRICTIONS",
+          reason: "i want to stop using udara",
+        }),
+      );
+    });
+
+    it("falls back to OTHER rather than guessing which rule they meant", async () => {
+      await executor.execute(user as any, {
+        message: "noted",
+        actionType: "show_surface",
+        surfaceKey: "settings_request",
+        extractedHints: {},
+        ok: true,
+      } as any);
+
+      expect(managerConversation.fileChangeRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "OTHER" }),
+      );
+    });
   });
 });

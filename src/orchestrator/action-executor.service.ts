@@ -16,6 +16,8 @@ import { PinGateService } from "../whatsapp/pin-gate.service";
 import { SpendSummaryService } from "../allowance/spend-summary.service";
 import { OrchestratorResult } from "./orchestrator.types";
 import { TransferWizardHints } from "./transfer-hints.util";
+import { SettingsChangeType } from "@prisma/client";
+import { ManagerConversationService } from "../manager/manager-conversation.service";
 import { sanitizeSurfaceLeadIn } from "./sanitize-lead-in.util";
 
 import { isBillPaymentSurface } from "./bill-hints.util";
@@ -31,6 +33,7 @@ export class ActionExecutorService {
     private readonly spendSummary: SpendSummaryService,
     private readonly whatsapp: WhatsappService,
     private readonly pinGate: PinGateService,
+    private readonly managerConversation: ManagerConversationService,
   ) {}
 
   async execute(user: User, result: OrchestratorResult): Promise<void> {
@@ -150,6 +153,17 @@ export class ActionExecutorService {
         break;
       case "pin_reset":
         await this.pinGate.requestPinReset(user);
+        break;
+      case "settings_request":
+        // Files the request and nothing else. See ADR-0001: the model cannot
+        // change a setting, cannot influence eligibleAt, and cannot lift
+        // restrictions — all three still live behind ManagerService.
+        await this.managerConversation.fileChangeRequest({
+          userId: user.id,
+          type: hints?.settingsChangeType ?? SettingsChangeType.OTHER,
+          requestedChange: hints?.settingsReason ?? "unspecified change",
+          reason: hints?.settingsReason,
+        });
         break;
       case "spend_summary": {
         const summary = await this.spendSummary.getWeeklySummary(user.id);

@@ -104,13 +104,15 @@ The [Canonical Onboarding Script](✅-Kedu-Onboarding-Script.pdf) is committed, 
 
 ## Managers (settings changes)
 
-**Verified.** [`ManagerService`](../src/manager/manager.service.ts):
+**Verified.** [`ManagerService`](../src/manager/manager.service.ts) and [`ManagerConversationService`](../src/manager/manager-conversation.service.ts):
 
-- Minimum wait: `SETTINGS_CHANGE_MIN_DAYS` (default 7) before review eligibility.
-- Initial substantive “managers” reply is delayed by `MANAGER_INITIAL_REPLY_DELAY_HOURS` (default 3).
-- Gate is a timestamp comparison, independent of how the user phrases the request.
+- A user can ask in chat to change their window or limits, or to leave. The orchestrator proposes the `settings_request` surface and code files a `SettingsChangeRequest`. Filing is not changing: nothing about their limits moves.
+- Minimum wait: `SETTINGS_CHANGE_MIN_DAYS` (default 7) before a decision is possible. The gate is a timestamp comparison computed once at filing, so no phrasing shortens it.
+- Initial substantive "managers" reply is delayed by `MANAGER_INITIAL_REPLY_DELAY_HOURS` (default 3), claimed before generating so it is sent once.
+- Decisions are made by an operator via `npm run settings:list` / `npm run settings:decide`, and are final: a decided request cannot be re-decided.
+- `disciplineExitedAt` is written only on an approved `EXIT_RESTRICTIONS` decision. Nothing else in the codebase sets it.
 
----
+Until 2026-09-05 this section read "Verified" while nothing outside `src/manager/` called either entry point — the terms promised a path the code could not reach. See [ADR-0001](decisions/0001-settings-request-surface.md).
 
 ## Recipients
 
@@ -146,7 +148,7 @@ Inbound WhatsApp voice notes are transcribed (Deepgram) and handled as text. Rep
 
 ## Surfaces the model may propose
 
-Eligible predicates in [`surface-registry.ts`](../src/orchestrator/surface-registry.ts): `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `bill_payment_wizard`, `data_bundle_wizard`, `electricity_wizard`, `spending_menu`, `spend_summary`. Unknown or ineligible keys are downgraded to `reply_only`. Medium/missing confidence is text-only unless the validator promotes a ready send or bill, which the transfer-intent, spend-check, and AI money-intents specs gate.
+Eligible predicates in [`surface-registry.ts`](../src/orchestrator/surface-registry.ts): `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `bill_payment_wizard`, `data_bundle_wizard`, `electricity_wizard`, `spending_menu`, `spend_summary`, `pin_reset`, `settings_request`. Unknown or ineligible keys are downgraded to `reply_only`. Medium/missing confidence is text-only unless the validator promotes a ready send or bill, which the transfer-intent, spend-check, and AI money-intents specs gate.
 
 ---
 

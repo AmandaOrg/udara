@@ -87,6 +87,13 @@ export const SURFACE_REGISTRY: SurfaceDefinition[] = [
     isEligible: (u) => !!u.rubiesAccountNumber,
   },
   {
+    key: "settings_request",
+    kind: "text",
+    description:
+      'File a request to change the rules or leave. Use when the user wants their spending window changed, their limits raised permanently, the override fees changed, or to stop/exit/quit Udara or "turn this off". Put settings_change_type (WINDOW_HOURS | OVERRIDE_FEES | EXIT_RESTRICTIONS | OTHER) and their reason in extracted_hints. This only FILES the request — it changes nothing, and the waiting period applies however it is phrased, so never imply it takes effect now. Do NOT use for a one-week limit tweak (that is the Sunday review) or a forgotten PIN (that is pin_reset).',
+    isEligible: (u) => !isPreAccountStage(u.onboardingStage),
+  },
+  {
     key: "spend_summary",
     kind: "text",
     description:

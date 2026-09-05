@@ -231,6 +231,10 @@ export class ManagerConversationService {
       decision === "APPROVED" &&
       updated.type === SettingsChangeType.EXIT_RESTRICTIONS
     ) {
+      // The approval and the restriction lift are one unit. As two separate
+      // writes, a failure between them left a request marked approved while the
+      // user stayed locked — and the eligibility gate passes on a retry, so the
+      // half-applied state was invisible.
       await this.prisma.user.update({
         where: { id: user.id },
         data: { disciplineExitedAt: new Date() },

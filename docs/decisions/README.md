@@ -18,7 +18,7 @@ Skip an ADR for a one-file bugfix. Link the ADR from the initiative plan when bo
 
 | ID | Title | Status |
 | --- | --- | --- |
-| — | *(none yet)* | |
+| [0001](0001-settings-request-surface.md) | Let the model file a settings-change request | accepted |
 
 ## New record
 

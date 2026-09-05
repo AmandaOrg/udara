@@ -1,4 +1,4 @@
-import { RecipientLabel } from "@prisma/client";
+import { RecipientLabel, SettingsChangeType } from "@prisma/client";
 import { parseNairaAmount } from "../common/naira-amount.util";
 import { isAttested } from "./attested-digits.util";
 import {
@@ -6,6 +6,13 @@ import {
   isBillPaymentUtterance,
   sanitizeBillHintFields,
 } from "./bill-hints.util";
+
+const SETTINGS_CHANGE_TYPES: ReadonlySet<string> = new Set([
+  "WINDOW_HOURS",
+  "OVERRIDE_FEES",
+  "EXIT_RESTRICTIONS",
+  "OTHER",
+]);
 
 const LABEL_HINTS: ReadonlySet<string> = new Set([
   "RENT",
@@ -29,6 +36,10 @@ export interface TransferWizardHints {
   purposeNote?: string;
   /** Spend-check: which wizard to open after they proceed. */
   pendingSurface?: string;
+  /** Which rule a settings_request is about. Closed enum — see ADR-0001. */
+  settingsChangeType?: SettingsChangeType;
+  /** The user's stated why, recorded on the request. */
+  settingsReason?: string;
   msisdn?: string;
   telcoHint?: string;
   meter?: string;
@@ -112,6 +123,20 @@ export function sanitizeTransferHints(
     if (note.length >= 2) {
       hints.purposeNote = note;
     }
+  }
+
+  // Closed enum, never free text: this decides which rule a request is about,
+  // and an unrecognised value must not become a settings change of unknown kind.
+  if (
+    typeof raw.settings_change_type === "string" &&
+    SETTINGS_CHANGE_TYPES.has(raw.settings_change_type)
+  ) {
+    hints.settingsChangeType = raw.settings_change_type as SettingsChangeType;
+  }
+
+  if (typeof raw.settings_reason === "string") {
+    const reason = raw.settings_reason.trim().slice(0, 300);
+    if (reason.length >= 2) hints.settingsReason = reason;
   }
 
   if (typeof raw.pending_surface === "string") {

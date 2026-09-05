@@ -14,6 +14,7 @@ describe("ManagerService", () => {
       create: jest.Mock;
       findUniqueOrThrow: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
     };
   };
 
@@ -27,6 +28,9 @@ describe("ManagerService", () => {
         update: jest.fn((args) =>
           Promise.resolve({ id: args.where.id, ...args.data }),
         ),
+        // The decision is claimed from an undecided status; count 1 means this
+        // caller made it. See the "decisions are final" test below.
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     service = new ManagerService(prisma as any);
@@ -76,6 +80,17 @@ describe("ManagerService", () => {
         status: SettingsChangeStatus.PENDING,
       });
 
+      prisma.settingsChangeRequest.findUniqueOrThrow.mockResolvedValueOnce({
+        id: "req-1",
+        eligibleAt,
+        status: SettingsChangeStatus.PENDING,
+      });
+      prisma.settingsChangeRequest.findUniqueOrThrow.mockResolvedValueOnce({
+        id: "req-1",
+        status: SettingsChangeStatus.APPROVED,
+        managerNotes: "looks fine",
+      });
+
       const result = await service.reviewRequest(
         "req-1",
         "APPROVED",
@@ -84,7 +99,25 @@ describe("ManagerService", () => {
 
       expect(result.status).toBe("APPROVED");
       expect(result.managerNotes).toBe("looks fine");
-      expect(prisma.settingsChangeRequest.update).toHaveBeenCalled();
+      expect(prisma.settingsChangeRequest.updateMany).toHaveBeenCalled();
+    });
+
+    /**
+     * This decision can lift a user's spending restrictions entirely, so it
+     * must not be re-openable. A plain update let a REJECTED request be flipped
+     * to APPROVED later, and let a second review overwrite the first.
+     */
+    it("refuses to re-decide a request that already has an outcome", async () => {
+      prisma.settingsChangeRequest.findUniqueOrThrow.mockResolvedValue({
+        id: "req-1",
+        eligibleAt: new Date(Date.now() - 1000),
+        status: SettingsChangeStatus.REJECTED,
+      });
+      prisma.settingsChangeRequest.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.reviewRequest("req-1", "APPROVED")).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it("allows rejection once eligibleAt has passed, same as approval", async () => {
@@ -93,6 +126,16 @@ describe("ManagerService", () => {
         id: "req-1",
         eligibleAt,
         status: SettingsChangeStatus.PENDING,
+      });
+
+      prisma.settingsChangeRequest.findUniqueOrThrow.mockResolvedValueOnce({
+        id: "req-1",
+        eligibleAt,
+        status: SettingsChangeStatus.PENDING,
+      });
+      prisma.settingsChangeRequest.findUniqueOrThrow.mockResolvedValueOnce({
+        id: "req-1",
+        status: SettingsChangeStatus.REJECTED,
       });
 
       const result = await service.reviewRequest("req-1", "REJECTED");

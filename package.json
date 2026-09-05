@@ -21,7 +21,9 @@
     "orchestrator:fixture": "ts-node -r tsconfig-paths/register src/cli/run-fixture.ts",
     "email:resend-monthly": "ts-node -r tsconfig-paths/register src/cli/resend-monthly-summary-cli.ts",
     "docs:check": "node scripts/check-docs.js",
-    "security:check": "node scripts/check-security.js"
+    "security:check": "node scripts/check-security.js",
+    "settings:list": "ts-node -r tsconfig-paths/register src/cli/settings-request-cli.ts",
+    "settings:decide": "ts-node -r tsconfig-paths/register src/cli/settings-request-cli.ts --decide"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
