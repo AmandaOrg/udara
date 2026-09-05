@@ -26,8 +26,8 @@ const base = process.env.RUBIES_BASE_URL;
 const stage = process.env.RUBIES_STAGE;
 const key = process.env.RUBIES_API_KEY;
 
-const accountNumber = process.argv[2] ?? "1000013562";
-const msisdn = process.argv[3] ?? "07080007565";
+const accountNumber = process.argv[2] ?? "0000000000";
+const msisdn = process.argv[3] ?? "08000000000";
 const amount = process.argv[4] ?? "200";
 const productCode = process.argv[5] ?? "AIRTEL_AIRTIME_PREPAID";
 

@@ -105,5 +105,4 @@ Schedulers are not leader-elected. Correctness comes from the claims above, so a
 ## Known structural notes
 
 - Package name `kedu` vs product name Udara.
-- `KeduChatService` / `IntentRouterService` remain registered for older unit specs; live routing uses the orchestrator.
-- CI does not run e2e or live LLM tests.
+- CI does not run e2e or live LLM tests. The golden dialogues do run, under jest.

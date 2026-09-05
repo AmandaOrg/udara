@@ -18,8 +18,8 @@ for (const line of fs.readFileSync(path.join(process.cwd(), ".env"), "utf8").spl
 const base = process.env.RUBIES_BASE_URL;
 const stage = process.env.RUBIES_STAGE;
 const key = process.env.RUBIES_API_KEY;
-const acct = "1000013562";
-const msisdn = "07080007565";
+const acct = "0000000000";
+const msisdn = "08000000000";
 
 async function post(apiPath, body) {
   const res = await fetch(`${base}/${stage}${apiPath}`, {

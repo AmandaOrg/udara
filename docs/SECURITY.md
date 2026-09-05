@@ -161,7 +161,8 @@ Tracked deliberately, not forgotten.
 | Risk | Current state | Required before real customer traffic |
 | --- | --- | --- |
 | Unsigned webhooks accepted when the secret is blank | **Retired 2026-09-04.** Boot now fails when either secret is blank unless `ALLOW_UNSIGNED_WEBHOOKS=true` is set explicitly, so the escape hatch has to be asked for rather than being the accidental default. Local and e2e set the flag; deployed environments do not. `RubiesWebhookEvent.signatureValid` now records the real verdict instead of hardcoding `true` | Confirm both secrets are set in Railway and that the flag is absent there |
-| E2e and golden suites are not in CI | CI runs lint, build, unit tests, docs and security checks | Run `npm run e2e` and `npm run orchestrator:golden` before any release |
+| E2e is not in CI | CI runs lint, build, unit tests, docs and security checks. The golden dialogues **do** run, via `golden-dialogues.spec.ts` under jest | Run `npm run e2e` before any release |
+| 7 high-severity npm advisories, all requiring a Nest 10 → 12 upgrade | `npm audit fix` applies cleanly; the remainder are `@nestjs/cli` and its build-time chain (glob, picomatch, tmp), plus lodash via `@nestjs/config` and multer via `@nestjs/platform-express`. None is reachable from the two JSON webhook routes and the health route — multer in particular is only relevant to multipart uploads, which this app does not accept | Plan the framework upgrade as its own change with the full suite and e2e green; do not force it into a defect-repair batch |
 | Fee sweep silently skipped | Skipped with a warning when `RUBIES_FEES_ACCOUNT_NUMBER` is unset | Configure the fees account; fees are recorded but unmoved until then |
 | Provider secrets live in `.env` | No secret manager in this repo | Use the deployment platform's secret store; never bake into an image |
 

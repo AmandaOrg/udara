@@ -38,9 +38,9 @@ console.log("product detail:", JSON.stringify(product, null, 2));
 for (const amount of ["50.00", "200", "200.0"]) {
   const r = await post("/baas-vas/purchase", {
     reference: `UDARA-AMT-${Date.now()}`,
-    accountNumber: "1000013562",
+    accountNumber: "0000000000",
     productCode: "AIRTEL_AIRTIME_PREPAID",
-    billerCustomerId: "07080007565",
+    billerCustomerId: "08000000000",
     amount,
   });
   console.log(`amount=${amount} =>`, r.responseCode, r.responseMessage);

@@ -332,7 +332,7 @@ src/
 - [ ] Persist/clear `activeMode` on session for wizard / flow_pending / awaiting_confirm.
 
 ### Phase 3 — Cleanup & Eval
-- [ ] Delete unused `IntentRouterService` and `KeduChatService` files (removed from live router path; still registered for legacy unit specs).
+- [x] Delete unused `IntentRouterService` and `KeduChatService` files. Done 2026-09-05, together with `menu-intent.prompts.ts`, `validateMenuIntent`, and the now-unprovided `CLASSIFIER_LLM` token.
 - [x] Offline golden dialogues against validator (live-provider regression still open).
 
 ---

@@ -57,3 +57,4 @@ Operational JSON for Meta Flows (never collect this data in chat):
 - [whatsapp-flows/kyc-verification.json](whatsapp-flows/kyc-verification.json)
 - [whatsapp-flows/pin-setup.json](whatsapp-flows/pin-setup.json)
 - [whatsapp-flows/pin-entry.json](whatsapp-flows/pin-entry.json)
+- [whatsapp-flows/pin-reset.json](whatsapp-flows/pin-reset.json)

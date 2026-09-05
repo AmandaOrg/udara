@@ -429,7 +429,7 @@ describe("RubiesService", () => {
       await service.listBanks();
       await service.purchaseVas({
         accountNumber: "1000013562",
-        billerCustomerId: "07080007565",
+        billerCustomerId: "08000000000",
         productCode: "MTN_AIRTIME_PREPAID",
         amount: 200,
         requestReference: "UDARA-BILL-test",
@@ -447,7 +447,7 @@ describe("RubiesService", () => {
     it("purchaseVas dry-run returns SUCCESS with the request reference", async () => {
       const result = await service.purchaseVas({
         accountNumber: "1000013562",
-        billerCustomerId: "07080007565",
+        billerCustomerId: "08000000000",
         productCode: "MTN_AIRTIME_PREPAID",
         amount: 200,
         requestReference: "UDARA-BILL-42",

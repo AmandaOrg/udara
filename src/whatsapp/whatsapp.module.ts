@@ -10,9 +10,7 @@ import { BillPaymentConfirmationService } from "./bill-payment-confirmation.serv
 import { TransferConfirmationService } from "./transfer-confirmation.service";
 import { TransferReconciliationScheduler } from "./transfer-reconciliation.scheduler";
 import { ChunkedMessengerService } from "./chunked-messenger.service";
-import { KeduChatService } from "./kedu-chat.service";
 import { AccountActionsService } from "./account-actions.service";
-import { IntentRouterService } from "./intent-router.service";
 import { PinGateService } from "./pin-gate.service";
 import { WeeklyReviewService } from "./weekly-review.service";
 import { WeeklyReviewScheduler } from "./weekly-review.scheduler";
@@ -61,10 +59,7 @@ import { AiModule } from "../ai/ai.module";
     BillPaymentConfirmationService,
     TransferReconciliationScheduler,
     ChunkedMessengerService,
-    // Kept registered for existing unit specs; live router path no longer uses them.
-    KeduChatService,
     AccountActionsService,
-    IntentRouterService,
     PinGateService,
     // Needs WhatsApp/account deps — provided here, not in OrchestratorModule.
     ActionExecutorService,

@@ -103,7 +103,7 @@ Confirm, PIN-verified, and result-applied all read the status, check it in code,
 - **If switching to Anthropic:** the orchestrator passes `temperature: 0` ([`orchestrator.service.ts:146`](../src/orchestrator/orchestrator.service.ts#L146)), which current Claude 5 models reject with a 400, so every free-text turn would fall back to the menu. Local env uses Gemini today.
 - **No prompt caching.** Roughly 2k static tokens per turn are re-sent uncached, and the system prompt is flattened to one string so no cache breakpoint can be placed.
 - **`timeoutMs` is a no-op on Anthropic and Gemini** — only Bedrock and OpenRouter honour it. The orchestrator races an 8.5s timer but the underlying request keeps running and costing.
-- **Dead code still registered:** `KeduChatService`, `IntentRouterService`, `menu-intent.prompts.ts`, the `CLASSIFIER_LLM` token, `ConversationPersona.MANAGER`.
+- ~~**Dead code still registered:** `KeduChatService`, `IntentRouterService`, `menu-intent.prompts.ts`, the `CLASSIFIER_LLM` token.~~ **Fixed 2026-09-05.** `ConversationPersona.MANAGER` remains, unused but harmless as an enum value.
 - **Docs drift:** [`SECURITY.md`](SECURITY.md) §6 says golden dialogues are not in CI, but they run under jest. The `bvn`/`nin` columns still exist despite the terms saying they are never stored. [`README.md`](README.md) omits `pin-reset.json` from the Flow asset list.
 - **Git hygiene:** commit messages like "x" and "done" on a money product; deploys land around midnight UTC, exactly when the daily-boundary cron fires.
 

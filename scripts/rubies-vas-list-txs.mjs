@@ -27,7 +27,7 @@ async function post(apiPath, body) {
   return res.json();
 }
 
-const acct = "1000013562";
+const acct = "0000000000";
 const txs = await post("/baas-wallet/read-all-wallet-transactions", {
   accountNumber: acct,
   startDate: "2026-08-28",

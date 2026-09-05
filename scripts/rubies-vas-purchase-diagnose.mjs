@@ -17,7 +17,7 @@ for (const line of fs.readFileSync(path.join(process.cwd(), ".env"), "utf8").spl
 const base = process.env.RUBIES_BASE_URL;
 const stage = process.env.RUBIES_STAGE;
 const key = process.env.RUBIES_API_KEY;
-const acct = "1000013562";
+const acct = "0000000000";
 
 async function post(apiPath, body) {
   const res = await fetch(`${base}/${stage}${apiPath}`, {
@@ -31,10 +31,10 @@ async function post(apiPath, body) {
 console.log("wallet:", JSON.stringify(await post("/baas-wallet/retrieve-wallet-details", { accountNumber: acct }), null, 2));
 
 const attempts = [
-  { productCode: "AIRTEL_AIRTIME_PREPAID", amount: "200.00", billerCustomerId: "07080007565" },
-  { productCode: "AIRTEL_AIRTIME_PREPAID", amount: "200.00", billerCustomerId: "2347080007565" },
-  { productCode: "MTN_AIRTIME_PREPAID", amount: "200.00", billerCustomerId: "07080007565" },
-  { productCode: "AIRTEL_AIRTIME_PREPAID", amount: "100.00", billerCustomerId: "07080007565", customerName: "Udara Smoke Test" },
+  { productCode: "AIRTEL_AIRTIME_PREPAID", amount: "200.00", billerCustomerId: "08000000000" },
+  { productCode: "AIRTEL_AIRTIME_PREPAID", amount: "200.00", billerCustomerId: "2348000000000" },
+  { productCode: "MTN_AIRTIME_PREPAID", amount: "200.00", billerCustomerId: "08000000000" },
+  { productCode: "AIRTEL_AIRTIME_PREPAID", amount: "100.00", billerCustomerId: "08000000000", customerName: "Udara Smoke Test" },
 ];
 
 for (const body of attempts) {

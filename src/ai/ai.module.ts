@@ -1,6 +1,8 @@
 import { Module, Provider } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { CLASSIFIER_LLM, CONVERSATION_LLM } from "./llm.types";
+// CLASSIFIER_LLM is referenced by llmProvider() below but no longer provided;
+// see the providers array.
 import { AnthropicLlmService } from "./providers/anthropic-llm.service";
 import { OpenRouterLlmService } from "./providers/openrouter-llm.service";
 import { GeminiLlmService } from "./providers/gemini-llm.service";
@@ -53,13 +55,16 @@ function llmProvider(role: "classifier" | "conversation"): Provider {
 
 @Module({
   providers: [
-    llmProvider("classifier"),
+    // Only the conversation role is wired. The classifier token existed for
+    // IntentRouterService, which the orchestrator replaced and which is now
+    // deleted — but the factory keeps its role parameter, so re-adding a
+    // classifier is a one-line change plus the CLASSIFIER_MODEL_* env vars that
+    // are still documented in .env.example.
     llmProvider("conversation"),
     ExtractionValidatorService,
     LlmCallLoggerService,
   ],
   exports: [
-    CLASSIFIER_LLM,
     CONVERSATION_LLM,
     ExtractionValidatorService,
     LlmCallLoggerService,
