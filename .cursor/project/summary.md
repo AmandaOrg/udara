@@ -26,6 +26,8 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 | `src/ai` | LLM providers + persona prompts |
 | `src/orchestrator` | propose_turn + validator + surfaces (no send) |
 | `src/messaging` | `ChannelMessenger`: the only way to send; channel context; WhatsApp adapter |
+| `src/app-auth` | App sign-in: SMS codes (Termii), sessions, new-device step-up |
+| `src/app-api` | Mobile app `/v1` API, deny-by-default guard; only with `APP_API_ENABLED=true` |
 | `src/whatsapp` | Webhook, router, transfer wizard, bill-pay wizard, PIN gate, ActionExecutor; `WhatsappTransportModule` (Cloud API) |
 | `src/pin` | PIN challenge/verify |
 | `src/cli` | Dry-run golden/fixture runner |

@@ -1,4 +1,5 @@
 import { NestFactory } from "@nestjs/core";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { LogLevel, Logger, ValidationPipe } from "@nestjs/common";
 import { initSentry } from "./common/sentry";
 import { AllExceptionsFilter } from "./common/all-exceptions.filter";
@@ -31,10 +32,14 @@ async function bootstrap() {
   // required for webhook signature verification (WhatsApp's X-Hub-Signature-256,
   // Rubies' X-Webhook-Signature), since HMAC has to run over the exact bytes sent,
   // not a re-serialized version of the parsed object.
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,
     logger: resolveLogLevels(),
   });
+  // One proxy hop (Railway's edge) in front of the app. Without this every
+  // request's address is the proxy's, so the per-address rate limits and the
+  // sign-in code caps would count all clients as one.
+  app.set("trust proxy", 1);
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.useGlobalFilters(new AllExceptionsFilter());
   // Without this, PrismaService.onModuleDestroy never runs: Railway sends

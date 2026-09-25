@@ -16,6 +16,7 @@ import {
   moneyInEmail,
   moneyOutEmail,
   monthlySummaryEmail,
+  newDeviceLoginEmail,
   weeklySummaryEmail,
   windowOpenEmail,
 } from "./email.templates";
@@ -81,6 +82,32 @@ export class EmailNotificationsService {
         subject,
         html,
         dedupeKey: `MONEY_IN:${params.rubiesReference}`,
+      });
+    });
+  }
+
+  /** Keyed on the device, so each new sign-in is announced exactly once. */
+  async sendNewDeviceLogin(params: {
+    user: User;
+    deviceId: string;
+    deviceName: string | null;
+    platform: string;
+    at: Date;
+  }): Promise<void> {
+    await this.safely("new-device", async () => {
+      const { subject, html } = newDeviceLoginEmail({
+        name: params.user.name,
+        deviceName: params.deviceName,
+        platform: params.platform,
+        at: params.at,
+      });
+      await this.email.send({
+        userId: params.user.id,
+        to: params.user.email,
+        type: EmailType.NEW_DEVICE_LOGIN,
+        subject,
+        html,
+        dedupeKey: `NEW_DEVICE:${params.deviceId}`,
       });
     });
   }

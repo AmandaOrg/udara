@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { ScheduleModule } from "@nestjs/schedule";
-import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { ThrottlerModule } from "@nestjs/throttler";
 import { HealthModule } from "./health/health.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { WhatsappModule } from "./whatsapp/whatsapp.module";
@@ -12,6 +12,8 @@ import { OnboardingModule } from "./onboarding/onboarding.module";
 import { TaggingModule } from "./tagging/tagging.module";
 import { ManagerModule } from "./manager/manager.module";
 import { validate } from "./config/env.validation";
+import { AppThrottlerGuard } from "./common/app-throttler.guard";
+import { AppApiModule } from "./app-api/app-api.module";
 
 @Module({
   imports: [
@@ -39,7 +41,12 @@ import { validate } from "./config/env.validation";
     OnboardingModule,
     ManagerModule,
     WhatsappModule, // depends on the modules above — keep last
+    // The mobile app's /v1 API only exists when switched on, so deploying it
+    // changes nothing until APP_API_ENABLED is set (and its secrets with it,
+    // which env validation then requires). Read after ConfigModule.forRoot
+    // above has loaded .env.
+    ...(process.env.APP_API_ENABLED === "true" ? [AppApiModule] : []),
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],
 })
 export class AppModule {}

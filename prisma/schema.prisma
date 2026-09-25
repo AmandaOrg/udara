@@ -329,6 +329,9 @@ model User {
   pinChallenges        PinChallenge[]
   EmailLog             EmailLog[]
   WeeklyReview         WeeklyReview[]
+  devices              Device[]
+  appSessions          AppSession[]
+  loginChallenges      LoginChallenge[]
 }
 
 // One row per user per calendar day — the heart of the discipline engine.
@@ -751,6 +754,7 @@ model PinChallenge {
 // ---------------------------------------------------------------------------
 
 enum EmailType {
+  NEW_DEVICE_LOGIN
   PIN_RESET_OTP
   MONEY_IN
   MONEY_OUT
@@ -824,4 +828,102 @@ model WeeklyReview {
 
   @@unique([userId, weekStartDate])
   @@index([userId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Mobile app sign-in. See docs/decisions/0002-app-channel-and-auth.md.
+// Every code and token here is stored only as a hash or HMAC (S16).
+// ---------------------------------------------------------------------------
+
+// A one-time sign-in code sent by SMS. `codeHmac` is HMAC-SHA256 under
+// OTP_PEPPER over "phoneNumber:code"; a 6-digit code has too little entropy
+// for a slow hash to help, so the attempt cap and send caps do the work.
+model AuthOtp {
+  id          String    @id @default(uuid())
+  phoneNumber String
+  codeHmac    String
+  attempts    Int       @default(0)
+  requestIp   String?
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([phoneNumber, createdAt])
+  @@index([requestIp, createdAt])
+  @@index([createdAt])
+}
+
+enum DevicePlatform {
+  IOS
+  ANDROID
+}
+
+// One app installation a user signed in on. Every sign-in creates one: without
+// a device-bound key there is nothing to prove a returning install is the same
+// phone, so treating it as new is the safe reading. `trustedAt` is null until
+// any step-up the sign-in needed has passed; the new-device transfer cap runs
+// from it.
+model Device {
+  id         String         @id @default(uuid())
+  userId     String
+  user       User           @relation(fields: [userId], references: [id])
+  platform   DevicePlatform
+  name       String?
+  pushToken  String?
+  trustedAt  DateTime?
+  lastSeenAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime       @default(now())
+
+  sessions        AppSession[]
+  loginChallenges LoginChallenge[]
+
+  @@index([userId])
+}
+
+// One access/refresh pair. Refreshing creates a successor row in the same
+// family and stamps this one `rotatedAt`; presenting a rotated refresh token
+// again is treated as theft and revokes the whole family.
+model AppSession {
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id])
+  deviceId         String
+  device           Device    @relation(fields: [deviceId], references: [id])
+  familyId         String
+  accessHash       String    @unique
+  accessExpiresAt  DateTime
+  refreshHash      String    @unique
+  refreshExpiresAt DateTime
+  rotatedAt        DateTime?
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([familyId])
+  @@index([deviceId])
+}
+
+enum LoginStepUpMethod {
+  PIN
+  WHATSAPP
+}
+
+// The extra proof a sign-in on a new device owes before it gets tokens: the
+// transfer PIN, or a tap on WhatsApp. `tokenHash` is what the app holds while
+// it waits.
+model LoginChallenge {
+  id         String            @id @default(uuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id])
+  deviceId   String
+  device     Device            @relation(fields: [deviceId], references: [id])
+  method     LoginStepUpMethod
+  tokenHash  String            @unique
+  approvedAt DateTime?
+  rejectedAt DateTime?
+  consumedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime          @default(now())
+
+  @@index([userId])
 }

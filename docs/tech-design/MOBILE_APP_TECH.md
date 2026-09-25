@@ -143,6 +143,37 @@ The count now includes the message being handled, matching how the limit was wri
 
 Before P3 no user lacks a WhatsApp number, so the linking path cannot run in production yet.
 
+### P3: authentication
+
+**Layout:**
+- `src/app-auth/` (`AppAuthModule`, always loaded): `SmsService` (Termii `/api/sms/send`, `channel: "dnd"`, `SMS_DRY_RUN`), `OtpService`, `SessionService`, `LoginService`, `LoginApprovalService`, `secret-hash.util.ts`, `AppAuthConfig`.
+- `src/app-api/` (`AppApiModule`, imported by `AppModule` only when `APP_API_ENABLED=true`): `AppAuthGuard` as `APP_GUARD`, `@Public()`, `@CurrentPrincipal()`, `AuthController`, `MeController`.
+- `WhatsappModule` imports `AppAuthModule` so the router can answer `login_approve:` / `login_deny:` buttons; those are matched before the pre-account onboarding branch.
+
+**Data** (migration `20260925170000_app_sign_in`): `AuthOtp` (`codeHmac`, `attempts`, `requestIp`, `expiresAt`, `consumedAt`), `Device` (`platform`, `name`, `pushToken`, `trustedAt`, `lastSeenAt`, `revokedAt`), `AppSession` (`familyId`, `accessHash`, `refreshHash`, expiries, `rotatedAt`, `revokedAt`), `LoginChallenge` (`method` PIN or WHATSAPP, `tokenHash`, `approvedAt`, `rejectedAt`, `consumedAt`, `expiresAt`). New `EmailType.NEW_DEVICE_LOGIN`.
+
+**Codes:** 6 digits from `randomInt`; stored as `HMAC-SHA256(OTP_PEPPER, "phone:code")`. 10-minute expiry, 5 attempts claimed atomically before comparing, a 60-second resend gap, 5 per number and 20 per address per hour, and `SMS_DAILY_CAP` per rolling day (Sentry alert on hit). Each new code consumes the previous open one.
+
+**Tokens:** `udr_at_` / `udr_rt_` / `udr_lc_` prefixes plus 32 random bytes (base64url), stored as SHA-256. Access 15 minutes, refresh 30 days (env). Refresh claims `rotatedAt` atomically and issues a successor in the same family. A rotated token presented again after 30 seconds revokes the family; within 30 seconds it returns 409 (client race).
+
+**Sign-in (`LoginService.signIn`):** verify code, then find or create the `User` by `phoneNumber` (created only now; P2002 re-read), then create a `Device`. Step-up: `pinHash` gives PIN; else `whatsappNumber` gives a WhatsApp buttons message; else none. On success the device is trusted, the other channels are warned (WhatsApp text after a PIN step-up; email for any existing user), and tokens are issued.
+
+**Routes:**
+
+| Route | Auth | Result |
+| --- | --- | --- |
+| `POST /v1/auth/otp` | public, 10/min | 202 `{expiresAt, resendAfter}`; 400 not a Nigerian mobile; 429 `too_soon` or `rate_limited`; 503 `unavailable` |
+| `POST /v1/auth/verify` | public, 10/min | 200 `authenticated` with tokens, or `step_up_required` with `{method, challengeToken, expiresAt}`; 401 `invalid_code` (+`attemptsLeft`), `expired`, `exhausted` |
+| `POST /v1/auth/step-up/pin` | public, 10/min | 200 tokens; 401 `wrong_pin` or `invalid_challenge`; 423 `pin_locked`; 410 `expired` |
+| `POST /v1/auth/step-up/whatsapp` | public | 202 `pending`; 200 tokens; 403 `denied`; 410 `expired` |
+| `POST /v1/auth/refresh` | public | 200 tokens; 409 `refresh_in_progress`; 401 `invalid_refresh_token` |
+| `POST /v1/auth/logout` | session | 204, revokes the session family |
+| `GET /v1/me` | session | `{id, phoneNumber, name, onboardingStage, hasPin, whatsappLinked, hasEmail}` |
+
+**Also changed:** `AllExceptionsFilter` passes deliberate `HttpException` bodies through (the app needs `attemptsLeft` and the like) and still reduces unexpected errors to a generic 500. `main.ts` sets `trust proxy` to 1. `AppThrottlerGuard` replaces `ThrottlerGuard`, keying on a token digest when a bearer token is present.
+
+**New-device cap:** decided (24 hours, default ₦20,000), not enforced yet. It runs from `Device.trustedAt` and lands with the first app-originated transfers (P4, P7).
+
 ## Invariants
 
 Code must still enforce:
@@ -159,9 +190,10 @@ Code must still enforce:
   - P0: `npx jest src/whatsapp/bill-payment-confirmation src/whatsapp/transfer-confirmation src/whatsapp/whatsapp-router src/whatsapp/pin-outcome src/onboarding`
   - P1: `npx jest src/messaging`
   - P2: `npx jest src/common/phone src/whatsapp/whatsapp-router src/messaging src/onboarding`
+  - P3: `npx jest src/app-auth src/app-api src/common src/config src/whatsapp/whatsapp-router`
   - then the full `npm test`
 - **Golden:** unchanged. P0 does not touch the orchestrator.
-- **E2e:** `npm run e2e` with the dry-run flags. No scenario changes. App scenarios arrive in P3 and P4 under `e2e/scenarios/app/`.
+- **E2e:** `npm run e2e` with the dry-run flags. From P3, `e2e/scenarios/app/` needs the server on `APP_API_ENABLED=true SMS_DRY_RUN=true` with `OTP_PEPPER` shared with the runner (see DEVELOPMENT.md).
 
 ## Rollout / risk
 
@@ -176,3 +208,4 @@ Code must still enforce:
 | 2026-09-25 | Initial: overall approach; P0 in detail |
 | 2026-09-25 | P1: messenger port as built |
 | 2026-09-25 | P2: identity as built |
+| 2026-09-25 | P3: authentication as built |

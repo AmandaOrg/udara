@@ -25,6 +25,7 @@ import { OnboardingModule } from "../onboarding/onboarding.module";
 import { ManagerModule } from "../manager/manager.module";
 import { AiModule } from "../ai/ai.module";
 import { MessagingModule } from "../messaging/messaging.module";
+import { AppAuthModule } from "../app-auth/app-auth.module";
 import { WhatsappTransportModule } from "./whatsapp-transport.module";
 
 @Module({
@@ -33,6 +34,8 @@ import { WhatsappTransportModule } from "./whatsapp-transport.module";
     HttpModule.register({ timeout: 30_000, maxRedirects: 5 }),
     WhatsappTransportModule,
     MessagingModule,
+    // The router answers app sign-in approval buttons.
+    AppAuthModule,
     AiModule,
     OrchestratorModule,
     PinModule,

@@ -43,6 +43,13 @@ Each row is enforced in code and verified by `npm run security:check`. Do not re
 | S11 | No credentials in the repository | whole tree |
 | S12 | Security-critical files have unit tests | colocated `*.spec.ts` |
 | S13 | Webhook controllers never serialize the inbound payload into a log line | `whatsapp.controller.ts` + `rubies-webhook.controller.ts` |
+| S14 | The mobile app API denies by default: every `/v1` controller needs a live session unless a handler is `@Public()`, which only the sign-in controller may use | `app-api/app-auth.guard.ts`, registered globally in `app-api.module.ts`; every app controller mounted under `v1` |
+| S15 | App API controllers never log or serialize request data, and take DTO classes rather than `unknown` | `src/app-api/**/*.controller.ts` |
+| S16 | Sign-in codes and session tokens are stored only as HMACs or hashes | `app-auth/secret-hash.util.ts`; no plaintext secret column in `schema.prisma` |
+
+### Why S14–S16 matter
+
+The app is the first client that can name any id it likes and that authenticates with something other than a Meta signature. An unguarded `/v1` route is a public endpoint onto someone's money; a logged request body is a logged PIN or sign-in code; a plaintext token column turns one database read into every session. See [ADR-0002](decisions/0002-app-channel-and-auth.md). The API is off unless `APP_API_ENABLED=true`.
 
 ### Why S13 matters
 

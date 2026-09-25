@@ -66,6 +66,7 @@ e2e/
     onboarding/
     rubies/
     security/
+    app/           # mobile app /v1 API: needs APP_API_ENABLED=true on the server
 ```
 
 ---

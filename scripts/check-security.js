@@ -464,6 +464,13 @@ const NEEDS_TESTS = [
   'src/whatsapp/pin-outcome.service.ts',
   'src/messaging/channel-messenger.ts',
   'src/messaging/whatsapp-channel.adapter.ts',
+  'src/app-api/app-auth.guard.ts',
+  'src/app-auth/secret-hash.util.ts',
+  'src/app-auth/otp.service.ts',
+  'src/app-auth/session.service.ts',
+  'src/app-auth/login.service.ts',
+  'src/app-auth/login-approval.service.ts',
+  'src/app-auth/sms.service.ts',
   'src/pin/pin.service.ts',
   'src/orchestrator/action-validator.service.ts',
   'src/orchestrator/transfer-hints.util.ts',
@@ -481,6 +488,106 @@ for (const target of NEEDS_TESTS) {
   if (!fs.existsSync(repoPath(spec))) {
     fail('S12', `${target} is security-critical and has no ${path.basename(spec)}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// S14-S16: the mobile app API (docs/decisions/0002-app-channel-and-auth.md)
+// ---------------------------------------------------------------------------
+
+// S14: deny by default. The guard must stay registered globally and keep
+// deciding by declared path; every app controller must be mounted under v1,
+// which is what the guard keys on; and @Public() may open only the sign-in
+// routes themselves.
+const APP_API_DIR = 'src/app-api/';
+const PUBLIC_ALLOWED = new Set([
+  'src/app-api/auth/auth.controller.ts',
+  'src/app-api/public.decorator.ts',
+]);
+
+const appApiModule = readIfExists('src/app-api/app-api.module.ts');
+if (
+  appApiModule === null ||
+  !/provide:\s*APP_GUARD,\s*useClass:\s*AppAuthGuard/.test(appApiModule)
+) {
+  fail('S14', 'src/app-api/app-api.module.ts must register AppAuthGuard as APP_GUARD');
+}
+const appAuthGuard = readIfExists('src/app-api/app-auth.guard.ts');
+if (
+  appAuthGuard === null ||
+  !/PATH_METADATA/.test(appAuthGuard) ||
+  !/IS_PUBLIC_KEY/.test(appAuthGuard)
+) {
+  fail(
+    'S14',
+    'src/app-api/app-auth.guard.ts must decide by the declared controller path and honour only @Public()',
+  );
+}
+
+for (const full of ALL_FILES) {
+  const file = rel(full);
+  if (!file.startsWith(APP_API_DIR) || !file.endsWith('.ts') || file.endsWith('.spec.ts')) {
+    continue;
+  }
+  const lines = fs.readFileSync(full, 'utf8').split(/\r?\n/);
+  lines.forEach((line, index) => {
+    if (isWaived(lines, index)) return;
+    // Applied as a decorator, not mentioned in a comment.
+    if (/^\s*@Public\(\)/.test(line) && !PUBLIC_ALLOWED.has(file)) {
+      fail('S14', `${file}:${index + 1}: @Public() is only for the sign-in routes`);
+    }
+    const mount = /@Controller\(\s*(?:(['"`])([^'"`]*)\1)?\s*\)/.exec(line);
+    if (mount && !/^\/?v1(\/|$)/i.test(mount[2] || '')) {
+      fail(
+        'S14',
+        `${file}:${index + 1}: app API controllers must be mounted under v1, or AppAuthGuard does not protect them`,
+      );
+    }
+    // S15: request bodies here carry phone numbers, codes, PINs and tokens.
+    if (file.endsWith('.controller.ts')) {
+      if (/\bLogger\b|console\.|JSON\.stringify\(/.test(line)) {
+        fail(
+          'S15',
+          `${file}:${index + 1}: app API controllers must not log or serialize request data`,
+        );
+      }
+      if (/@Body\(\)\s*\w+\s*:\s*(unknown|any)\b/.test(line)) {
+        fail(
+          'S15',
+          `${file}:${index + 1}: app API handlers must take a DTO class, so unknown fields are stripped and every field is validated`,
+        );
+      }
+    }
+  });
+}
+
+// S16: sign-in secrets exist in plaintext only in memory. No column may hold
+// one, and the helper that makes the digests must keep its keyed hash and
+// constant-time comparison.
+const schemaSource = readIfExists('prisma/schema.prisma');
+if (schemaSource !== null) {
+  schemaSource.split(/\r?\n/).forEach((line, index) => {
+    if (
+      /^\s+(code|otp|pin|token|accessToken|refreshToken|challengeToken|password)\s+String/.test(
+        line,
+      )
+    ) {
+      fail(
+        'S16',
+        `prisma/schema.prisma:${index + 1}: store sign-in secrets as a hash or HMAC, never as plaintext`,
+      );
+    }
+  });
+}
+const secretHash = readIfExists('src/app-auth/secret-hash.util.ts');
+if (
+  secretHash === null ||
+  !/createHmac/.test(secretHash) ||
+  !/timingSafeEqual/.test(secretHash)
+) {
+  fail(
+    'S16',
+    'src/app-auth/secret-hash.util.ts must keep keyed code digests and constant-time comparison',
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -296,3 +296,43 @@ export function pinResetOtpEmail(params: {
     html: layout("reset your pin", body),
   };
 }
+
+/** For text a user chose (a device name), which must never be read as markup. */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export function newDeviceLoginEmail(params: {
+  name: string | null;
+  deviceName: string | null;
+  platform: string;
+  at: Date;
+}): { subject: string; html: string } {
+  const device = params.deviceName
+    ? `${escapeHtml(params.deviceName)} (${params.platform})`
+    : `a new ${params.platform} phone`;
+  const when = params.at.toLocaleString("en-NG", {
+    timeZone: "Africa/Lagos",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  const body = [
+    paragraph(
+      `hey ${escapeHtml(firstNameOf(params.name))}, your udara account was just opened in the app on ${device}, ${when}.`,
+    ),
+    paragraph(`if that was you, there's nothing to do.`),
+    paragraph(
+      `<strong>if it wasn't, someone has been receiving your sms codes.</strong> reply to this email right away so we can lock the account, and don't share any code you're sent.`,
+    ),
+  ].join("");
+
+  return {
+    subject: "Your Udara account was opened on a new phone",
+    html: layout("new phone signed in", body),
+  };
+}

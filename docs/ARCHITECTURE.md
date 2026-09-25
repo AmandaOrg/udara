@@ -31,6 +31,8 @@ src/
   ai/              Provider clients + persona/onboarding prompts
   orchestrator/    OrchestratorService, ActionValidator, surface registry, evals
   messaging/       ChannelMessenger (the only way to send), channel context, WhatsApp adapter
+  app-auth/        App sign-in: SMS codes, sessions, new-device step-up (always loaded)
+  app-api/         Mobile app HTTP API under /v1 (loaded only when APP_API_ENABLED=true)
   whatsapp/        Webhook, router, wizards, PIN gate, ActionExecutor; transport module
   pin/             PIN challenge/verify
   cli/             Dry-run CLI (no WhatsApp/Rubies)
@@ -74,6 +76,10 @@ Domain code never calls `WhatsappService`. It sends through `ChannelMessenger` (
 - **Outside one** (crons, the Rubies webhook, CLIs): the call site labels the send `proactive` or `transactional`, and delivery policy decides. Today that is always WhatsApp. An unlabelled send with no context is logged as a wiring bug.
 
 `WhatsappChannelAdapter` turns the messenger's calls into exactly the `WhatsappService` / `ChunkedMessengerService` calls the services used to make themselves, and owns the WhatsApp Flow ids for the KYC and PIN forms. `WhatsappTransportModule` holds the Cloud API services and depends on no domain module.
+
+### Mobile app API
+
+`AppApiModule` (`src/app-api/`) is imported by `AppModule` only when `APP_API_ENABLED=true`. Its `AppAuthGuard` is global and denies every controller mounted under `v1` without a live session unless the handler is `@Public()` (S14); it decides by the declared controller path, not the request URL. Sign-in lives in `AppAuthModule` (`src/app-auth/`), which is always loaded because the WhatsApp router answers sign-in approval buttons. The global throttler (`AppThrottlerGuard`) counts per session when a bearer token is present and per client address otherwise; `main.ts` trusts one proxy hop.
 
 ### Circular Nest imports
 

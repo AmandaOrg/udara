@@ -43,6 +43,18 @@ ALLOW_UNSIGNED_WEBHOOKS=true
 
 `SENTRY_DSN` turns on error reporting; unset, unhandled errors reach the log stream only. Request bodies, headers and cookies are stripped before send.
 
+`APP_API_ENABLED=true` loads the mobile app's `/v1` API; without it those routes do not exist. Once it is on, boot requires `OTP_PEPPER` (32+ characters) and, unless `SMS_DRY_RUN=true`, `TERMII_API_KEY` and `TERMII_SENDER_ID`. See `.env.example` and [ADR-0002](decisions/0002-app-channel-and-auth.md).
+
+**Local runs and the hosted database.** If your `.env` points `DATABASE_URL` at a hosted database, override it on the command line for every local server, migration and e2e run. The e2e runner falls back to `.env`'s `DATABASE_URL` too:
+
+```
+DATABASE_URL=postgresql://kedu:kedu@localhost:5433/kedu \
+E2E_DATABASE_URL=postgresql://kedu:kedu@localhost:5433/kedu \
+SENTRY_DSN= RESEND_API_KEY= E2E_ORCHESTRATOR_LIVE=0 npm run e2e
+```
+
+The app scenarios (`e2e/scenarios/app/`) need the server started with `APP_API_ENABLED=true SMS_DRY_RUN=true OTP_PEPPER=<value>`, and the same `OTP_PEPPER` in the runner's environment: the runner cannot read an SMS, so it replaces the stored code digest with one for a code it knows.
+
 `DISABLE_SCHEDULERS=true` stops every `@Cron` from registering. The CLI tools set it themselves, because they boot the whole `AppModule` to reach its providers and would otherwise turn the machine running them into a second replica. Never set it on the server.
 
 ## Database connections

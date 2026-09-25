@@ -49,6 +49,8 @@ For non-trivial changes, cover where applicable:
 
 CI does not run e2e. Run the relevant subset locally (`npm run e2e:smoke` or a name prefix).
 
+The mobile app scenarios (`e2e/scenarios/app/`, prefix `app.`) need the server started with `APP_API_ENABLED=true SMS_DRY_RUN=true OTP_PEPPER=<value>` and the same `OTP_PEPPER` in the runner's environment. See [DEVELOPMENT.md](DEVELOPMENT.md#environment), including the note on overriding a hosted `DATABASE_URL`.
+
 ## Matrix for common change types
 
 | Change | Unit | Golden | E2e |
@@ -58,6 +60,7 @@ CI does not run e2e. Run the relevant subset locally (`npm run e2e:smoke` or a n
 | Orchestrator validator / hints | Required | Required | Optional stub failure SOP |
 | Inbound voice/image | Required (mocked Meta/Deepgram) | If spend-check gating | Optional |
 | Transfer wizard / confirm / PIN | Required | If intent gating | Transfer scenarios |
+| App sign-in / sessions / `/v1` guard | Required | — | `app.` scenarios |
 | Docs-only | `npm run docs:check` | — | — |
 
 Every change also runs `npm run security:check`. Files listed as security-critical in [`scripts/check-security.js`](../scripts/check-security.js) must keep a colocated spec — that list is what stops a guard from losing its only CI coverage. See [SECURITY.md](SECURITY.md).

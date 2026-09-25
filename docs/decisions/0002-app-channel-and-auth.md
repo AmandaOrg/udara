@@ -21,6 +21,8 @@ Udara is being built as a standalone iOS/Android app as well as a WhatsApp agent
 
 **KYC and PIN may be entered on native app screens,** which replaces "only via WhatsApp Flows" when P4 lands. They go to dedicated form endpoints, never the chat. Values are handed to the existing handlers in the same in-memory `sensitive` map the WhatsApp path uses. They are never stored in a message row and never logged. AGENTS.md is amended in the same change as those endpoints.
 
+**The API ships switched off.** `/v1` exists only when `APP_API_ENABLED=true`, and only then does boot require its secrets, so deploying the code changes nothing until someone chooses to turn it on.
+
 **Login is by SMS one-time code.**
 - 6-digit codes, stored only as an HMAC with a server-side pepper.
 - A 10-minute expiry, 5 attempts, per-phone and per-IP send caps, and a global daily SMS cap.
@@ -53,9 +55,8 @@ Udara is being built as a standalone iOS/Android app as well as a WhatsApp agent
 - Most of the work is backend: a messenger port, auth, and structured money decisions. See the initiative plan.
 - The SMS provider becomes a cost and abuse surface that needs a cap and an alert.
 - Cross-channel state (a wizard open on one channel while the user types on the other) needs explicit handling in P4.
-- Still open, to settle before the phase that needs them:
-  - a lower transfer cap on newly added devices (P3);
-  - the account deletion and retention policy, checked against the Rubies agreement and the NDPA (P9).
+- Settled 2026-09-25 (Egwu David Samuel): transfers from a newly trusted device are capped for its first 24 hours (default ₦20,000, configurable). Enforced where app-originated transfers exist (P4, P7).
+- Still open, to settle before the phase that needs it: the account deletion and retention policy, checked against the Rubies agreement and the NDPA (P9).
 
 ## Follow-up
 

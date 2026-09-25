@@ -48,6 +48,11 @@ import { PinGateService } from "./pin-gate.service";
 import { PinOutcomeService } from "./pin-outcome.service";
 import { ChannelMessenger } from "../messaging/channel-messenger";
 import {
+  LOGIN_APPROVE_PREFIX,
+  LOGIN_DENY_PREFIX,
+  LoginApprovalService,
+} from "../app-auth/login-approval.service";
+import {
   WeeklyReviewService,
   WEEKLY_REVIEW_PREFIX,
 } from "./weekly-review.service";
@@ -98,6 +103,7 @@ export class WhatsappRouterService {
     private readonly rateLimit: InboundRateLimitService,
     private readonly pinOutcome: PinOutcomeService,
     private readonly messenger: ChannelMessenger,
+    private readonly loginApproval: LoginApprovalService,
   ) {}
 
   async route(
@@ -310,6 +316,24 @@ export class WhatsappRouterService {
       await this.billPaymentConfirmation.cancelBillPayment(
         user.id,
         billPaymentId,
+      );
+      return;
+    }
+    // Before the pre-account branch below: someone mid-onboarding can be
+    // asked to approve an app sign-in too.
+    if (payload.startsWith(LOGIN_APPROVE_PREFIX)) {
+      await this.loginApproval.decide(
+        user,
+        payload.slice(LOGIN_APPROVE_PREFIX.length),
+        true,
+      );
+      return;
+    }
+    if (payload.startsWith(LOGIN_DENY_PREFIX)) {
+      await this.loginApproval.decide(
+        user,
+        payload.slice(LOGIN_DENY_PREFIX.length),
+        false,
       );
       return;
     }

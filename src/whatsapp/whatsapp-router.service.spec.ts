@@ -34,6 +34,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   let deepgram: { isConfigured: jest.Mock; transcribe: jest.Mock };
   let inboundMessages: { updateTextBody: jest.Mock; attachUser: jest.Mock };
   let rateLimit: { check: jest.Mock };
+  let loginApproval: { decide: jest.Mock };
   let service: WhatsappRouterService;
 
   const user = {
@@ -124,6 +125,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       updateTextBody: jest.fn().mockResolvedValue(undefined),
       attachUser: jest.fn().mockResolvedValue(undefined),
     };
+    loginApproval = { decide: jest.fn().mockResolvedValue(undefined) };
     // Under the limit by default; the throttling tests override it.
     rateLimit = {
       check: jest
@@ -152,6 +154,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         billPaymentConfirmation as any,
       ),
       whatsappTestMessenger({ whatsapp }),
+      loginApproval as any,
     );
   });
 
@@ -302,6 +305,47 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         expect.any(String),
       );
       expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("app sign-in approval buttons", () => {
+    it.each([
+      ["login_approve:challenge-9", true],
+      ["login_deny:challenge-9", false],
+    ])(
+      "hands %s to the approval service for the tapping user",
+      async (payload, approve) => {
+        await service.route({
+          id: "m1",
+          type: WhatsappMessageType.BUTTON_REPLY,
+          fromNumber: "234801",
+          buttonPayload: payload,
+        } as any);
+
+        expect(loginApproval.decide).toHaveBeenCalledWith(
+          user,
+          "challenge-9",
+          approve,
+        );
+      },
+    );
+
+    it("answers them even for a user still in onboarding", async () => {
+      // The router works with the row findOrCreateUser's update returns.
+      prisma.user.update.mockResolvedValueOnce({
+        ...user,
+        onboardingStage: OnboardingStage.IDENTITY,
+      });
+
+      await service.route({
+        id: "m1",
+        type: WhatsappMessageType.BUTTON_REPLY,
+        fromNumber: "234801",
+        buttonPayload: "login_approve:challenge-9",
+      } as any);
+
+      expect(loginApproval.decide).toHaveBeenCalled();
+      expect(onboarding.handleInboundButton).not.toHaveBeenCalled();
     });
   });
 

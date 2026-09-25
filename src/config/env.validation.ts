@@ -202,6 +202,49 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   DISABLE_SCHEDULERS?: string;
+
+  // ----- Mobile app API (off unless APP_API_ENABLED=true) -----
+
+  @IsOptional()
+  @IsString()
+  APP_API_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  OTP_PEPPER?: string;
+
+  @IsOptional()
+  @IsString()
+  SMS_DRY_RUN?: string;
+
+  @IsOptional()
+  @IsString()
+  TERMII_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  TERMII_SENDER_ID?: string;
+
+  @IsOptional()
+  @IsUrl({ require_tld: false })
+  TERMII_BASE_URL?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  SMS_DAILY_CAP?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(60)
+  APP_ACCESS_TOKEN_TTL_MINUTES?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  APP_REFRESH_TOKEN_TTL_DAYS?: number;
 }
 
 /** Webhook signing secrets. Blank means "accept forged requests", so blank is opt-in. */
@@ -238,6 +281,41 @@ function assertWebhookSecretsPresent(config: Record<string, unknown>): void {
   );
 }
 
+/** Long enough that the pepper cannot be guessed and the codes brute-forced offline. */
+const MIN_OTP_PEPPER_LENGTH = 32;
+
+/**
+ * The app API only needs its secrets when it is switched on, so deploying this
+ * code changes nothing until APP_API_ENABLED is set. Once it is, a missing
+ * pepper would make every stored code hash guessable, and a missing SMS
+ * credential would silently send no codes; both fail boot instead.
+ */
+function assertAppApiConfig(config: Record<string, unknown>): void {
+  if (String(config.APP_API_ENABLED ?? "").trim() !== "true") return;
+
+  const problems: string[] = [];
+  const pepper = String(config.OTP_PEPPER ?? "").trim();
+  if (pepper.length < MIN_OTP_PEPPER_LENGTH) {
+    problems.push(
+      `  OTP_PEPPER: must be at least ${MIN_OTP_PEPPER_LENGTH} characters when APP_API_ENABLED=true`,
+    );
+  }
+  if (String(config.SMS_DRY_RUN ?? "").trim() !== "true") {
+    for (const key of ["TERMII_API_KEY", "TERMII_SENDER_ID"]) {
+      if (isBlank(config[key])) {
+        problems.push(
+          `  ${key}: must not be blank when APP_API_ENABLED=true, unless SMS_DRY_RUN=true`,
+        );
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `Invalid environment configuration:\n${problems.join("\n")}`,
+    );
+  }
+}
+
 export function validate(
   config: Record<string, unknown>,
 ): EnvironmentVariables {
@@ -259,6 +337,7 @@ export function validate(
   // Deliberately after validateSync: @IsOptional() short-circuits every other
   // validator on an empty value, so this cannot be expressed as a decorator.
   assertWebhookSecretsPresent(config);
+  assertAppApiConfig(config);
 
   return validated;
 }

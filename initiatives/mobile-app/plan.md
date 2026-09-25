@@ -154,24 +154,34 @@ Users decided (2026-09-25, Egwu David Samuel):
 
 ## Phase 3 — Authentication
 
-**Status:** not started
-**Started:**
-**Completed:**
-**Owner:**
+**Status:** completed
+**Started:** 2026-09-25
+**Completed:** 2026-09-25
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] `AuthOtp`, `Device` and `AppSession` tables; Termii `SmsService` with a dry-run mode and a daily cap; opaque hashed tokens with refresh rotation
-- [ ] A global deny-by-default `AppAuthGuard` with `@Public()`; per-user and per-phone throttling; `trust proxy`
-- [ ] New-device step-up as set out in ADR-0002; S14 and S16
+- [x] `AuthOtp`, `Device`, `AppSession` and `LoginChallenge` tables (migration `20260925170000_app_sign_in`)
+- [x] Termii `SmsService` with `SMS_DRY_RUN`, and a daily cap that alerts through Sentry
+- [x] Opaque tokens stored as hashes, with refresh rotation and reuse detection
+- [x] `AppApiModule`, loaded only when `APP_API_ENABLED=true`, with a global deny-by-default `AppAuthGuard` and `@Public()`
+- [x] Session-keyed throttling (`AppThrottlerGuard`) and `trust proxy`
+- [x] New-device step-up as set out in ADR-0002: PIN, or WhatsApp approval, or none for a new or app-only user. Other channels and email are told about a new device.
+- [x] Invariants S14, S15 and S16 in `check-security.js` and `SECURITY.md`
+- [x] Env validation: once the API is on, boot requires the pepper, and the Termii credentials unless SMS is dry-run
 
 ### Acceptance tests
 
-- [ ] Unauthenticated `/v1` returns 401; OTP brute force locks out; reusing a refresh token revokes the family; a new device with a PIN on file needs the PIN
+- [x] Unit: the OTP caps, attempt budget, supersession and cross-number binding; token rotation, reuse revoking the family and the parallel-refresh race; the guard's deny-by-default and path casing; each step-up branch. 66 suites, 912 tests.
+- [x] E2E against a real server with the API on (`e2e/scenarios/app/`): new-number sign-in, logout; deny-by-default including `/V1/ME` casing; PIN step-up with wrong PIN, single-use challenge and refresh rotation; WhatsApp step-up approved through a real button webhook, landing on the same account. 18 pass, plus the 2 stale ones from P0.
+- [x] No code, PIN, token, pepper or app phone number in the server log across the run
+- [x] `check-security` catches a planted logger in a controller, a controller outside `v1`, and a stray `@Public()`
 
 ### Progress log
 
--
+- 2026-09-25: User decisions: new devices get a 24-hour transfer cap (enforced where app-originated transfers exist, P4 and P7, default ₦20,000 via env); Termii built dry-run, keys added by the user later; each finished phase is committed.
+- 2026-09-25: e2e exposed that `AllExceptionsFilter` flattened every `HttpException` body to `{ statusCode, message }`, so the app could not see `attemptsLeft`, `retryAfter` or `lockedUntil`. It now passes deliberate bodies through and still reduces unexpected errors to a generic 500.
+- 2026-09-25: Found while writing the new-device email: no email template escapes interpolated values (Rubies recipient names, for one). The new template escapes; the others are recorded in Deferred.
 
 ### Risk
 
@@ -325,7 +335,7 @@ Users decided (2026-09-25, Egwu David Samuel):
 | 0 | Paperwork and WhatsApp-neutral fixes | completed |
 | 1 | Messenger port | completed |
 | 2 | Identity | completed |
-| 3 | Authentication | not started |
+| 3 | Authentication | completed |
 | 4 | In-app conversation | not started |
 | 5 | Push and delivery rules | not started |
 | 6 | Native read-only API | not started |
@@ -337,6 +347,8 @@ Allowed status: `not started` · `in progress` · `blocked` · `completed` · `d
 
 ## Deferred
 
+- Email templates interpolate values unescaped (e.g. Rubies recipient names in `moneyOutEmail`). Use `escapeHtml` from `email.templates.ts` everywhere.
+- A returning install is always a new device (no device-bound key yet), so signing out and back in repeats step-up and restarts the new-device cap. A Keychain/Keystore key pair signing a challenge would fix this.
 - Two stale e2e scenarios that fail on `main` too:
   - `inbound.media.unsupported-image` expects the pre-vision "can't do anything with that" reply. Images now go to download plus the orchestrator, and media download is not dry-run, so it fails locally.
   - `transfer.wizard.amount-then-account` expects "transfer" to open the wizard directly. Free text now goes through the orchestrator, which falls back to the menu under `AI_PROVIDER=stub`.
@@ -348,7 +360,7 @@ Allowed status: `not started` · `in progress` · `blocked` · `completed` · `d
 ## Decisions
 
 - [ADR-0002](../../docs/decisions/0002-app-channel-and-auth.md): the app as a second channel, SMS one-time-code auth, new-device step-up, and the change to the "KYC and PIN only via WhatsApp Flows" constraint.
+- Settled 2026-09-25: a 24-hour transfer cap on newly trusted devices, enforced when app-originated transfers land (P4 chat, P7 native).
 - Still open, to settle before the phase that needs them:
-  - a lower transfer cap on newly added devices (P3);
   - the account deletion and retention policy, checked against the Rubies agreement and the NDPA (P9);
-  - registering a Termii sender ID (before P3 goes live).
+  - a Termii account, API key and an approved "dnd" sender ID, before `APP_API_ENABLED` is turned on anywhere real.
