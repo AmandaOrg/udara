@@ -1,6 +1,6 @@
 import { Body, Controller, Logger, Post, Req, UseGuards } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
 import { TransferConfirmationService } from "../whatsapp/transfer-confirmation.service";
 import { BillPaymentConfirmationService } from "../whatsapp/bill-payment-confirmation.service";
 import { AllowanceService } from "../allowance/allowance.service";
@@ -51,7 +51,7 @@ export class RubiesWebhookController {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly whatsapp: WhatsappService,
+    private readonly messenger: ChannelMessenger,
     private readonly transferConfirmation: TransferConfirmationService,
     private readonly billPaymentConfirmation: BillPaymentConfirmationService,
     private readonly rubies: RubiesService,
@@ -178,7 +178,9 @@ export class RubiesWebhookController {
         `daily spending limit: ₦${daily.toLocaleString("en-NG")}\nweekly spending limit: ₦${weekly.toLocaleString("en-NG")}`,
         "spending window opens 11am, closes 8pm. i'll check in with you as you go, let's get started.",
       ].join("\n\n");
-      await this.whatsapp.sendText(user.whatsappNumber, message, user.id);
+      await this.messenger.sendText(user, message, {
+        delivery: "transactional",
+      });
 
       await this.prisma.user.update({
         where: { id: user.id },
@@ -187,10 +189,10 @@ export class RubiesWebhookController {
       return;
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       `We've received ₦${amount.toLocaleString("en-NG")} into your Udara account. It'll be available during your next spending window.`,
-      user.id,
+      { delivery: "transactional" },
     );
   }
 

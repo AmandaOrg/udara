@@ -1,5 +1,6 @@
 import { AllowanceScheduler } from "./allowance.scheduler";
 import { NudgeType, Prisma } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 describe("AllowanceScheduler", () => {
   let prisma: {
@@ -50,7 +51,7 @@ describe("AllowanceScheduler", () => {
     scheduler = new AllowanceScheduler(
       prisma as any,
       allowance as any,
-      whatsapp as any,
+      whatsappTestMessenger({ whatsapp }),
       config as any,
       emailNotifications as any,
     );

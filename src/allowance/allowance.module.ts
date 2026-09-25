@@ -4,14 +4,13 @@ import { WindowService } from "./window.service";
 import { FeeCalculatorService } from "./fee-calculator.service";
 import { AllowanceScheduler } from "./allowance.scheduler";
 import { SpendSummaryService } from "./spend-summary.service";
-import { WhatsappModule } from "../whatsapp/whatsapp.module";
+import { MessagingModule } from "../messaging/messaging.module";
 import { EmailModule } from "../email/email.module";
 
 @Module({
-  // forwardRef: WhatsappModule already imports AllowanceModule, and
-  // AllowanceScheduler needs WhatsappService back for the window-open nudge
-  // (PRD §13) — same circular pattern as Rubies/Manager, resolved the same way.
-  imports: [forwardRef(() => WhatsappModule), forwardRef(() => EmailModule)],
+  // AllowanceScheduler sends its nudges through MessagingModule, which depends on
+  // no domain module. EmailModule and AllowanceModule still import each other.
+  imports: [MessagingModule, forwardRef(() => EmailModule)],
   providers: [
     AllowanceService,
     WindowService,

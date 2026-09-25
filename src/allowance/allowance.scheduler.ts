@@ -3,10 +3,13 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { AllowanceService } from "./allowance.service";
-import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
 import { EmailNotificationsService } from "../email/email-notifications.service";
 import { NudgeType, Prisma, User } from "@prisma/client";
 import { getWatHour, startOfWatDayInstant } from "../common/wat-time.util";
+
+/** Udara starts this conversation; nobody asked. */
+const PROACTIVE = { delivery: "proactive" } as const;
 
 const FREE_FORM_WINDOW_MS = 24 * 60 * 60 * 1000; // Meta blocks free-form sends past 24h since the user's last inbound message
 
@@ -25,7 +28,7 @@ export class AllowanceScheduler {
   constructor(
     private readonly prisma: PrismaService,
     private readonly allowance: AllowanceService,
-    private readonly whatsapp: WhatsappService,
+    private readonly messenger: ChannelMessenger,
     private readonly config: ConfigService,
     private readonly emailNotifications: EmailNotificationsService,
   ) {}
@@ -169,15 +172,15 @@ export class AllowanceScheduler {
     }
 
     if (withinFreeFormWindow) {
-      await this.whatsapp.sendText(user.whatsappNumber, text, user.id);
+      await this.messenger.sendText(user, text, PROACTIVE);
       return;
     }
-    await this.whatsapp.sendTemplate(
-      user.whatsappNumber,
+    await this.messenger.sendTemplate(
+      user,
       templateName as string,
       "en_US",
       undefined,
-      user.id,
+      PROACTIVE,
     );
   }
 

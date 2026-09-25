@@ -122,7 +122,7 @@ Until 2026-09-05 this section read "Verified" while nothing outside `src/manager
 
 ## Bill payments (airtime, data, electricity)
 
-**Verified.** Menu plus orchestrator surfaces `bill_payment_wizard`, `data_bundle_wizard`, `electricity_wizard`. Chat may prefill amount / network / phone / meter / DisCo from sanitized hints. Data bundles stay a list. Same confirm → PIN as transfers. See [specs/BILL_PAYMENTS_SPEC.md](specs/BILL_PAYMENTS_SPEC.md) and [specs/AI_MONEY_INTENTS_SPEC.md](specs/AI_MONEY_INTENTS_SPEC.md).
+**Verified.** Menu plus orchestrator surfaces `bill_payment_wizard`, `data_bundle_wizard`, `electricity_wizard`. Chat may prefill amount / network / phone / meter / DisCo from sanitized hints. Data bundles stay a list. Same confirm → PIN as transfers, including the re-quote when Confirm comes more than 10 minutes after the quote or the terms moved, and cancelling a PIN-awaiting purchase (with a message) when the user moves on. See [specs/BILL_PAYMENTS_SPEC.md](specs/BILL_PAYMENTS_SPEC.md) and [specs/AI_MONEY_INTENTS_SPEC.md](specs/AI_MONEY_INTENTS_SPEC.md).
 
 ---
 

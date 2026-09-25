@@ -47,6 +47,7 @@ Never weaken a guard, the validator, the confirm step, or the PIN step to make s
 - Match the file’s existing quote style. `npm run lint` runs `--fix`, so it reformats rather than checks — lint only the files you touched (`npx eslint <paths>`). Never delete `.gitattributes`; see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 - Comment why, not what
 - `forwardRef` only for existing WhatsApp circulars
+- Send to users only through `ChannelMessenger` (`src/messaging/`), never `WhatsappService` directly. A send outside an inbound event (cron, provider webhook) is labelled `proactive` or `transactional`
 - Dry-run + `AI_PROVIDER=stub` for local/e2e unless the task is live-LLM
 
 ## Initiatives

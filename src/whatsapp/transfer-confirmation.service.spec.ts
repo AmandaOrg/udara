@@ -10,6 +10,7 @@ import {
   TransactionStatus,
 } from "@prisma/client";
 import { TransactionType } from "../common/enums/transaction-type.enum";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 describe("formatSpendFeeLine", () => {
   it("uses plain language instead of enum names", () => {
@@ -180,7 +181,7 @@ describe("TransferConfirmationService", () => {
       allowance as any,
       rubies as any,
       tagging as any,
-      whatsapp as any,
+      whatsappTestMessenger({ whatsapp }),
       pinGate as any,
       emailNotifications as any,
     );
@@ -361,15 +362,34 @@ describe("TransferConfirmationService", () => {
 
     it("is a no-op if the transaction doesn't exist", async () => {
       prisma.transaction.findUnique.mockResolvedValue(null);
-      await service.confirmTransfer("nope");
+      await service.confirmTransfer("user-1", "nope");
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The id comes from a button payload. Once a client other than WhatsApp can
+     * name it, an unscoped lookup would let one user confirm another's transfer.
+     */
+    it("only looks the transaction up within the caller's own transactions", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(null);
+
+      await service.confirmTransfer("someone-else", "txn-1");
+
+      expect(prisma.transaction.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "txn-1", userId: "someone-else" },
+        }),
+      );
+      expect(rubies.getBalance).not.toHaveBeenCalled();
+      expect(prisma.transaction.updateMany).not.toHaveBeenCalled();
+      expect(pinGate.requestTransferPin).not.toHaveBeenCalled();
     });
 
     it("is a no-op (idempotent) if already actioned — not PENDING_CONFIRMATION", async () => {
       prisma.transaction.findUnique.mockResolvedValue(
         pendingTransaction({ status: TransactionStatus.EXECUTED }),
       );
-      await service.confirmTransfer("txn-1");
+      await service.confirmTransfer("user-1", "txn-1");
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
     });
 
@@ -379,7 +399,7 @@ describe("TransferConfirmationService", () => {
       );
       rubies.getBalance.mockResolvedValue(1000); // less than 6000 total
 
-      await service.confirmTransfer("txn-1");
+      await service.confirmTransfer("user-1", "txn-1");
 
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
       expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
@@ -407,7 +427,9 @@ describe("TransferConfirmationService", () => {
       prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
       rubies.getBalance.mockRejectedValue(new Error("Could not reach Rubies"));
 
-      await expect(service.confirmTransfer("txn-1")).resolves.toBeUndefined();
+      await expect(
+        service.confirmTransfer("user-1", "txn-1"),
+      ).resolves.toBeUndefined();
 
       expect(whatsapp.sendText).toHaveBeenCalledWith(
         "234801",
@@ -425,7 +447,7 @@ describe("TransferConfirmationService", () => {
         pendingTransaction({ status: TransactionStatus.CONFIRMED }),
       );
 
-      await service.confirmTransfer("txn-1");
+      await service.confirmTransfer("user-1", "txn-1");
 
       expect(prisma.overrideHistory.create).not.toHaveBeenCalled();
     });
@@ -454,7 +476,7 @@ describe("TransferConfirmationService", () => {
     it("asks for a PIN instead of transferring, once all other guards pass", async () => {
       prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
 
-      await service.confirmTransfer("txn-1");
+      await service.confirmTransfer("user-1", "txn-1");
 
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
       expect(pinGate.requestTransferPin).toHaveBeenCalledWith(user, "txn-1");
@@ -486,7 +508,7 @@ describe("TransferConfirmationService", () => {
         remainingToday: 10_000,
       });
 
-      await service.confirmTransfer("txn-1");
+      await service.confirmTransfer("user-1", "txn-1");
 
       // No PIN, no money — the row stays PENDING_CONFIRMATION and the customer
       // is shown the terms they would actually be authorising.
@@ -513,7 +535,7 @@ describe("TransferConfirmationService", () => {
       );
       rubies.getBalance.mockResolvedValue(50_000);
 
-      await service.confirmTransfer("txn-1");
+      await service.confirmTransfer("user-1", "txn-1");
 
       expect(pinGate.requestTransferPin).not.toHaveBeenCalled();
       expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
@@ -529,7 +551,7 @@ describe("TransferConfirmationService", () => {
       rubies.getBalance.mockResolvedValue(50_000);
       prisma.transaction.updateMany.mockResolvedValue({ count: 0 });
 
-      await service.confirmTransfer("txn-1");
+      await service.confirmTransfer("user-1", "txn-1");
 
       expect(pinGate.requestTransferPin).not.toHaveBeenCalled();
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
@@ -540,7 +562,7 @@ describe("TransferConfirmationService", () => {
         pendingTransaction({ user: { ...user, pinHash: null } }),
       );
 
-      await service.confirmTransfer("txn-1");
+      await service.confirmTransfer("user-1", "txn-1");
 
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
       expect(pinGate.requestPinSetup).toHaveBeenCalled();
@@ -579,7 +601,7 @@ describe("TransferConfirmationService", () => {
       prisma.transaction.findUnique.mockResolvedValue(pendingTransaction());
       pinGate.isLocked.mockReturnValue(true);
 
-      await service.confirmTransfer("txn-1");
+      await service.confirmTransfer("user-1", "txn-1");
 
       expect(rubies.initiateTransfer).not.toHaveBeenCalled();
       expect(pinGate.notifyLocked).toHaveBeenCalled();
@@ -756,7 +778,7 @@ describe("TransferConfirmationService", () => {
         user,
       });
 
-      await service.cancelTransfer("txn-1");
+      await service.cancelTransfer("user-1", "txn-1");
 
       expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
         where: {
@@ -778,8 +800,22 @@ describe("TransferConfirmationService", () => {
         status: TransactionStatus.EXECUTED,
         user,
       });
-      await service.cancelTransfer("txn-1");
+      await service.cancelTransfer("user-1", "txn-1");
       expect(prisma.transaction.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("cannot cancel another user's transfer", async () => {
+      prisma.transaction.findUnique.mockResolvedValue(null);
+
+      await service.cancelTransfer("someone-else", "txn-1");
+
+      expect(prisma.transaction.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "txn-1", userId: "someone-else" },
+        }),
+      );
+      expect(prisma.transaction.updateMany).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
     });
   });
 

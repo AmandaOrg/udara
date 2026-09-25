@@ -5,7 +5,10 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AllowanceService } from "../allowance/allowance.service";
 import { RubiesService, RUBIES_MFB_BANK_CODE } from "../rubies/rubies.service";
 import { TaggingService } from "../tagging/tagging.service";
-import { WhatsappService } from "./whatsapp.service";
+import {
+  ChannelMessenger,
+  MessageRecipient,
+} from "../messaging/channel-messenger";
 import { PinGateService } from "./pin-gate.service";
 import { EmailNotificationsService } from "../email/email-notifications.service";
 import {
@@ -31,7 +34,7 @@ export const CANCEL_BUTTON_PREFIX = "cancel_transfer:";
  * the row would break resumePendingTransferUi and resumeAfterPinSetup, both of
  * which exist precisely to resume an old confirm.
  */
-const CONFIRM_RE_QUOTE_AFTER_MS = 10 * 60 * 1000;
+export const CONFIRM_RE_QUOTE_AFTER_MS = 10 * 60 * 1000;
 
 /** How long a sweep attempt holds the row before another caller may retry it. */
 const FEE_SWEEP_LEASE_MS = 5 * 60 * 1000;
@@ -106,7 +109,7 @@ export class TransferConfirmationService {
     private readonly allowance: AllowanceService,
     private readonly rubies: RubiesService,
     private readonly tagging: TaggingService,
-    private readonly whatsapp: WhatsappService,
+    private readonly messenger: ChannelMessenger,
     private readonly pinGate: PinGateService,
     private readonly emailNotifications: EmailNotificationsService,
   ) {}
@@ -137,10 +140,9 @@ export class TransferConfirmationService {
     });
 
     if (!user.rubiesAccountNumber || !user.rubiesAccountName) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "you don't have a udara account set up yet, so there's nothing to send from.",
-        user.id,
       );
       return;
     }
@@ -170,10 +172,9 @@ export class TransferConfirmationService {
           .then((r) => r.accountName)
           .catch(() => null));
       if (!resolvedName) {
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           `Couldn't verify account ${params.accountNumber} at that bank, double-check the account number and bank code.`,
-          user.id,
         );
         return;
       }
@@ -241,20 +242,22 @@ export class TransferConfirmationService {
       `Allowance left today after this: ₦${Math.max(0, evaluation.remainingToday - params.amount).toLocaleString("en-NG")}`,
     );
 
-    await this.whatsapp.sendInteractiveButtons(
-      user.whatsappNumber,
-      bodyLines.join("\n"),
-      [
-        { id: `${CONFIRM_BUTTON_PREFIX}${transaction.id}`, title: "Confirm" },
-        { id: `${CANCEL_BUTTON_PREFIX}${transaction.id}`, title: "Cancel" },
-      ],
-      user.id,
-    );
+    await this.messenger.sendButtons(user, bodyLines.join("\n"), [
+      { id: `${CONFIRM_BUTTON_PREFIX}${transaction.id}`, title: "Confirm" },
+      { id: `${CANCEL_BUTTON_PREFIX}${transaction.id}`, title: "Cancel" },
+    ]);
   }
 
-  async confirmTransfer(transactionId: string): Promise<void> {
+  /**
+   * Scoped to `userId`, not just the id. The id arrives inside a button payload,
+   * and a button payload is only unforgeable while WhatsApp is the sole client.
+   * Anything that lets a caller name the id (the mobile app does) could
+   * otherwise confirm someone else's transfer. Another user's id reads as
+   * "no such transaction".
+   */
+  async confirmTransfer(userId: string, transactionId: string): Promise<void> {
     const transaction = await this.prisma.transaction.findUnique({
-      where: { id: transactionId },
+      where: { id: transactionId, userId },
       include: { recipient: true, user: true },
     });
     if (!transaction) {
@@ -289,10 +292,9 @@ export class TransferConfirmationService {
         return null;
       });
     if (balance === null) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "i couldn't check your balance just now. tap confirm again in a moment.",
-        user.id,
       );
       return;
     }
@@ -305,10 +307,9 @@ export class TransferConfirmationService {
         { status: TransactionStatus.FAILED },
       );
       if (!failed) return;
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `That transfer needs ₦${totalCost.toLocaleString("en-NG")} but your Udara account only has ₦${balance.toLocaleString("en-NG")}. Cancelled.`,
-        user.id,
       );
       return;
     }
@@ -358,10 +359,9 @@ export class TransferConfirmationService {
     // The transaction stays PENDING_CONFIRMATION so the user can tap Confirm
     // again once their PIN exists, rather than silently losing the transfer.
     if (!user.pinHash) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "before your first transfer, you need to set a 4-digit pin. you'll use it to approve every transfer from here on.",
-        user.id,
       );
       await this.pinGate.requestPinSetup(user);
       return;
@@ -434,15 +434,10 @@ export class TransferConfirmationService {
       `Allowance left today after this: ₦${Math.max(0, evaluation.remainingToday - amount).toLocaleString("en-NG")}`,
     );
 
-    await this.whatsapp.sendInteractiveButtons(
-      user.whatsappNumber,
-      lines.join("\n"),
-      [
-        { id: `${CONFIRM_BUTTON_PREFIX}${transaction.id}`, title: "Confirm" },
-        { id: `${CANCEL_BUTTON_PREFIX}${transaction.id}`, title: "Cancel" },
-      ],
-      user.id,
-    );
+    await this.messenger.sendButtons(user, lines.join("\n"), [
+      { id: `${CONFIRM_BUTTON_PREFIX}${transaction.id}`, title: "Confirm" },
+      { id: `${CANCEL_BUTTON_PREFIX}${transaction.id}`, title: "Cancel" },
+    ]);
   }
 
   /**
@@ -501,12 +496,11 @@ export class TransferConfirmationService {
       return;
     }
 
-    await this.whatsapp.sendText(
-      pending.user.whatsappNumber,
+    await this.messenger.sendText(
+      pending.user,
       "now enter your PIN to send that transfer.",
-      pending.user.id,
     );
-    await this.confirmTransfer(pending.id);
+    await this.confirmTransfer(userId, pending.id);
   }
 
   /**
@@ -534,7 +528,7 @@ export class TransferConfirmationService {
       return true;
     }
 
-    await this.confirmTransfer(pending.id);
+    await this.confirmTransfer(user.id, pending.id);
     return true;
   }
 
@@ -602,10 +596,9 @@ export class TransferConfirmationService {
     if (result.status === "PENDING") {
       // Stays CONFIRMED — the Rubies webhook (Phase 7) or the reconciliation
       // scheduler below will resolve this to EXECUTED/FAILED once known.
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "Your transfer is processing, I'll confirm once it's done.",
-        user.id,
       );
       return;
     }
@@ -617,9 +610,10 @@ export class TransferConfirmationService {
     );
   }
 
-  async cancelTransfer(transactionId: string): Promise<void> {
+  /** Scoped to `userId` for the same reason as confirmTransfer. */
+  async cancelTransfer(userId: string, transactionId: string): Promise<void> {
     const transaction = await this.prisma.transaction.findUnique({
-      where: { id: transactionId },
+      where: { id: transactionId, userId },
       include: { user: true },
     });
     if (
@@ -634,10 +628,9 @@ export class TransferConfirmationService {
       { status: TransactionStatus.CANCELLED },
     );
     if (!cancelled) return;
-    await this.whatsapp.sendText(
-      transaction.user.whatsappNumber,
+    await this.messenger.sendText(
+      transaction.user,
       "Cancelled, nothing was sent.",
-      transaction.user.id,
     );
   }
 
@@ -678,10 +671,9 @@ export class TransferConfirmationService {
         !options?.silent ||
         transaction.status === TransactionStatus.PENDING_PIN
       ) {
-        await this.whatsapp.sendText(
-          transaction.user.whatsappNumber,
+        await this.messenger.sendText(
+          transaction.user,
           "Cancelled, nothing was sent.",
-          transaction.user.id,
         );
       }
     }
@@ -808,22 +800,19 @@ export class TransferConfirmationService {
         transaction.user.onboardingStage === OnboardingStage.FUNDED;
 
       if (isFirstTransactionOfOnboarding) {
-        await this.completeOnboardingAfterFirstTransaction(
-          transaction.userId,
-          transaction.user.whatsappNumber,
-        );
+        await this.completeOnboardingAfterFirstTransaction(transaction.user);
       } else {
-        await this.whatsapp.sendText(
-          transaction.user.whatsappNumber,
+        await this.messenger.sendText(
+          transaction.user,
           `Done, ₦${Number(transaction.amount).toLocaleString("en-NG")} sent to ${transaction.recipient.accountName ?? transaction.recipient.accountNumber}.`,
-          transaction.user.id,
+          { delivery: "transactional" },
         );
       }
     } else {
-      await this.whatsapp.sendText(
-        transaction.user.whatsappNumber,
+      await this.messenger.sendText(
+        transaction.user,
         "That transfer failed on Rubies' end, nothing was deducted from today's allowance.",
-        transaction.user.id,
+        { delivery: "transactional" },
       );
     }
   }
@@ -836,9 +825,9 @@ export class TransferConfirmationService {
    * intermediate value, and the transition is instantaneous in practice.
    */
   private async completeOnboardingAfterFirstTransaction(
-    userId: string,
-    whatsappNumber: string,
+    user: MessageRecipient,
   ): Promise<void> {
+    const userId = user.id;
     const allowance = await this.allowance.getOrCreateTodayAllowance(userId);
     const remainingToday =
       Number(allowance.amountAllocated) +
@@ -871,7 +860,7 @@ export class TransferConfirmationService {
       `remaining this week: ₦${remainingWeek.toLocaleString("en-NG")}`,
       "keep going.",
     ].join("\n\n");
-    await this.whatsapp.sendText(whatsappNumber, text, userId);
+    await this.messenger.sendText(user, text, { delivery: "transactional" });
   }
 
   /**

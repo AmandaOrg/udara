@@ -559,6 +559,11 @@ model OnboardingSession {
   messages      Json // [{ role, content, at }]
   extractedData Json? // partial structured data as it's confirmed
 
+  // flowToken of the one KYC form currently allowed to submit. Cleared by an
+  // atomic claim when a submission arrives, so a stale form or a duplicate
+  // submission never reaches Rubies. Null when no form is outstanding.
+  kycFlowToken String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

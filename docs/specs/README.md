@@ -22,6 +22,7 @@ Stakeholder-visible behavior for a feature. **What** happens and **why**, not cl
 | [AI_MONEY_INTENTS_SPEC.md](AI_MONEY_INTENTS_SPEC.md) | [ai-money-intents](../../initiatives/ai-money-intents/plan.md) |
 | [WEEKLY_REVIEW_LIMIT_ESCAPE_SPEC.md](WEEKLY_REVIEW_LIMIT_ESCAPE_SPEC.md) | [weekly-review-limit-escape](../../initiatives/weekly-review-limit-escape/plan.md) |
 | [PRODUCTION_HARDENING_SPEC.md](PRODUCTION_HARDENING_SPEC.md) | [production-hardening](../../initiatives/production-hardening/plan.md) |
+| [MOBILE_APP_SPEC.md](MOBILE_APP_SPEC.md) | [mobile-app](../../initiatives/mobile-app/plan.md) |
 
 ## New spec
 

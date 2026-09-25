@@ -44,6 +44,8 @@ import {
 } from "@prisma/client";
 import { BillPaymentDraftStep } from "../prisma/bill-payment.enums";
 import { PinGateService } from "./pin-gate.service";
+import { PinOutcomeService } from "./pin-outcome.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
 import {
   WeeklyReviewService,
   WEEKLY_REVIEW_PREFIX,
@@ -93,6 +95,8 @@ export class WhatsappRouterService {
     private readonly deepgram: DeepgramService,
     private readonly inboundMessages: WhatsappMessageService,
     private readonly rateLimit: InboundRateLimitService,
+    private readonly pinOutcome: PinOutcomeService,
+    private readonly messenger: ChannelMessenger,
   ) {}
 
   async route(
@@ -100,16 +104,17 @@ export class WhatsappRouterService {
     sensitive: SensitiveFields = {},
   ): Promise<void> {
     const user = await this.findOrCreateUser(message.fromNumber);
+    // Must precede the rate check, which counts this user's inbound rows.
+    await this.inboundMessages.attachUser(message.id, user.id);
 
     // Before any handler: past this point a message can cost an LLM call, a
     // media download and a transcription, and nothing else bounds that.
     const rate = await this.rateLimit.check(user.id);
     if (rate.limited) {
       if (rate.justCrossed) {
-        await this.whatsapp.sendText(
-          message.fromNumber,
+        await this.messenger.sendText(
+          user,
           "that's a lot of messages at once. give me a few minutes and try again.",
-          user.id,
         );
       }
       return;
@@ -129,16 +134,15 @@ export class WhatsappRouterService {
         return this.handleImage(user, message);
       case WhatsappMessageType.DOCUMENT:
       case WhatsappMessageType.LOCATION:
-        return this.handleUnsupportedMedia(user, message);
+        return this.handleUnsupportedMedia(user);
       case WhatsappMessageType.UNKNOWN:
       default:
         this.logger.warn(
           `Unhandled/unrecognized message type from ${message.fromNumber}`,
         );
-        await this.whatsapp.sendText(
-          message.fromNumber,
+        await this.messenger.sendText(
+          user,
           "Sorry, I couldn't understand that message.",
-          user.id,
         );
     }
   }
@@ -166,42 +170,26 @@ export class WhatsappRouterService {
       this.logger.warn(
         "Voice note ignored: DEEPGRAM_API_KEY is not set on this process",
       );
-      await this.whatsapp.sendText(
-        message.fromNumber,
-        AUDIO_TYPE_INSTEAD,
-        user.id,
-      );
+      await this.messenger.sendText(user, AUDIO_TYPE_INSTEAD);
       return;
     }
     const mediaId = message.mediaId ?? "";
     if (!mediaId) {
-      await this.whatsapp.sendText(
-        message.fromNumber,
-        AUDIO_COULDNT_HEAR,
-        user.id,
-      );
+      await this.messenger.sendText(user, AUDIO_COULDNT_HEAR);
       return;
     }
     try {
       const { buffer, mimeType } = await this.whatsapp.downloadMedia(mediaId);
       const heard = await this.deepgram.transcribe(buffer, mimeType);
       if (!heard.ok || !heard.text) {
-        await this.whatsapp.sendText(
-          message.fromNumber,
-          AUDIO_COULDNT_HEAR,
-          user.id,
-        );
+        await this.messenger.sendText(user, AUDIO_COULDNT_HEAR);
         return;
       }
       await this.inboundMessages.updateTextBody(message.id, heard.text);
       await this.handleUserUtterance(user, heard.text);
     } catch (err) {
       this.logger.warn(`Audio download/STT failed: ${String(err)}`);
-      await this.whatsapp.sendText(
-        message.fromNumber,
-        AUDIO_COULDNT_HEAR,
-        user.id,
-      );
+      await this.messenger.sendText(user, AUDIO_COULDNT_HEAR);
     }
   }
 
@@ -219,11 +207,7 @@ export class WhatsappRouterService {
     }
     const mediaId = message.mediaId ?? "";
     if (!mediaId) {
-      await this.whatsapp.sendText(
-        message.fromNumber,
-        IMAGE_COULDNT_OPEN,
-        user.id,
-      );
+      await this.messenger.sendText(user, IMAGE_COULDNT_OPEN);
       return;
     }
     try {
@@ -240,11 +224,7 @@ export class WhatsappRouterService {
       await this.handleUserUtterance(user, text, { image, syntheticText });
     } catch (err) {
       this.logger.warn(`Image download failed: ${String(err)}`);
-      await this.whatsapp.sendText(
-        message.fromNumber,
-        IMAGE_COULDNT_OPEN,
-        user.id,
-      );
+      await this.messenger.sendText(user, IMAGE_COULDNT_OPEN);
     }
   }
 
@@ -256,32 +236,37 @@ export class WhatsappRouterService {
 
     if (payload.startsWith(CONFIRM_BUTTON_PREFIX)) {
       const transactionId = payload.slice(CONFIRM_BUTTON_PREFIX.length);
-      await this.transferConfirmation.confirmTransfer(transactionId);
+      await this.transferConfirmation.confirmTransfer(user.id, transactionId);
       return;
     }
     if (payload.startsWith(CANCEL_BUTTON_PREFIX)) {
       const transactionId = payload.slice(CANCEL_BUTTON_PREFIX.length);
-      await this.transferConfirmation.cancelTransfer(transactionId);
+      await this.transferConfirmation.cancelTransfer(user.id, transactionId);
       return;
     }
     if (payload.startsWith(CONFIRM_BILL_PREFIX)) {
       const billPaymentId = payload.slice(CONFIRM_BILL_PREFIX.length);
-      await this.billPaymentConfirmation.confirmBillPayment(billPaymentId);
+      await this.billPaymentConfirmation.confirmBillPayment(
+        user.id,
+        billPaymentId,
+      );
       return;
     }
     if (payload.startsWith(CANCEL_BILL_PREFIX)) {
       const billPaymentId = payload.slice(CANCEL_BILL_PREFIX.length);
-      await this.billPaymentConfirmation.cancelBillPayment(billPaymentId);
+      await this.billPaymentConfirmation.cancelBillPayment(
+        user.id,
+        billPaymentId,
+      );
       return;
     }
     if (payload.startsWith(TELCO_BUTTON_PREFIX)) {
       const billerCode = payload.slice(TELCO_BUTTON_PREFIX.length);
       const draft = await this.billPaymentActions.getActiveDraft(user.id);
       if (!draft) {
-        await this.whatsapp.sendText(
-          message.fromNumber,
+        await this.messenger.sendText(
+          user,
           'that request has expired, say "airtime" to start again.',
-          user.id,
         );
         return;
       }
@@ -296,10 +281,9 @@ export class WhatsappRouterService {
       const billerCode = payload.slice(DATA_TELCO_BUTTON_PREFIX.length);
       const draft = await this.billPaymentActions.getActiveDraft(user.id);
       if (!draft) {
-        await this.whatsapp.sendText(
-          message.fromNumber,
+        await this.messenger.sendText(
+          user,
           'that request has expired, say "data" to start again.',
-          user.id,
         );
         return;
       }
@@ -315,10 +299,9 @@ export class WhatsappRouterService {
       const [billerCode, productCode] = rest.split(":");
       const draft = await this.billPaymentActions.getActiveDraft(user.id);
       if (!draft || !billerCode || !productCode) {
-        await this.whatsapp.sendText(
-          message.fromNumber,
+        await this.messenger.sendText(
+          user,
           'that request has expired, say "data" to start again.',
-          user.id,
         );
         return;
       }
@@ -334,10 +317,9 @@ export class WhatsappRouterService {
       const billerCode = payload.slice(DISCO_BUTTON_PREFIX.length);
       const draft = await this.billPaymentActions.getActiveDraft(user.id);
       if (!draft) {
-        await this.whatsapp.sendText(
-          message.fromNumber,
+        await this.messenger.sendText(
+          user,
           'that request has expired, say "electricity" to start again.',
-          user.id,
         );
         return;
       }
@@ -364,10 +346,9 @@ export class WhatsappRouterService {
     ) {
       const draft = await this.accountActions.getActiveDraft(user.id);
       if (!draft) {
-        await this.whatsapp.sendText(
-          message.fromNumber,
+        await this.messenger.sendText(
+          user,
           'that request has expired, say "transfer" to start again.',
-          user.id,
         );
         return;
       }
@@ -388,10 +369,9 @@ export class WhatsappRouterService {
     this.logger.debug(
       `Button reply "${payload}" from ${message.fromNumber} — not routed`,
     );
-    await this.whatsapp.sendText(
-      message.fromNumber,
+    await this.messenger.sendText(
+      user,
       "Got it, I'm not able to act on that yet, this part of Udara isn't wired up.",
-      user.id,
     );
   }
 
@@ -439,20 +419,7 @@ export class WhatsappRouterService {
         responseJson,
         sensitive,
       );
-      if (outcome.action === "execute_transfer") {
-        await this.transferConfirmation.executeVerifiedTransfer(
-          outcome.transactionId,
-        );
-      }
-      if (outcome.action === "execute_bill_payment") {
-        await this.billPaymentConfirmation.executeVerifiedBillPayment(
-          outcome.billPaymentId,
-        );
-      }
-      if (outcome.action === "pin_setup_complete") {
-        await this.transferConfirmation.resumeAfterPinSetup(user.id);
-        await this.billPaymentConfirmation.resumeAfterPinSetup(user.id);
-      }
+      await this.pinOutcome.apply(outcome, user.id);
       return;
     }
 
@@ -573,11 +540,7 @@ export class WhatsappRouterService {
       !transferDraft &&
       !abandonedReview
     ) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        "glad that went through.",
-        user.id,
-      );
+      await this.messenger.sendText(user, "glad that went through.");
       return;
     }
 
@@ -585,14 +548,10 @@ export class WhatsappRouterService {
     await this.actionExecutor.execute(user, result);
   }
 
-  private async handleUnsupportedMedia(
-    user: User,
-    message: WhatsappMessage,
-  ): Promise<void> {
-    await this.whatsapp.sendText(
-      message.fromNumber,
+  private async handleUnsupportedMedia(user: User): Promise<void> {
+    await this.messenger.sendText(
+      user,
       "I can't do anything with that kind of message yet, could you send it as text?",
-      user.id,
     );
   }
 }

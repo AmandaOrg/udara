@@ -1,6 +1,6 @@
 # Udara project summary
 
-Last updated: 2026-09-02
+Last updated: 2026-09-25
 
 Quick orientation for agents. Full behavior: `docs/PRODUCT_BEHAVIOR.md`. Full flow: `docs/ARCHITECTURE.md`. Working rules: `AGENTS.md`.
 
@@ -25,12 +25,13 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 | `src/rubies` | BaaS + VAS purchase/query + inbound webhook |
 | `src/ai` | LLM providers + persona prompts |
 | `src/orchestrator` | propose_turn + validator + surfaces (no send) |
-| `src/whatsapp` | Webhook, router, transfer wizard, bill-pay wizard, PIN gate, ActionExecutor |
+| `src/messaging` | `ChannelMessenger`: the only way to send; channel context; WhatsApp adapter |
+| `src/whatsapp` | Webhook, router, transfer wizard, bill-pay wizard, PIN gate, ActionExecutor; `WhatsappTransportModule` (Cloud API) |
 | `src/pin` | PIN challenge/verify |
 | `src/cli` | Dry-run golden/fixture runner |
 | `src/common` | WAT, bank match, display name |
 
-`AppModule` imports Prisma, config, schedule, Rubies, Allowance, Tagging, Onboarding, Manager, Whatsapp (last). AI + Orchestrator come in via WhatsappModule. Circular `forwardRef` with Allowance, Rubies, Onboarding, Manager.
+`AppModule` imports Prisma, config, schedule, Rubies, Allowance, Tagging, Onboarding, Manager, Whatsapp (last). AI + Orchestrator come in via WhatsappModule. Domain modules send via `MessagingModule`; the remaining circulars are Whatsapp↔Rubies and Allowance↔Email.
 
 ## 4. Routing
 

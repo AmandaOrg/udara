@@ -1,6 +1,7 @@
 import { parseLimitAnswer } from "../common/naira-amount.util";
 import { WeeklyReviewService } from "./weekly-review.service";
 import { Prisma, RecipientLabel, WeeklyReviewStatus } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 describe("WeeklyReviewService", () => {
   let prisma: {
@@ -86,8 +87,7 @@ describe("WeeklyReviewService", () => {
       prisma as any,
       allowance as any,
       spendSummary as any,
-      whatsapp as any,
-      chunkedMessenger as any,
+      whatsappTestMessenger({ whatsapp, chunkedMessenger }),
     );
   });
 

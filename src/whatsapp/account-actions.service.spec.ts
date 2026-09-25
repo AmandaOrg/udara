@@ -5,6 +5,7 @@ import {
   TransferDraftStatus,
   TransferDraftStep,
 } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 /**
  * In-memory fake for TransferDraft — same rationale as
@@ -174,7 +175,7 @@ describe("AccountActionsService", () => {
       windowService as any,
       rubies as any,
       tagging as any,
-      whatsapp as any,
+      whatsappTestMessenger({ whatsapp }),
       transferConfirmation as any,
       billPaymentActions as any,
       billPaymentConfirmation as any,

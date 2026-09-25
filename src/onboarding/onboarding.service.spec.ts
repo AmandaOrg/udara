@@ -1,5 +1,6 @@
 import { OnboardingService, isPreAccountStage } from "./onboarding.service";
 import { OnboardingStage, Prisma } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 /**
  * A tiny in-memory fake for the two models OnboardingService touches. Each
@@ -62,6 +63,13 @@ function createFakePrisma(initialUser: Record<string, unknown>) {
         const updated = { ...sessions.get(id), ...data };
         sessions.set(id, updated);
         return { ...updated };
+      }),
+      // Only the KYC token claim uses this: match on id and the token.
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const s = sessions.get(where.id);
+        if (!s || s.kycFlowToken !== where.kycFlowToken) return { count: 0 };
+        sessions.set(where.id, { ...s, ...data });
+        return { count: 1 };
       }),
     },
     _users: users,
@@ -161,12 +169,10 @@ describe("OnboardingService", () => {
     prisma = createFakePrisma(user);
     service = new OnboardingService(
       prisma as any,
-      config as any,
       llm as any,
       validator as any,
       llmLogger as any,
-      chunkedMessenger as any,
-      whatsapp as any,
+      whatsappTestMessenger({ whatsapp, chunkedMessenger, config }),
       rubies as any,
     );
     return prisma._users.get(user.id as string)!;
@@ -478,11 +484,25 @@ describe("OnboardingService", () => {
      * is what keeps these tests honest about where the handler reads them
      * from.
      */
+    /** Records a KYC form as sent, the way sendKycFlow does, and returns its token. */
+    async function issueForm(target: unknown): Promise<string> {
+      const session = await service.getOrStartSession((target as any).id);
+      await prisma.onboardingSession.update({
+        where: { id: session.id },
+        data: { kycFlowToken: "kyc-token-1" },
+      });
+      return "kyc-token-1";
+    }
+
     async function submitFlow(
       target: unknown,
       overrides: Record<string, unknown> = {},
     ) {
-      const full = flowSubmission(overrides) as Record<string, unknown>;
+      const flow_token = await issueForm(target);
+      const full = {
+        flow_token,
+        ...flowSubmission(overrides),
+      } as Record<string, unknown>;
       const sensitive: Record<string, string> = {};
       for (const key of ["id_number", "date_of_birth"]) {
         const value = full[key];
@@ -744,6 +764,79 @@ describe("OnboardingService", () => {
       );
       await submitFlow(user);
       expect(rubies.provisionAccount).not.toHaveBeenCalled();
+    });
+
+    it("records the token of every form it sends, so only that form can submit", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.FREQUENCY_CHECK }),
+      );
+
+      await service.handleInboundButton(user as any, "freq:weekly");
+
+      const [{ flowToken }] = whatsapp.sendFlow.mock.calls[0];
+      const session = await service.getOrStartSession("user-1");
+      expect(flowToken).toEqual(expect.any(String));
+      expect(session.kycFlowToken).toBe(flowToken);
+    });
+
+    /**
+     * The form token used to be generated and never checked, so any KYC reply
+     * was accepted: an old form reopened from chat history, or the same form
+     * submitted twice, went straight to Rubies.
+     */
+    it("rejects a form whose token isn't the one outstanding, and sends a fresh one", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+
+      await submitFlow(user, { flow_token: "an-older-form" });
+
+      expect(rubies.provisionAccount).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("expired"),
+        "user-1",
+      );
+      expect(whatsapp.sendFlow).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a form with no token at all", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+
+      await submitFlow(user, { flow_token: undefined });
+
+      expect(rubies.provisionAccount).not.toHaveBeenCalled();
+      expect(whatsapp.sendFlow).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets only one of two simultaneous submissions of the same form reach Rubies", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+      rubies.provisionAccount.mockResolvedValue({
+        accountId: "CUST-1",
+        accountNumber: "0123456789",
+        accountName: "Daniel Okafor",
+        bankCode: "090175",
+      });
+      const token = await issueForm(user);
+      const submission = () =>
+        service.handleInboundFlowReply(
+          user as any,
+          {
+            ...flowSubmission(),
+            flow_token: token,
+            id_number: "[redacted]",
+            date_of_birth: "[redacted]",
+          },
+          { id_number: "12345678901", date_of_birth: "1998-04-12" },
+        );
+
+      await Promise.all([submission(), submission()]);
+
+      expect(rubies.provisionAccount).toHaveBeenCalledTimes(1);
     });
   });
 

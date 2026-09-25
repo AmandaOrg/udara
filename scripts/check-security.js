@@ -236,7 +236,14 @@ const orchestratorModule = readIfExists('src/orchestrator/orchestrator.module.ts
 if (orchestratorModule === null) {
   fail('S9', 'src/orchestrator/orchestrator.module.ts is missing');
 } else {
-  for (const provider of ['WhatsappService', 'RubiesService', 'ActionExecutorService']) {
+  for (const provider of [
+    'WhatsappService',
+    'RubiesService',
+    'ActionExecutorService',
+    // The channel-neutral way to send. Same rule: the brain proposes, it never speaks.
+    'ChannelMessenger',
+    'MessagingModule',
+  ]) {
     if (orchestratorModule.includes(provider)) {
       fail(
         'S9',
@@ -454,6 +461,9 @@ const NEEDS_TESTS = [
   'src/whatsapp/sensitive-fields.util.ts',
   'src/whatsapp/transfer-confirmation.service.ts',
   'src/whatsapp/pin-gate.service.ts',
+  'src/whatsapp/pin-outcome.service.ts',
+  'src/messaging/channel-messenger.ts',
+  'src/messaging/whatsapp-channel.adapter.ts',
   'src/pin/pin.service.ts',
   'src/orchestrator/action-validator.service.ts',
   'src/orchestrator/transfer-hints.util.ts',

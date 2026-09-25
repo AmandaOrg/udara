@@ -9,7 +9,7 @@ import { parseNairaAmount } from "../common/naira-amount.util";
 import { TransferWizardHints } from "../orchestrator/transfer-hints.util";
 import { PrismaService } from "../prisma/prisma.service";
 import { RubiesService } from "../rubies/rubies.service";
-import { WhatsappService } from "./whatsapp.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
 import { BillPaymentConfirmationService } from "./bill-payment-confirmation.service";
 import { TransferConfirmationService } from "./transfer-confirmation.service";
 import {
@@ -45,7 +45,7 @@ export class BillPaymentActionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rubies: RubiesService,
-    private readonly whatsapp: WhatsappService,
+    private readonly messenger: ChannelMessenger,
     private readonly billConfirmation: BillPaymentConfirmationService,
     private readonly transferConfirmation: TransferConfirmationService,
   ) {}
@@ -120,10 +120,9 @@ export class BillPaymentActionsService {
   ): Promise<void> {
     const telco = findAirtimeTelco(billerCode);
     if (!telco) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "that network isn't available, pick one from the list.",
-        user.id,
       );
       return;
     }
@@ -151,10 +150,9 @@ export class BillPaymentActionsService {
   ): Promise<void> {
     const telco = findDataTelco(billerCode);
     if (!telco) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "that network isn't available, pick one from the list.",
-        user.id,
       );
       return;
     }
@@ -164,10 +162,9 @@ export class BillPaymentActionsService {
 
     const bundles = bundlesForTelco(telco.billerCode);
     if (bundles.length === 0) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "no data bundles are available for that network right now.",
-        user.id,
       );
       return;
     }
@@ -181,8 +178,8 @@ export class BillPaymentActionsService {
       },
     });
 
-    await this.whatsapp.sendListMessage(
-      user.whatsappNumber,
+    await this.messenger.sendList(
+      user,
       `pick a ${telco.label} data plan`,
       "Pick plan",
       bundles.map((b) => ({
@@ -190,7 +187,6 @@ export class BillPaymentActionsService {
         title: formatBundleListTitle(b),
         description: b.label,
       })),
-      user.id,
     );
   }
 
@@ -202,10 +198,9 @@ export class BillPaymentActionsService {
   ): Promise<void> {
     const bundle = findDataBundle(billerCode, productCode);
     if (!bundle) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "that plan isn't available, pick one from the list.",
-        user.id,
       );
       return;
     }
@@ -234,10 +229,9 @@ export class BillPaymentActionsService {
   ): Promise<void> {
     const disco = findElectricityDisco(billerCode);
     if (!disco) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "that provider isn't available, pick one from the list.",
-        user.id,
       );
       return;
     }
@@ -306,10 +300,9 @@ export class BillPaymentActionsService {
     });
 
     if (!options?.silent) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         cancelMessageForCategory(draft.category),
-        user.id,
       );
     }
   }
@@ -334,10 +327,9 @@ export class BillPaymentActionsService {
     if (draft.step === BillPaymentDraftStep.AWAITING_AMOUNT) {
       const amount = this.clampBillAmount(parseNairaAmount(text));
       if (amount == null) {
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           `that didn't read as an amount between ₦${MIN_AIRTIME_AMOUNT} and ₦${MAX_AIRTIME_AMOUNT.toLocaleString("en-NG")}. how much airtime?`,
-          user.id,
         );
         return;
       }
@@ -356,10 +348,9 @@ export class BillPaymentActionsService {
     if (draft.step === BillPaymentDraftStep.AWAITING_MSISDN) {
       const msisdn = normalizeMsisdn(text);
       if (!msisdn) {
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           "that doesn't look like a valid nigerian phone number, try again.",
-          user.id,
         );
         return;
       }
@@ -388,10 +379,9 @@ export class BillPaymentActionsService {
 
     const msisdn = normalizeMsisdn(text);
     if (!msisdn) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "that doesn't look like a valid nigerian phone number, try again.",
-        user.id,
       );
       return;
     }
@@ -419,10 +409,9 @@ export class BillPaymentActionsService {
     if (draft.step === BillPaymentDraftStep.AWAITING_METER) {
       const meter = normalizeMeterNumber(text);
       if (!meter) {
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           "that doesn't look like a valid meter number, try again.",
-          user.id,
         );
         return;
       }
@@ -444,10 +433,9 @@ export class BillPaymentActionsService {
       });
 
       if (!lookup.ok || !lookup.customerName) {
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           "couldn't verify that meter number for this provider, check it and try again.",
-          user.id,
         );
         return;
       }
@@ -461,10 +449,9 @@ export class BillPaymentActionsService {
         },
       });
 
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `meter verified: ${lookup.customerName}.\nhow much prepaid electricity?`,
-        user.id,
       );
       return;
     }
@@ -472,10 +459,9 @@ export class BillPaymentActionsService {
     if (draft.step === BillPaymentDraftStep.AWAITING_AMOUNT) {
       const amount = this.clampBillAmount(parseNairaAmount(text));
       if (amount == null) {
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           `that didn't read as an amount between ₦${MIN_AIRTIME_AMOUNT} and ₦${MAX_AIRTIME_AMOUNT.toLocaleString("en-NG")}. how much prepaid electricity?`,
-          user.id,
         );
         return;
       }
@@ -544,8 +530,8 @@ export class BillPaymentActionsService {
     }
 
     if (!draft.billerCode) {
-      await this.whatsapp.sendListMessage(
-        user.whatsappNumber,
+      await this.messenger.sendList(
+        user,
         "which network?",
         "Pick network",
         AIRTIME_TELCOS.map((t) => ({
@@ -553,7 +539,6 @@ export class BillPaymentActionsService {
           title: t.label,
           description: "Airtime",
         })),
-        user.id,
       );
       return;
     }
@@ -577,10 +562,9 @@ export class BillPaymentActionsService {
     }
 
     if (draft.amount == null) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `how much ${draft.telcoLabel ?? ""} airtime?`.replace(/\s+/g, " "),
-        user.id,
       );
       return;
     }
@@ -611,10 +595,9 @@ export class BillPaymentActionsService {
         where: { id: draftId },
         data: { step: BillPaymentDraftStep.AWAITING_MSISDN },
       });
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "which phone number should receive the airtime?",
-        user.id,
       );
     }
   }
@@ -655,8 +638,8 @@ export class BillPaymentActionsService {
     }
 
     if (!draft.billerCode) {
-      await this.whatsapp.sendListMessage(
-        user.whatsappNumber,
+      await this.messenger.sendList(
+        user,
         "which network for data?",
         "Pick network",
         DATA_TELCOS.map((t) => ({
@@ -664,7 +647,6 @@ export class BillPaymentActionsService {
           title: t.label,
           description: "Data bundle",
         })),
-        user.id,
       );
       return;
     }
@@ -672,10 +654,9 @@ export class BillPaymentActionsService {
     if (!draft.productCode) {
       const bundles = bundlesForTelco(draft.billerCode);
       if (bundles.length === 0) {
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           "no data bundles are available for that network right now.",
-          user.id,
         );
         return;
       }
@@ -683,8 +664,8 @@ export class BillPaymentActionsService {
         where: { id: draftId },
         data: { step: BillPaymentDraftStep.AWAITING_PRODUCT },
       });
-      await this.whatsapp.sendListMessage(
-        user.whatsappNumber,
+      await this.messenger.sendList(
+        user,
         `pick a ${draft.telcoLabel} data plan`,
         "Pick plan",
         bundles.map((b) => ({
@@ -692,7 +673,6 @@ export class BillPaymentActionsService {
           title: formatBundleListTitle(b),
           description: b.label,
         })),
-        user.id,
       );
       return;
     }
@@ -720,10 +700,9 @@ export class BillPaymentActionsService {
       where: { id: draftId },
       data: { step: BillPaymentDraftStep.AWAITING_MSISDN },
     });
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       "which phone number should receive the data?",
-      user.id,
     );
   }
 
@@ -758,8 +737,8 @@ export class BillPaymentActionsService {
     }
 
     if (!draft.billerCode) {
-      await this.whatsapp.sendListMessage(
-        user.whatsappNumber,
+      await this.messenger.sendList(
+        user,
         "which electricity provider?",
         "Pick provider",
         ELECTRICITY_DISCOS.map((d) => ({
@@ -767,7 +746,6 @@ export class BillPaymentActionsService {
           title: d.label.slice(0, 24),
           description: "Prepaid meter",
         })),
-        user.id,
       );
       return;
     }
@@ -779,11 +757,7 @@ export class BillPaymentActionsService {
         : null;
 
     if (!draft.msisdn && !meter) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        "what's your prepaid meter number?",
-        user.id,
-      );
+      await this.messenger.sendText(user, "what's your prepaid meter number?");
       return;
     }
 
@@ -834,10 +808,9 @@ export class BillPaymentActionsService {
       return;
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       `meter verified: ${draft.customerName}.\nhow much prepaid electricity?`,
-      user.id,
     );
   }
 
@@ -862,10 +835,9 @@ export class BillPaymentActionsService {
       !updated.msisdn
     ) {
       this.logger.error(`Bill draft ${draftId} incomplete at finalize`);
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "something went wrong finishing that request, please start again.",
-        user.id,
       );
       return null;
     }
@@ -905,10 +877,9 @@ export class BillPaymentActionsService {
 
   private async ensureAccount(user: User, product: string): Promise<boolean> {
     if (user.rubiesAccountNumber) return true;
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       `you don't have a udara account yet, so there's nothing to buy ${product} from.`,
-      user.id,
     );
     return false;
   }
@@ -927,10 +898,9 @@ export class BillPaymentActionsService {
     });
     if (!draft) {
       const hint = productHint ?? "airtime";
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `that request has expired, say "${hint}" to start again.`,
-        user.id,
       );
       return null;
     }

@@ -1,5 +1,7 @@
 import { WhatsappRouterService } from "./whatsapp-router.service";
+import { PinOutcomeService } from "./pin-outcome.service";
 import { OnboardingStage, WhatsappMessageType } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 /**
  * Post-onboarding free text always goes through Orchestrator + ActionExecutor.
@@ -25,7 +27,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   let orchestrator: { handleMessage: jest.Mock };
   let actionExecutor: { execute: jest.Mock; sendSafeFallback: jest.Mock };
   let deepgram: { isConfigured: jest.Mock; transcribe: jest.Mock };
-  let inboundMessages: { updateTextBody: jest.Mock };
+  let inboundMessages: { updateTextBody: jest.Mock; attachUser: jest.Mock };
   let rateLimit: { check: jest.Mock };
   let service: WhatsappRouterService;
 
@@ -114,6 +116,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     };
     inboundMessages = {
       updateTextBody: jest.fn().mockResolvedValue(undefined),
+      attachUser: jest.fn().mockResolvedValue(undefined),
     };
     // Under the limit by default; the throttling tests override it.
     rateLimit = {
@@ -137,10 +140,43 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       deepgram as any,
       inboundMessages as any,
       rateLimit as any,
+      // Real, over the mocks below, so the PIN tests still assert what runs.
+      new PinOutcomeService(
+        transferConfirmation as any,
+        billPaymentConfirmation as any,
+      ),
+      whatsappTestMessenger({ whatsapp }),
     );
   });
 
   describe("inbound rate limit", () => {
+    /**
+     * The cap counts inbound rows by userId, but the row is persisted before
+     * the sender is known. Until the router linked it, every count was zero
+     * and the limit could never trip.
+     */
+    it("links the inbound row to the user before counting", async () => {
+      const order: string[] = [];
+      inboundMessages.attachUser.mockImplementation(async () => {
+        order.push("attach");
+      });
+      rateLimit.check.mockImplementation(async () => {
+        order.push("check");
+        return { limited: false, justCrossed: false };
+      });
+      orchestrator.handleMessage.mockResolvedValue({ message: "hi" });
+
+      await service.route({
+        id: "m1",
+        type: "TEXT",
+        textBody: "hello",
+        fromNumber: "234801",
+      } as any);
+
+      expect(inboundMessages.attachUser).toHaveBeenCalledWith("m1", "user-1");
+      expect(order).toEqual(["attach", "check"]);
+    });
+
     it("drops the message before any handler once the user is over the limit", async () => {
       rateLimit.check.mockResolvedValue({ limited: true, justCrossed: false });
 
@@ -173,6 +209,48 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         expect.any(String),
       );
       expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("confirm and cancel buttons", () => {
+    function buttonMessage(buttonPayload: string) {
+      return {
+        id: "m1",
+        type: WhatsappMessageType.BUTTON_REPLY,
+        fromNumber: "234801",
+        buttonPayload,
+      } as any;
+    }
+
+    /**
+     * The id inside the payload is scoped to whoever tapped it, so a payload
+     * naming someone else's transaction reads as "not found" downstream.
+     */
+    it("passes the sender's own user id alongside the id in the payload", async () => {
+      transferConfirmation.confirmTransfer = jest.fn();
+      transferConfirmation.cancelTransfer = jest.fn();
+
+      await service.route(buttonMessage("confirm_transfer:txn-9"));
+      await service.route(buttonMessage("cancel_transfer:txn-9"));
+      await service.route(buttonMessage("confirm_bill:bill-9"));
+      await service.route(buttonMessage("cancel_bill:bill-9"));
+
+      expect(transferConfirmation.confirmTransfer).toHaveBeenCalledWith(
+        "user-1",
+        "txn-9",
+      );
+      expect(transferConfirmation.cancelTransfer).toHaveBeenCalledWith(
+        "user-1",
+        "txn-9",
+      );
+      expect(billPaymentConfirmation.confirmBillPayment).toHaveBeenCalledWith(
+        "user-1",
+        "bill-9",
+      );
+      expect(billPaymentConfirmation.cancelBillPayment).toHaveBeenCalledWith(
+        "user-1",
+        "bill-9",
+      );
     });
   });
 

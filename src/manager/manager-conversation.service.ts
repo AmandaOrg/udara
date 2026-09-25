@@ -1,8 +1,7 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
-import { WhatsappService } from "../whatsapp/whatsapp.service";
-import { ChunkedMessengerService } from "../whatsapp/chunked-messenger.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
 import { ManagerService } from "./manager.service";
 import { CONVERSATION_LLM, LlmMessage, LlmService } from "../ai/llm.types";
 import { LlmCallLoggerService } from "../ai/llm-call-logger.service";
@@ -14,6 +13,9 @@ import {
   SettingsChangeType,
   User,
 } from "@prisma/client";
+
+/** Udara starts this conversation; nobody asked. */
+const PROACTIVE = { delivery: "proactive" } as const;
 
 /**
  * Stop retrying the delayed managers reply after this long. Past it the request
@@ -42,8 +44,7 @@ export class ManagerConversationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly manager: ManagerService,
-    private readonly whatsapp: WhatsappService,
-    private readonly chunkedMessenger: ChunkedMessengerService,
+    private readonly messenger: ChannelMessenger,
     private readonly config: ConfigService,
     @Inject(CONVERSATION_LLM) private readonly llm: LlmService,
     private readonly llmLogger: LlmCallLoggerService,
@@ -80,10 +81,9 @@ export class ManagerConversationService {
       data: { initialReplyDueAt },
     });
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       "The managers have received your request. We'll get back to you shortly, and note that any change still can't take effect for at least a few days from today, regardless of how it's framed.",
-      user.id,
     );
 
     return request;
@@ -121,11 +121,7 @@ export class ManagerConversationService {
 
     try {
       const message = await this.generateInitialReplyText(user, request);
-      await this.chunkedMessenger.sendChunkedReply(
-        user.whatsappNumber,
-        message,
-        user.id,
-      );
+      await this.messenger.sendChunked(user, message, PROACTIVE);
     } catch (err) {
       // Release the claim so the next tick can retry — but only while the
       // request is still young. findDueInitialReplies bounds how long that is.
@@ -254,7 +250,7 @@ export class ManagerConversationService {
         "Your account has returned to normal, no window or override-fee restrictions apply anymore.",
       );
     }
-    await this.whatsapp.sendText(user.whatsappNumber, lines.join(" "), user.id);
+    await this.messenger.sendText(user, lines.join(" "), PROACTIVE);
 
     return updated;
   }

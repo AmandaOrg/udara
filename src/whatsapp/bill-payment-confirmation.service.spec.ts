@@ -4,6 +4,7 @@ import {
 } from "../prisma/bill-payment.enums";
 import { BillPaymentConfirmationService } from "./bill-payment-confirmation.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 describe("BillPaymentConfirmationService", () => {
   let prisma: {
@@ -12,6 +13,7 @@ describe("BillPaymentConfirmationService", () => {
       create: jest.Mock;
       findUnique: jest.Mock;
       findUniqueOrThrow: jest.Mock;
+      findMany: jest.Mock;
       update: jest.Mock;
       updateMany: jest.Mock;
     };
@@ -45,6 +47,7 @@ describe("BillPaymentConfirmationService", () => {
         create: jest.fn().mockResolvedValue({ id: "bill-1" }),
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn().mockResolvedValue(undefined),
         // Status transitions are conditional claims; count 1 means this caller
         // won the race. See TransferConfirmationService.claimStatus.
@@ -78,7 +81,7 @@ describe("BillPaymentConfirmationService", () => {
       prisma as never,
       allowance as never,
       rubies as never,
-      whatsapp as never,
+      whatsappTestMessenger({ whatsapp }),
       pinGate as never,
     );
   });
@@ -156,5 +159,199 @@ describe("BillPaymentConfirmationService", () => {
         data: expect.objectContaining({ vendorToken: "1234-5678-9012" }),
       }),
     );
+  });
+
+  function pendingBill(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: "bill-1",
+      userId: user.id,
+      status: BillPaymentStatus.PENDING_CONFIRMATION,
+      category: BillPaymentCategory.AIRTIME,
+      amount: 1000,
+      feeAmount: 0,
+      type: TransactionType.NORMAL,
+      telcoLabel: "MTN",
+      msisdn: "08012345678",
+      productLabel: null,
+      customerName: null,
+      // Fresh by default; the re-quote tests age it.
+      createdAt: new Date(),
+      user,
+      ...overrides,
+    };
+  }
+
+  describe("confirmBillPayment", () => {
+    /**
+     * The id comes from a button payload. Once a client other than WhatsApp can
+     * name it, an unscoped lookup would let one user confirm another's purchase.
+     */
+    it("only looks the purchase up within the caller's own purchases", async () => {
+      prisma.billPayment.findUnique.mockResolvedValue(null);
+
+      await service.confirmBillPayment("someone-else", "bill-1");
+
+      expect(prisma.billPayment.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "bill-1", userId: "someone-else" },
+        }),
+      );
+      expect(rubies.getBalance).not.toHaveBeenCalled();
+      expect(prisma.billPayment.updateMany).not.toHaveBeenCalled();
+      expect(pinGate.requestBillPaymentPin).not.toHaveBeenCalled();
+    });
+
+    it("asks for the PIN when the quote is fresh and its terms still hold", async () => {
+      prisma.billPayment.findUnique.mockResolvedValue(pendingBill());
+
+      await service.confirmBillPayment(user.id, "bill-1");
+
+      expect(prisma.billPayment.updateMany).toHaveBeenCalledWith({
+        where: { id: "bill-1", status: BillPaymentStatus.PENDING_CONFIRMATION },
+        data: { status: BillPaymentStatus.PENDING_PIN },
+      });
+      expect(pinGate.requestBillPaymentPin).toHaveBeenCalledWith(
+        user,
+        "bill-1",
+      );
+      expect(whatsapp.sendInteractiveButtons).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Fee and spend type are frozen at quote time. Without a re-quote a user
+     * could sit on Confirm until the window closed and still buy at zero fee.
+     */
+    it("re-quotes a purchase that sat too long instead of asking for the PIN", async () => {
+      prisma.billPayment.findUnique.mockResolvedValue(
+        pendingBill({ createdAt: new Date(Date.now() - 11 * 60 * 1000) }),
+      );
+
+      await service.confirmBillPayment(user.id, "bill-1");
+
+      expect(pinGate.requestBillPaymentPin).not.toHaveBeenCalled();
+      expect(prisma.billPayment.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { status: BillPaymentStatus.PENDING_PIN },
+        }),
+      );
+      expect(whatsapp.sendInteractiveButtons).toHaveBeenCalledWith(
+        user.whatsappNumber,
+        expect.stringContaining("waiting a while"),
+        [
+          { id: "confirm_bill:bill-1", title: "Confirm" },
+          { id: "cancel_bill:bill-1", title: "Cancel" },
+        ],
+        user.id,
+      );
+    });
+
+    it("re-quotes when the fee changed since the quote, and stores the new terms", async () => {
+      prisma.billPayment.findUnique.mockResolvedValue(pendingBill());
+      allowance.evaluateSpend.mockResolvedValue({
+        type: TransactionType.EARLY_ACCESS,
+        feeAmount: 1002,
+        waived: false,
+        remainingToday: 5000,
+      });
+
+      await service.confirmBillPayment(user.id, "bill-1");
+
+      expect(prisma.billPayment.updateMany).toHaveBeenCalledWith({
+        where: { id: "bill-1", status: BillPaymentStatus.PENDING_CONFIRMATION },
+        data: { type: TransactionType.EARLY_ACCESS, feeAmount: 1002 },
+      });
+      const [, body] = whatsapp.sendInteractiveButtons.mock.calls[0];
+      expect(body).toContain("terms on this one moved");
+      expect(body).toContain("Buy ₦1,000 MTN airtime for 08012345678?");
+      expect(pinGate.requestBillPaymentPin).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("cancelBillPayment", () => {
+    it("cancels through an atomic claim, not a blind update", async () => {
+      prisma.billPayment.findUnique.mockResolvedValue(pendingBill());
+
+      await service.cancelBillPayment(user.id, "bill-1");
+
+      expect(prisma.billPayment.updateMany).toHaveBeenCalledWith({
+        where: { id: "bill-1", status: BillPaymentStatus.PENDING_CONFIRMATION },
+        data: { status: BillPaymentStatus.CANCELLED },
+      });
+      expect(prisma.billPayment.update).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        user.whatsappNumber,
+        "Cancelled, no airtime was bought.",
+        user.id,
+      );
+    });
+
+    it("stays quiet when a racing Confirm claimed the row first", async () => {
+      prisma.billPayment.findUnique.mockResolvedValue(pendingBill());
+      prisma.billPayment.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.cancelBillPayment(user.id, "bill-1");
+
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+    });
+
+    it("cannot cancel another user's purchase", async () => {
+      prisma.billPayment.findUnique.mockResolvedValue(null);
+
+      await service.cancelBillPayment("someone-else", "bill-1");
+
+      expect(prisma.billPayment.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "bill-1", userId: "someone-else" },
+        }),
+      );
+      expect(prisma.billPayment.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("cancelPendingForUser", () => {
+    /**
+     * A PIN-awaiting purchase carries a live challenge. Leaving it behind meant
+     * answering that challenge later could still buy something the user had
+     * walked away from.
+     */
+    it("also cancels a purchase waiting on the PIN, and says so even when silent", async () => {
+      prisma.billPayment.findMany.mockResolvedValue([
+        pendingBill({ status: BillPaymentStatus.PENDING_PIN }),
+      ]);
+
+      await service.cancelPendingForUser(user.id, { silent: true });
+
+      expect(prisma.billPayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            userId: user.id,
+            status: {
+              in: [
+                BillPaymentStatus.PENDING_CONFIRMATION,
+                BillPaymentStatus.PENDING_PIN,
+              ],
+            },
+          },
+        }),
+      );
+      expect(prisma.billPayment.updateMany).toHaveBeenCalledWith({
+        where: { id: "bill-1", status: BillPaymentStatus.PENDING_PIN },
+        data: { status: BillPaymentStatus.CANCELLED },
+      });
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        user.whatsappNumber,
+        "Cancelled, no airtime was bought.",
+        user.id,
+      );
+    });
+
+    it("drops a merely-quoted purchase silently when asked to", async () => {
+      prisma.billPayment.findMany.mockResolvedValue([pendingBill()]);
+
+      await service.cancelPendingForUser(user.id, { silent: true });
+
+      expect(prisma.billPayment.updateMany).toHaveBeenCalled();
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+    });
   });
 });

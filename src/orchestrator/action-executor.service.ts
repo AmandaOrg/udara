@@ -10,8 +10,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { User } from "@prisma/client";
 import { AccountActionsService } from "../whatsapp/account-actions.service";
 import { BillPaymentActionsService } from "../whatsapp/bill-payment-actions.service";
-import { ChunkedMessengerService } from "../whatsapp/chunked-messenger.service";
-import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
 import { PinGateService } from "../whatsapp/pin-gate.service";
 import { SpendSummaryService } from "../allowance/spend-summary.service";
 import { OrchestratorResult } from "./orchestrator.types";
@@ -27,11 +26,10 @@ export class ActionExecutorService {
   private readonly logger = new Logger(ActionExecutorService.name);
 
   constructor(
-    private readonly chunkedMessenger: ChunkedMessengerService,
+    private readonly messenger: ChannelMessenger,
     private readonly accountActions: AccountActionsService,
     private readonly billPaymentActions: BillPaymentActionsService,
     private readonly spendSummary: SpendSummaryService,
-    private readonly whatsapp: WhatsappService,
     private readonly pinGate: PinGateService,
     private readonly managerConversation: ManagerConversationService,
   ) {}
@@ -52,13 +50,9 @@ export class ActionExecutorService {
 
     if (leadIn) {
       if (launchingSurface) {
-        await this.whatsapp.sendText(user.whatsappNumber, leadIn, user.id);
+        await this.messenger.sendText(user, leadIn);
       } else {
-        await this.chunkedMessenger.sendChunkedReply(
-          user.whatsappNumber,
-          leadIn,
-          user.id,
-        );
+        await this.messenger.sendChunked(user, leadIn);
       }
     }
 
@@ -167,10 +161,9 @@ export class ActionExecutorService {
         break;
       case "spend_summary": {
         const summary = await this.spendSummary.getWeeklySummary(user.id);
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           this.spendSummary.formatAsText(summary),
-          user.id,
         );
         break;
       }

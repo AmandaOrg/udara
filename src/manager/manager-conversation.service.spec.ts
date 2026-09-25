@@ -1,5 +1,6 @@
 import { ManagerConversationService } from "./manager-conversation.service";
 import { SettingsChangeStatus, SettingsChangeType } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 describe("ManagerConversationService", () => {
   let service: ManagerConversationService;
@@ -55,8 +56,7 @@ describe("ManagerConversationService", () => {
     service = new ManagerConversationService(
       prisma as any,
       manager as any,
-      whatsapp as any,
-      chunkedMessenger as any,
+      whatsappTestMessenger({ whatsapp, chunkedMessenger }),
       config as any,
       llm as any,
       llmLogger as any,

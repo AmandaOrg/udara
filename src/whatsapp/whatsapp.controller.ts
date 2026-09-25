@@ -16,6 +16,7 @@ import { WhatsappMessageService } from "./whatsapp-message.service";
 import { WhatsappRouterService } from "./whatsapp-router.service";
 import { WhatsappService } from "./whatsapp.service";
 import { parseInboundPayload } from "./parsers/whatsapp-payload.parser";
+import { runInChannel } from "../messaging/channel-context";
 
 /**
  * WhatsApp's typing indicator lasts up to ~25s per trigger, then disappears
@@ -105,7 +106,10 @@ export class WhatsappController {
         }, TYPING_HEARTBEAT_INTERVAL_MS);
 
         try {
-          await this.router.route(record, sensitive);
+          // Everything sent while handling this message is a reply on WhatsApp.
+          await runInChannel({ channel: "whatsapp" }, () =>
+            this.router.route(record, sensitive),
+          );
           await this.messages.markProcessed(
             record.id,
             WhatsappMessageStatus.PROCESSED,

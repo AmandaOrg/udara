@@ -30,7 +30,8 @@ src/
   rubies/          RubiesService + webhook controller
   ai/              Provider clients + persona/onboarding prompts
   orchestrator/    OrchestratorService, ActionValidator, surface registry, evals
-  whatsapp/        Webhook, router, wizards, PIN gate, ActionExecutor
+  messaging/       ChannelMessenger (the only way to send), channel context, WhatsApp adapter
+  whatsapp/        Webhook, router, wizards, PIN gate, ActionExecutor; transport module
   pin/             PIN challenge/verify
   cli/             Dry-run CLI (no WhatsApp/Rubies)
   common/
@@ -63,11 +64,20 @@ flowchart TD
 
 ### Deterministic money path
 
-Confirm / cancel buttons and the transfer wizard never wait on the LLM. `ActionExecutorService` lives in `WhatsappModule` because it needs WhatsApp send + account services. `OrchestratorModule` must stay free of outbound send dependencies.
+Confirm / cancel buttons and the transfer wizard never wait on the LLM. Confirm and cancel look the row up scoped to the sender's `userId`, never by id alone. After a PIN is verified, `PinOutcomeService` is the single place that turns the outcome into execution. `ActionExecutorService` lives in `WhatsappModule` because it needs the messenger and account services. `OrchestratorModule` must stay free of outbound send dependencies.
+
+### Sending
+
+Domain code never calls `WhatsappService`. It sends through `ChannelMessenger` (`src/messaging/`), addressed by `User`, and the messenger picks the channel:
+
+- **Inside an inbound event:** the entry point opens a channel context (`runInChannel`, AsyncLocalStorage), and everything sent while handling it is a reply on that channel. `WhatsappController` does this per message.
+- **Outside one** (crons, the Rubies webhook, CLIs): the call site labels the send `proactive` or `transactional`, and delivery policy decides. Today that is always WhatsApp. An unlabelled send with no context is logged as a wiring bug.
+
+`WhatsappChannelAdapter` turns the messenger's calls into exactly the `WhatsappService` / `ChunkedMessengerService` calls the services used to make themselves, and owns the WhatsApp Flow ids for the KYC and PIN forms. `WhatsappTransportModule` holds the Cloud API services and depends on no domain module.
 
 ### Circular Nest imports
 
-`forwardRef` is used between `WhatsappModule` and `AllowanceModule`, `RubiesModule`, `OnboardingModule`, and `ManagerModule` (schedulers and webhooks need `WhatsappService`).
+`RubiesModule` and `WhatsappModule` still import each other (the Rubies webhook applies transfer and bill results), as do `AllowanceModule` and `EmailModule`. Onboarding, Manager and Allowance send through `MessagingModule` and no longer import `WhatsappModule`; `WhatsappModule` keeps `forwardRef` on them only because their files still reach it through `RubiesModule`.
 
 ## Data model (high level)
 

@@ -22,6 +22,7 @@ Engineer-readable **how** for a feature. Architecture, types, files, env, and te
 | [AI_MONEY_INTENTS_TECH.md](AI_MONEY_INTENTS_TECH.md) | [ai-money-intents](../../initiatives/ai-money-intents/plan.md) |
 | [WEEKLY_REVIEW_LIMIT_ESCAPE_TECH.md](WEEKLY_REVIEW_LIMIT_ESCAPE_TECH.md) | [weekly-review-limit-escape](../../initiatives/weekly-review-limit-escape/plan.md) |
 | [PRODUCTION_HARDENING_TECH.md](PRODUCTION_HARDENING_TECH.md) | [production-hardening](../../initiatives/production-hardening/plan.md) |
+| [MOBILE_APP_TECH.md](MOBILE_APP_TECH.md) | [mobile-app](../../initiatives/mobile-app/plan.md) |
 
 ## New design
 

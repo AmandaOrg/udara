@@ -3,13 +3,15 @@ import { Prisma, User, WeeklyReview, WeeklyReviewStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AllowanceService } from "../allowance/allowance.service";
 import { SpendSummaryService } from "../allowance/spend-summary.service";
-import { WhatsappService } from "./whatsapp.service";
-import { ChunkedMessengerService } from "./chunked-messenger.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
 import {
   startOfWatIsoWeekInstant,
   watDateBucketKey,
 } from "../common/wat-time.util";
 import { displayFirstNameOrThere } from "../common/display-name.util";
+
+/** Udara starts this conversation; nobody asked. */
+const PROACTIVE = { delivery: "proactive" } as const;
 
 export const WEEKLY_REVIEW_PREFIX = "weekly:";
 export const WEEKLY_KEEP = "weekly:keep";
@@ -59,8 +61,7 @@ export class WeeklyReviewService {
     private readonly prisma: PrismaService,
     private readonly allowance: AllowanceService,
     private readonly spendSummary: SpendSummaryService,
-    private readonly whatsapp: WhatsappService,
-    private readonly chunkedMessenger: ChunkedMessengerService,
+    private readonly messenger: ChannelMessenger,
   ) {}
 
   /**
@@ -104,7 +105,7 @@ export class WeeklyReviewService {
     now: Date = new Date(),
   ): Promise<void> {
     if (!(await this.completeWithoutOverride(review, now))) return;
-    await this.whatsapp.sendText(user.whatsappNumber, KEEP_LIMITS_ACK, user.id);
+    await this.messenger.sendText(user, KEEP_LIMITS_ACK);
   }
 
   /**
@@ -192,20 +193,16 @@ export class WeeklyReviewService {
       );
     }
 
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      lines.join("\n\n"),
-      user.id,
-    );
+    await this.messenger.sendChunked(user, lines.join("\n\n"), PROACTIVE);
 
-    await this.whatsapp.sendInteractiveButtons(
-      user.whatsappNumber,
+    await this.messenger.sendButtons(
+      user,
       `your daily limit is ${naira(dailyLimit)}. want to keep it for the week ahead, or change it?`,
       [
         { id: WEEKLY_KEEP, title: "Keep same limits" },
         { id: WEEKLY_ADJUST, title: "Adjust limits" },
       ],
-      user.id,
+      PROACTIVE,
     );
 
     return true;
@@ -230,21 +227,16 @@ export class WeeklyReviewService {
       orderBy: { createdAt: "desc" },
     });
     if (!review) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         'that weekly check-in has already been answered. say "limits" any time to see where you stand.',
-        user.id,
       );
       return;
     }
 
     if (buttonId === WEEKLY_KEEP) {
       if (!(await this.completeWithoutOverride(review, now))) return;
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        KEEP_LIMITS_ACK,
-        user.id,
-      );
+      await this.messenger.sendText(user, KEEP_LIMITS_ACK);
       return;
     }
 
@@ -257,19 +249,14 @@ export class WeeklyReviewService {
         user.id,
       );
       const current = Number(todayAllowance.amountAllocated);
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `what daily limit do you want for this week? it's ${naira(current)} right now. just send the number.\n\nthis applies to the coming week only, then it goes back to your normal plan.`,
-        user.id,
       );
       return;
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
-      "tap one of the options above.",
-      user.id,
-    );
+    await this.messenger.sendText(user, "tap one of the options above.");
   }
 
   /**
@@ -303,7 +290,7 @@ export class WeeklyReviewService {
       // One touch, one send. Three separate rejection branches each had to
       // remember to bump the row first, and a fourth would have forgotten.
       await this.touchAwaitingLimit(review);
-      await this.whatsapp.sendText(user.whatsappNumber, rejection, user.id);
+      await this.messenger.sendText(user, rejection);
       return;
     }
 
@@ -342,10 +329,9 @@ export class WeeklyReviewService {
       ? await this.allowance.applyLimitOverrideToToday(user.id, amount, now)
       : 7;
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       `done. ${naira(amount)} a day, ${naira(amount * daysLeft)} for the ${daysLeft === 7 ? "week" : `${daysLeft} days left this week`}. this is just for this week, then you're back to your normal plan.`,
-      user.id,
     );
   }
 

@@ -1,5 +1,6 @@
 import { PinGateService } from "./pin-gate.service";
 import { PinChallengePurpose } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 describe("PinGateService", () => {
   let prisma: { transaction: { updateMany: jest.Mock } };
@@ -63,9 +64,8 @@ describe("PinGateService", () => {
     };
     service = new PinGateService(
       prisma as any,
-      config as any,
       pin as any,
-      whatsapp as any,
+      whatsappTestMessenger({ whatsapp, config }),
       emailNotifications as any,
     );
   });
