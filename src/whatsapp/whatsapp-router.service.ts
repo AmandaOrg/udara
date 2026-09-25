@@ -37,6 +37,7 @@ import {
   MENU_ELECTRICITY,
 } from "./account-actions.service";
 import {
+  Prisma,
   User,
   WhatsappMessage,
   WhatsappMessageType,
@@ -147,19 +148,71 @@ export class WhatsappRouterService {
     }
   }
 
+  /**
+   * The sender's User, creating or linking one as needed.
+   *
+   * Meta's sender id is already the canonical phone number (see
+   * common/phone.util.ts), so a number that signed up in the app and now
+   * messages on WhatsApp for the first time is found by phoneNumber and linked
+   * rather than given a second account with a second set of limits.
+   */
   private async findOrCreateUser(whatsappNumber: string): Promise<User> {
-    const existing = await this.prisma.user.findUnique({
+    const now = new Date();
+    const onWhatsapp = await this.prisma.user.findUnique({
       where: { whatsappNumber },
     });
-    if (existing) {
+    if (onWhatsapp) {
       return this.prisma.user.update({
-        where: { id: existing.id },
-        data: { lastInboundMessageAt: new Date() },
+        where: { id: onWhatsapp.id },
+        data: { lastInboundMessageAt: now },
       });
     }
-    return this.prisma.user.create({
-      data: { whatsappNumber, lastInboundMessageAt: new Date() },
+
+    const linked = await this.linkWhatsapp(whatsappNumber, now);
+    if (linked) return linked;
+
+    try {
+      return await this.prisma.user.create({
+        data: {
+          phoneNumber: whatsappNumber,
+          whatsappNumber,
+          lastInboundMessageAt: now,
+        },
+      });
+    } catch (err) {
+      if (
+        !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+        err.code !== "P2002"
+      ) {
+        throw err;
+      }
+      // Lost a race: a redelivered webhook for this number, or an app sign-up
+      // with it, created the row between the lookups above and this insert.
+      const winner =
+        (await this.prisma.user.findUnique({ where: { whatsappNumber } })) ??
+        (await this.linkWhatsapp(whatsappNumber, now));
+      if (winner) return winner;
+      throw new Error(
+        `findOrCreateUser: phone number ${whatsappNumber} is taken by a user already linked to a different WhatsApp number`,
+      );
+    }
+  }
+
+  /**
+   * Links this WhatsApp number to the account holding the same phone number.
+   * Conditional on that account having no WhatsApp number yet, so an existing
+   * link is never overwritten, and two racing first messages link it once.
+   */
+  private async linkWhatsapp(
+    whatsappNumber: string,
+    now: Date,
+  ): Promise<User | null> {
+    const { count } = await this.prisma.user.updateMany({
+      where: { phoneNumber: whatsappNumber, whatsappNumber: null },
+      data: { whatsappNumber, lastInboundMessageAt: now },
     });
+    if (count === 0) return null;
+    return this.prisma.user.findUnique({ where: { whatsappNumber } });
   }
 
   private async handleAudio(

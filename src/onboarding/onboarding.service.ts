@@ -837,7 +837,7 @@ export class OnboardingService {
         nin: kyc.idType === "NIN" ? kyc.idNumber : undefined,
         firstName: kyc.firstName,
         lastName: kyc.lastName,
-        phoneNumber: freshUser.whatsappNumber,
+        phoneNumber: freshUser.phoneNumber,
         dob: kyc.dateOfBirth,
         email: kyc.email,
       });

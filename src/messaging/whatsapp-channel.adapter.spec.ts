@@ -126,4 +126,30 @@ describe("WhatsappChannelAdapter", () => {
     );
     warn.mockRestore();
   });
+
+  it("sends nothing on WhatsApp for a user who has only used the app", async () => {
+    const warn = jest
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => {});
+    const appOnly = { id: "user-2", whatsappNumber: null };
+
+    await adapter.sendText(appOnly, "hi");
+    await adapter.sendChunked(appOnly, "hi");
+    const shown = await adapter.requestForm(appOnly, {
+      kind: "PIN_ENTRY",
+      token: "tok-1",
+      headerText: "h",
+      bodyText: "b",
+      ctaText: "c",
+    });
+
+    expect(shown).toBe(false);
+    expect(whatsapp.sendText).not.toHaveBeenCalled();
+    expect(chunkedMessenger.sendChunkedReply).not.toHaveBeenCalled();
+    expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("user-2 has no WhatsApp number"),
+    );
+    warn.mockRestore();
+  });
 });

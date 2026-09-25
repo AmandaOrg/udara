@@ -115,6 +115,7 @@ function printBanner() {
 function makeUser(noAccount: boolean) {
   return {
     id: "cli-user-1",
+    phoneNumber: "2348000000001",
     whatsappNumber: "2348000000001",
     onboardingStage: OnboardingStage.ACCOUNT_CREATED,
     rubiesAccountNumber: noAccount ? null : "0123456789",

@@ -43,7 +43,7 @@ Surfaces: `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `
 
 User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel), BillPaymentDraft, BillPayment, OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WeeklyReview, WhatsappMessage, PIN challenge, Rubies webhook log, LLM call log, nudges.
 
-`TransferDraft` ≠ `ConversationSession`. Persona enum still `KEDU` | `MANAGER`. Session `contextData.spendCheck` holds pending send hints during the pre-wizard spend check.
+Identity is `User.phoneNumber`; `whatsappNumber` is nullable (set on first WhatsApp contact). `TransferDraft` ≠ `ConversationSession`. Persona enum still `KEDU` | `MANAGER`. Session `contextData.spendCheck` holds pending send hints during the pre-wizard spend check.
 
 ## 6. Integrations
 

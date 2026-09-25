@@ -41,7 +41,9 @@ export class WhatsappChannelAdapter implements ChannelAdapter {
   ) {}
 
   async sendText(to: MessageRecipient, body: string): Promise<void> {
-    await this.whatsapp.sendText(to.whatsappNumber, body, to.id);
+    const number = this.numberOf(to, "sendText");
+    if (!number) return;
+    await this.whatsapp.sendText(number, body, to.id);
   }
 
   async sendButtons(
@@ -49,12 +51,9 @@ export class WhatsappChannelAdapter implements ChannelAdapter {
     body: string,
     buttons: ReplyButton[],
   ): Promise<void> {
-    await this.whatsapp.sendInteractiveButtons(
-      to.whatsappNumber,
-      body,
-      buttons,
-      to.id,
-    );
+    const number = this.numberOf(to, "sendButtons");
+    if (!number) return;
+    await this.whatsapp.sendInteractiveButtons(number, body, buttons, to.id);
   }
 
   async sendList(
@@ -63,21 +62,15 @@ export class WhatsappChannelAdapter implements ChannelAdapter {
     buttonLabel: string,
     rows: ListOption[],
   ): Promise<void> {
-    await this.whatsapp.sendListMessage(
-      to.whatsappNumber,
-      body,
-      buttonLabel,
-      rows,
-      to.id,
-    );
+    const number = this.numberOf(to, "sendList");
+    if (!number) return;
+    await this.whatsapp.sendListMessage(number, body, buttonLabel, rows, to.id);
   }
 
   async sendChunked(to: MessageRecipient, text: string): Promise<void> {
-    await this.chunkedMessenger.sendChunkedReply(
-      to.whatsappNumber,
-      text,
-      to.id,
-    );
+    const number = this.numberOf(to, "sendChunked");
+    if (!number) return;
+    await this.chunkedMessenger.sendChunkedReply(number, text, to.id);
   }
 
   /**
@@ -86,6 +79,8 @@ export class WhatsappChannelAdapter implements ChannelAdapter {
    * not have done that. Warn loudly and let the caller tell the user.
    */
   async requestForm(to: MessageRecipient, form: FormRequest): Promise<boolean> {
+    const number = this.numberOf(to, "requestForm");
+    if (!number) return false;
     const { envVar, screenId } = FLOWS[form.kind];
     const flowId = this.config.get<string>(envVar);
     if (!flowId) {
@@ -96,7 +91,7 @@ export class WhatsappChannelAdapter implements ChannelAdapter {
     }
 
     await this.whatsapp.sendFlow({
-      to: to.whatsappNumber,
+      to: number,
       flowId,
       flowToken: form.token,
       screenId,
@@ -114,12 +109,28 @@ export class WhatsappChannelAdapter implements ChannelAdapter {
     languageCode: string,
     components?: unknown[],
   ): Promise<void> {
+    const number = this.numberOf(to, "sendTemplate");
+    if (!number) return;
     await this.whatsapp.sendTemplate(
-      to.whatsappNumber,
+      number,
       templateName,
       languageCode,
       components,
       to.id,
     );
+  }
+
+  /**
+   * A user who has only ever used the app has no WhatsApp number, so there is
+   * no WhatsApp conversation to put this in. Reaching here for one is a routing
+   * mistake upstream (delivery policy picked WhatsApp for an app-only user), so
+   * it is logged and dropped rather than thrown into a money path.
+   */
+  private numberOf(to: MessageRecipient, method: string): string | null {
+    if (to.whatsappNumber) return to.whatsappNumber;
+    this.logger.warn(
+      `${method}: user ${to.id} has no WhatsApp number — not sent on WhatsApp`,
+    );
+    return null;
   }
 }

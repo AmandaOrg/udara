@@ -212,8 +212,16 @@ enum NudgeType {
 // ---------------------------------------------------------------------------
 
 model User {
-  id              String  @id @default(uuid())
-  whatsappNumber  String  @unique
+  id String @id @default(uuid())
+
+  // Who the user is, on every channel: the international number as digits,
+  // no "+" (the shape Meta sends as a WhatsApp sender id, e.g. 2348012345678).
+  // See common/phone.util.ts. This, not whatsappNumber, is what makes an app
+  // sign-up and the same number messaging on WhatsApp one account.
+  phoneNumber     String  @unique
+  // Set once the number has actually messaged Udara on WhatsApp. Null for a
+  // user who has only ever used the app.
+  whatsappNumber  String? @unique
   rubiesAccountId String? @unique
 
   // Identity captured during onboarding (Identity/AI Reflection stages, onboarding script)
@@ -268,6 +276,10 @@ model User {
 
   // Drives the WhatsApp 24h free-form-vs-template send decision.
   lastInboundMessageAt DateTime?
+  // Last authenticated app request. Kept apart from lastInboundMessageAt,
+  // which means "a WhatsApp message arrived" and decides whether Meta will
+  // accept a free-form send; app activity must never extend that window.
+  lastAppActiveAt      DateTime?
 
   onboardingStage       OnboardingStage @default(DISCOVERY)
   onboardingCompletedAt DateTime?

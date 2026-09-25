@@ -118,6 +118,31 @@ The count now includes the message being handled, matching how the limit was wri
 
 **S9** now also forbids `ChannelMessenger` and `MessagingModule` in `orchestrator.module.ts`. **S12** lists the messenger and the adapter.
 
+### P2: identity
+
+**Schema** (migration `20260925150000_user_phone_number`):
+- `User.phoneNumber String @unique` is required. It is backfilled with `UPDATE "User" SET "phoneNumber" = "whatsappNumber"`, which is correct because every existing user arrived through WhatsApp, whose sender id is already canonical.
+- `User.whatsappNumber` becomes `String?`, still `@unique`.
+- New `User.lastAppActiveAt DateTime?`. `lastInboundMessageAt` keeps meaning "a WhatsApp message arrived" (Meta's 24-hour rule) and app activity must never touch it.
+- `prisma migrate diff --from-migrations … --to-schema-datamodel …` against a shadow database returns an empty migration.
+
+**Canonical form** (`src/common/phone.util.ts`): international digits with no "+", which is what Meta sends as `from`.
+- `normalizePhoneNumber(raw)` handles typed input: `+`, `00`, Nigerian local `0…` or a bare 10-digit number, and a trunk zero after 234. Anything else returns `null`.
+- `isNigerianMobile(canonical)` is for the P3 sign-up gate.
+
+**`findOrCreateUser(whatsappNumber)`**, in order:
+1. By `whatsappNumber`: update `lastInboundMessageAt`.
+2. Otherwise `linkWhatsapp`: `updateMany({ where: { phoneNumber, whatsappNumber: null } })`. This attaches WhatsApp to an app-only account and never overwrites an existing link.
+3. Otherwise `create({ phoneNumber: whatsappNumber, whatsappNumber })`.
+4. On P2002 (a racing webhook or app sign-up), re-read by `whatsappNumber`, then try `linkWhatsapp` again. If both fail, the number belongs to an account linked to a different WhatsApp number; throw.
+
+**Also changed:**
+- `WhatsappChannelAdapter` drops (logged) any send to a user with no `whatsappNumber`. `requestForm` returns `false`.
+- Rubies `provisionAccount` receives `phoneNumber`.
+- The settings CLI shows `phoneNumber`.
+
+Before P3 no user lacks a WhatsApp number, so the linking path cannot run in production yet.
+
 ## Invariants
 
 Code must still enforce:
@@ -133,6 +158,7 @@ Code must still enforce:
 - **Unit:**
   - P0: `npx jest src/whatsapp/bill-payment-confirmation src/whatsapp/transfer-confirmation src/whatsapp/whatsapp-router src/whatsapp/pin-outcome src/onboarding`
   - P1: `npx jest src/messaging`
+  - P2: `npx jest src/common/phone src/whatsapp/whatsapp-router src/messaging src/onboarding`
   - then the full `npm test`
 - **Golden:** unchanged. P0 does not touch the orchestrator.
 - **E2e:** `npm run e2e` with the dry-run flags. No scenario changes. App scenarios arrive in P3 and P4 under `e2e/scenarios/app/`.
@@ -149,3 +175,4 @@ Code must still enforce:
 | --- | --- |
 | 2026-09-25 | Initial: overall approach; P0 in detail |
 | 2026-09-25 | P1: messenger port as built |
+| 2026-09-25 | P2: identity as built |

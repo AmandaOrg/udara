@@ -1,6 +1,6 @@
 import { WhatsappRouterService } from "./whatsapp-router.service";
 import { PinOutcomeService } from "./pin-outcome.service";
-import { OnboardingStage, WhatsappMessageType } from "@prisma/client";
+import { OnboardingStage, Prisma, WhatsappMessageType } from "@prisma/client";
 import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 /**
@@ -9,7 +9,12 @@ import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messen
  */
 describe("WhatsappRouterService — orchestrator free text", () => {
   let prisma: {
-    user: { findUnique: jest.Mock; update: jest.Mock; create: jest.Mock };
+    user: {
+      findUnique: jest.Mock;
+      update: jest.Mock;
+      create: jest.Mock;
+      updateMany: jest.Mock;
+    };
   };
   let whatsapp: { sendText: jest.Mock; downloadMedia: jest.Mock };
   let onboarding: Record<string, jest.Mock>;
@@ -51,6 +56,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         findUnique: jest.fn().mockResolvedValue(user),
         update: jest.fn().mockResolvedValue(user),
         create: jest.fn().mockResolvedValue(user),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
     };
     whatsapp = {
@@ -147,6 +153,93 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       ),
       whatsappTestMessenger({ whatsapp }),
     );
+  });
+
+  describe("who the sender is", () => {
+    const hello = {
+      id: "m1",
+      type: WhatsappMessageType.TEXT,
+      textBody: "hello",
+      fromNumber: "234801",
+    } as any;
+
+    beforeEach(() => {
+      orchestrator.handleMessage.mockResolvedValue({ message: "hi" });
+    });
+
+    it("finds a returning WhatsApp user by their number and records the message time", async () => {
+      await service.route(hello);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { whatsappNumber: "234801" },
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { lastInboundMessageAt: expect.any(Date) },
+      });
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it("creates a new number as a user whose phone number is the WhatsApp id", async () => {
+      prisma.user.findUnique.mockResolvedValueOnce(null);
+
+      await service.route(hello);
+
+      expect(prisma.user.create).toHaveBeenCalledWith({
+        data: {
+          phoneNumber: "234801",
+          whatsappNumber: "234801",
+          lastInboundMessageAt: expect.any(Date),
+        },
+      });
+    });
+
+    /**
+     * Someone who signed up in the app and then messages on WhatsApp is one
+     * person with one set of limits, not a second account.
+     */
+    it("links the first WhatsApp message to the account that already has that phone number", async () => {
+      prisma.user.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(user);
+      prisma.user.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.route(hello);
+
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { phoneNumber: "234801", whatsappNumber: null },
+        data: {
+          whatsappNumber: "234801",
+          lastInboundMessageAt: expect.any(Date),
+        },
+      });
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(orchestrator.handleMessage).toHaveBeenCalledWith(
+        user,
+        "hello",
+        expect.anything(),
+      );
+    });
+
+    it("uses the row a racing request created instead of failing", async () => {
+      prisma.user.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(user);
+      prisma.user.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+          code: "P2002",
+          clientVersion: "5.22.0",
+        }),
+      );
+
+      await service.route(hello);
+
+      expect(orchestrator.handleMessage).toHaveBeenCalledWith(
+        user,
+        "hello",
+        expect.anything(),
+      );
+    });
   });
 
   describe("inbound rate limit", () => {

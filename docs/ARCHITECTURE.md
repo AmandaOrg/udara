@@ -83,6 +83,8 @@ Domain code never calls `WhatsappService`. It sends through `ChannelMessenger` (
 
 Prisma models (see [`prisma/schema.prisma`](../prisma/schema.prisma)): `User`, `DailyAllowance`, `Recipient`, `Transaction`, `OverrideHistory`, `SettingsChangeRequest`, onboarding/conversation sessions, `TransferDraft`, `WhatsappMessage`, PIN challenges, Rubies webhook receipts, LLM call logs, nudges.
 
+A `User` is identified by `phoneNumber` (international digits, no "+"; see `common/phone.util.ts`). `whatsappNumber` is set only once that number has messaged on WhatsApp, and `findOrCreateUser` links a first WhatsApp message to an existing account with the same phone number.
+
 `TransferDraft` is the interactive send-money wizard. `ConversationSession` is chat history for the Udara (`KEDU`) and manager personas. Do not merge them.
 
 ## Integrations

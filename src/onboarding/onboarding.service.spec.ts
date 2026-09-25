@@ -125,6 +125,7 @@ describe("OnboardingService", () => {
   function makeUser(overrides: Record<string, unknown> = {}) {
     return {
       id: "user-1",
+      phoneNumber: "234801",
       whatsappNumber: "234801",
       onboardingStage: OnboardingStage.DISCOVERY,
       name: null,
@@ -519,6 +520,9 @@ describe("OnboardingService", () => {
         makeUser({
           onboardingStage: OnboardingStage.PLAN_PROPOSED,
           name: "Danny O", // deliberately different from the form's legal name below
+          // Different on purpose: Rubies gets the account's phone number, which
+          // an app-only user has without any WhatsApp number.
+          phoneNumber: "2348011112222",
           whatsappNumber: "234801",
         }),
       );
@@ -537,6 +541,7 @@ describe("OnboardingService", () => {
           nin: undefined,
           firstName: "Daniel",
           lastName: "Okafor",
+          phoneNumber: "2348011112222",
           dob: "1998-04-12",
           email: "me@example.com",
         }),

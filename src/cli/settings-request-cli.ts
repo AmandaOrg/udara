@@ -78,7 +78,7 @@ async function main() {
           },
         },
         orderBy: { requestedAt: "asc" },
-        include: { user: { select: { whatsappNumber: true, name: true } } },
+        include: { user: { select: { phoneNumber: true, name: true } } },
       });
 
       if (open.length === 0) {
@@ -96,7 +96,7 @@ async function main() {
             eligible
               ? "ELIGIBLE NOW"
               : `eligible ${r.eligibleAt.toDateString()}`,
-            `${r.user.name ?? "unnamed"} (${r.user.whatsappNumber})`,
+            `${r.user.name ?? "unnamed"} (${r.user.phoneNumber})`,
             JSON.stringify(r.requestedChange),
             r.reason ? `reason: ${JSON.stringify(r.reason)}` : "",
           ].join("  "),

@@ -126,23 +126,27 @@ Users decided (2026-09-25, Egwu David Samuel):
 
 ## Phase 2 — Identity
 
-**Status:** not started
-**Started:**
-**Completed:**
-**Owner:**
+**Status:** completed
+**Started:** 2026-09-25
+**Completed:** 2026-09-25
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] `User.phoneNumber` (required and unique, backfilled from `whatsappNumber`); `whatsappNumber` made nullable; `lastAppActiveAt`
-- [ ] `src/common/phone.util.ts`; `findOrCreateUser` links by phone number; Rubies receives `phoneNumber`
+- [x] `User.phoneNumber` (required and unique, backfilled from `whatsappNumber`); `whatsappNumber` made nullable; `lastAppActiveAt`
+- [x] `src/common/phone.util.ts`; `findOrCreateUser` links by phone number; Rubies receives `phoneNumber`
+- [x] The WhatsApp adapter drops, with a log, any send to a user with no WhatsApp number
 
 ### Acceptance tests
 
-- [ ] An existing WhatsApp user and an app sign-up with the same number end up as one `User`, whichever arrives first, including when they race
+- [x] A first WhatsApp message from a number that already has an account links to it rather than creating a second one, and a racing insert reuses the winner's row: `whatsapp-router.service.spec.ts`, "who the sender is". The app-sign-up side of the race is P3's to test.
+- [x] Every way of writing a Nigerian number normalises to the WhatsApp sender id: `phone.util.spec.ts`
+- [x] Migration verified: an empty `migrate diff` against a shadow database, and applied locally over 13 existing users (13 backfilled, 0 missing)
+- [x] Full suite 57 suites, 829 tests. Security check, build and e2e as in P0 (14 pass, the same 2 stale failures). The 11 users e2e created all have `phoneNumber = whatsappNumber`.
 
 ### Progress log
 
--
+- 2026-09-25: Built and verified.
 
 ### Risk
 
@@ -320,7 +324,7 @@ Users decided (2026-09-25, Egwu David Samuel):
 | --- | --- | --- |
 | 0 | Paperwork and WhatsApp-neutral fixes | completed |
 | 1 | Messenger port | completed |
-| 2 | Identity | not started |
+| 2 | Identity | completed |
 | 3 | Authentication | not started |
 | 4 | In-app conversation | not started |
 | 5 | Push and delivery rules | not started |
