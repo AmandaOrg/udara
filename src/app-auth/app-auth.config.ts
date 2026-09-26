@@ -32,6 +32,11 @@ export class AppAuthConfig {
     return Number(this.config.get("APP_ACCESS_TOKEN_TTL_MINUTES", 15)) * 60_000;
   }
 
+  /** Naira; see NewDeviceCapService. */
+  get newDeviceTransferCap(): number {
+    return Number(this.config.get("NEW_DEVICE_TRANSFER_CAP", 20_000));
+  }
+
   get refreshTtlMs(): number {
     return (
       Number(this.config.get("APP_REFRESH_TOKEN_TTL_DAYS", 30)) * 86_400_000

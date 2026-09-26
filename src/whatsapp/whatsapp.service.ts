@@ -62,7 +62,9 @@ export class WhatsappService {
     // Local/e2e escape hatch — same philosophy as RUBIES_DRY_RUN: exercise the
     // full inbound→route→send path without calling Meta Graph API.
     if (this.config.get<string>("WHATSAPP_DRY_RUN") === "true") {
-      return { messages: [{ id: `wamid.dryrun.${Date.now()}` }] };
+      // Random, not a timestamp: two sends in the same millisecond (two users,
+      // or a text then its buttons) collided on the unique waMessageId.
+      return { messages: [{ id: `wamid.dryrun.${randomUUID()}` }] };
     }
 
     const response = await firstValueFrom(

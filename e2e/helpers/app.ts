@@ -110,3 +110,85 @@ export async function setPinDirectly(
     },
   });
 }
+
+/** Signs a brand-new number in; it has nothing to step up with. */
+export async function signInNewNumber(phoneNumber = uniqueNigerianMobile()) {
+  await requestCode(phoneNumber);
+  const verified = await verifyCode(phoneNumber);
+  expectStatus(verified, 200);
+  if (verified.body.status !== 'authenticated') {
+    throw new Error(
+      `signInNewNumber: expected authenticated, got ${verified.body.status}`,
+    );
+  }
+  return {
+    phoneNumber,
+    userId: verified.body.user.id as string,
+    accessToken: verified.body.tokens.accessToken as string,
+  };
+}
+
+let clientSeq = 0;
+
+/** A fresh `clientMessageId`. */
+export function clientMessageId(): string {
+  clientSeq += 1;
+  return `e2e-${Date.now().toString(36)}-${clientSeq}`;
+}
+
+export interface ChatMessage {
+  id: string;
+  seq: string;
+  direction: 'inbound' | 'outbound';
+  kind: string;
+  text: string | null;
+  buttons?: { id: string; title: string }[];
+  list?: { buttonLabel: string; rows: { id: string; title: string }[] };
+  form?: { kind: string; token?: string };
+}
+
+export function chatSend(accessToken: string, body: Record<string, unknown>) {
+  return request<any>(
+    'POST',
+    '/v1/chat/messages',
+    { clientMessageId: clientMessageId(), ...body },
+    bearer(accessToken),
+  );
+}
+
+/**
+ * Long-polls the chat from `after` until an outbound message matches, and
+ * returns it with the cursor just past it. Throws with what did arrive.
+ */
+export async function waitForChat(
+  accessToken: string,
+  match: (m: ChatMessage) => boolean,
+  opts: { after?: string; timeoutMs?: number } = {},
+): Promise<{ message: ChatMessage; cursor: string; seen: ChatMessage[] }> {
+  const deadline = Date.now() + (opts.timeoutMs ?? 20_000);
+  let cursor = opts.after;
+  const seen: ChatMessage[] = [];
+  while (Date.now() < deadline) {
+    const query = new URLSearchParams({ waitMs: '5000' });
+    if (cursor !== undefined) query.set('after', cursor);
+    const page = await request<any>(
+      'GET',
+      `/v1/chat/messages?${query.toString()}`,
+      undefined,
+      bearer(accessToken),
+    );
+    expectStatus(page, 200);
+    for (const message of page.body.messages as ChatMessage[]) {
+      seen.push(message);
+      if (message.direction === 'outbound' && match(message)) {
+        return { message, cursor: message.seq, seen };
+      }
+    }
+    if (page.body.cursor) cursor = page.body.cursor;
+  }
+  throw new Error(
+    `waitForChat: no match; saw ${seen
+      .map((m) => `${m.direction}/${m.kind}: ${(m.text ?? '').slice(0, 60)}`)
+      .join(' || ')}`,
+  );
+}

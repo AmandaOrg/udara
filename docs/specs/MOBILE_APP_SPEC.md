@@ -47,6 +47,22 @@ These changes ship before the app exists. They close gaps the app would otherwis
 - **Only the latest identity form can be submitted, and only once.** If the user submits an older KYC form (for example one reopened from earlier in the chat), Udara replies "that form has expired, here's a fresh one:" and sends a new one. Nothing is sent to the bank.
 - **The message-flood limit now works.** A number that sends more than 40 messages in 10 minutes gets one "that's a lot of messages at once" reply, and further messages are ignored until the window passes. The limit was always meant to do this, but it never triggered.
 
+### P4 (in-app conversation)
+
+- **The app chat is the WhatsApp conversation.** A new user opens the chat and Udara introduces itself, as it does to a first WhatsApp message. Buttons and lists appear as tappable choices. Everything after that (terms, the four questions, the plan, "talk to Udara") is the same script and the same assistant.
+- **Forms are native screens.** When Udara asks for identity details or a PIN, the chat shows a card that opens a native form. Submitting it returns to the chat, where the result arrives as it does on WhatsApp: the account number, or what was wrong and a fresh form.
+- **An app-only user sets a PIN straight after the account is created.** Udara says "one more thing before we carry on: set the 4-digit pin…" and does not carry on with onboarding until it is set. WhatsApp users are unchanged: their PIN is still first asked for at their first transfer.
+- **A phone signed in less than 24 hours ago can send at most ₦20,000 in total** (configurable) until the 24 hours are up. A payment that would go over is cancelled after the PIN, before any money moves, with how much is left and when the limit lifts.
+- **Switching channel closes what was left open.** A transfer or airtime wizard, a pending pick between saved recipients, or a weekly "what limit do you want?" left open on one channel is quietly closed when the user writes on the other. Anything waiting on a Confirm button or a PIN is not affected.
+- **One conversation at a time per person.** A message that arrives while Udara is still answering the previous one (on either channel) waits for it, rather than both being handled at once.
+- **One message-flood budget across both channels:** 40 messages in 10 minutes in total. In the app, a message over the limit is refused rather than answered.
+- **If handling a message fails, the app says so** ("sorry, something went wrong on my side…"). WhatsApp stays silent, as today.
+
+Edge cases:
+- **The app sends the same message twice** (a retry after a dropped connection): it is handled once.
+- **The app names a choice that was never offered**, or one offered to someone else: 404, and nothing is recorded.
+- **The PIN or BVN is typed into the chat instead of the form:** it is scrubbed before it is stored, as on WhatsApp.
+
 ### Later phases (outline)
 
 - **Sign-up and login.**

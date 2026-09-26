@@ -73,6 +73,7 @@ import {
 } from "./transfer-hints.util";
 import { buildAttestedDigits } from "./attested-digits.util";
 import { sanitizeReplyText } from "./sanitize-reply.util";
+import { currentChannelContext } from "../messaging/channel-context";
 
 const ACTION_TYPES: ReadonlySet<string> = new Set([
   "reply_only",
@@ -891,7 +892,14 @@ export class OrchestratorService {
       where: { id: sessionId },
     });
     const messages = Array.isArray(session.messages) ? session.messages : [];
-    messages.push({ role, content, at: new Date().toISOString() });
+    // The session is shared by both channels; `channel` records where each
+    // turn happened, for reading the history back. The model never sees it.
+    messages.push({
+      role,
+      content,
+      at: new Date().toISOString(),
+      channel: currentChannelContext()?.channel,
+    });
     return this.prisma.conversationSession.update({
       where: { id: sessionId },
       // Trimmed on write, not only on read. Only the last 12 turns are ever

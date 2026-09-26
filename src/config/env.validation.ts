@@ -245,6 +245,12 @@ class EnvironmentVariables {
   @Min(1)
   @Max(365)
   APP_REFRESH_TOKEN_TTL_DAYS?: number;
+
+  /** Naira a newly trusted app device may move in its first 24 hours (ADR-0002). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  NEW_DEVICE_TRANSFER_CAP?: number;
 }
 
 /** Webhook signing secrets. Blank means "accept forged requests", so blank is opt-in. */

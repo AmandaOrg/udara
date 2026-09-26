@@ -3,7 +3,7 @@ import {
   RATE_LIMIT_MAX_MESSAGES,
   RATE_LIMIT_WINDOW_MS,
 } from "./inbound-rate-limit.service";
-import { WhatsappMessageDirection } from "@prisma/client";
+import { AppMessageDirection, WhatsappMessageDirection } from "@prisma/client";
 
 /**
  * Any WhatsApp number that has never been seen gets a User row and, past the
@@ -11,12 +11,19 @@ import { WhatsappMessageDirection } from "@prisma/client";
  * download and a transcription. Nothing bounded that before this service.
  */
 describe("InboundRateLimitService", () => {
-  let prisma: { whatsappMessage: { count: jest.Mock } };
+  let prisma: {
+    whatsappMessage: { count: jest.Mock };
+    appMessage: { count: jest.Mock };
+  };
   let service: InboundRateLimitService;
   const now = new Date("2026-09-04T12:00:00Z");
 
   beforeEach(() => {
-    prisma = { whatsappMessage: { count: jest.fn() } };
+    prisma = {
+      whatsappMessage: { count: jest.fn() },
+      // No app messages unless a test says so.
+      appMessage: { count: jest.fn().mockResolvedValue(0) },
+    };
     service = new InboundRateLimitService(prisma as any);
   });
 
@@ -38,6 +45,26 @@ describe("InboundRateLimitService", () => {
       where: {
         userId: "user-1",
         direction: WhatsappMessageDirection.INBOUND,
+        createdAt: { gte: new Date(now.getTime() - RATE_LIMIT_WINDOW_MS) },
+      },
+    });
+  });
+
+  /**
+   * One account, one budget: the app must not double what someone can make
+   * Udara spend by splitting their messages across two channels.
+   */
+  it("counts the app's inbound messages into the same budget", async () => {
+    prisma.whatsappMessage.count.mockResolvedValue(RATE_LIMIT_MAX_MESSAGES - 5);
+    prisma.appMessage.count.mockResolvedValue(6);
+
+    const result = await service.check("user-1", now);
+
+    expect(result).toEqual({ limited: true, justCrossed: true });
+    expect(prisma.appMessage.count).toHaveBeenCalledWith({
+      where: {
+        userId: "user-1",
+        direction: AppMessageDirection.INBOUND,
         createdAt: { gte: new Date(now.getTime() - RATE_LIMIT_WINDOW_MS) },
       },
     });

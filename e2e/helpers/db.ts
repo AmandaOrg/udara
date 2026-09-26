@@ -140,6 +140,35 @@ export async function waitForOutbound(
   );
 }
 
+/**
+ * Waits until every inbound message from this number since `after` has been
+ * handled (PROCESSED or FAILED), i.e. the server has finished its turns.
+ */
+export async function waitForInboundSettled(
+  waNumber: string,
+  after: Date,
+  timeoutMs = 30_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const pending = await withDbRetry('waitForInboundSettled', () =>
+      prisma().whatsappMessage.count({
+        where: {
+          fromNumber: waNumber,
+          direction: WhatsappMessageDirection.INBOUND,
+          status: 'RECEIVED',
+          createdAt: { gte: after },
+        },
+      }),
+    );
+    if (pending === 0) return;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(
+    `waitForInboundSettled: messages from ${waNumber} still unhandled after ${timeoutMs}ms`,
+  );
+}
+
 export async function listOutboundSince(waNumber: string, after: Date) {
   return withDbRetry('listOutboundSince', () =>
     prisma().whatsappMessage.findMany({

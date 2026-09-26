@@ -174,6 +174,105 @@ Before P3 no user lacks a WhatsApp number, so the linking path cannot run in pro
 
 **New-device cap:** decided (24 hours, default ₦20,000), not enforced yet. It runs from `Device.trustedAt` and lands with the first app-originated transfers (P4, P7).
 
+### P4: in-app conversation
+
+**Data** (migration `20260926120000_app_conversation`):
+- `AppMessage`:
+  - Identity and ordering: `id`, `seq` (a `BigInt` autoincrement, which is the cursor), `userId`.
+  - Content: `direction` (INBOUND or OUTBOUND), `kind`, `body`, and `payload`, a JSON field holding what was offered or chosen.
+  - Inbound bookkeeping: `clientMessageId`, and a `status` of RECEIVED, PROCESSED or FAILED.
+  - Timestamps: `createdAt`, `processedAt`.
+  - Indexes: `@@unique([userId, clientMessageId])` and `@@index([userId, seq])`.
+- `kind` values:
+  - Outbound: `TEXT`, `BUTTONS`, `LIST`, `FORM_REQUEST`.
+  - Inbound: `TEXT`, `CHOICE`, `FORM_SUBMISSION`, `START`.
+- `UserTurnLease`: `userId` (the primary key), `holder`, `expiresAt`, and `lastChannel` (a new `MessageChannel` enum, WHATSAPP or APP).
+
+**Layout:**
+- `src/conversation/`:
+  - `ConversationRouterService`: text, choice, PIN form and KYC form.
+  - `TurnService`: the lease and channel-switch expiry.
+  - These are provided and exported by `WhatsappModule`, because they are built from its services. `ActionExecutorService` already follows the same pattern.
+- `src/messaging/`:
+  - `AppMessageService`: the inbound and outbound store and the cursor queries.
+  - `AppMessageNotifier`: an in-process wake-up for long-polls.
+  - `AppChannelAdapter`.
+- `src/app-api/chat/`:
+  - `AppConversationService`: accepts inbound, checks the choice was offered, and processes it in the background.
+  - `ChatController` and `FormsController`.
+
+**Routing an inbound event (both channels):**
+1. Entry point: the WhatsApp webhook, or `POST /v1/chat/messages`, `/v1/chat/start` or `/v1/forms/*`.
+2. Record the inbound row.
+3. Find the user.
+4. Rate check. It counts both tables: WhatsApp and app inbound together, 40 in 10 minutes.
+5. `runInChannel({ channel, deviceId? })`.
+6. `TurnService.run(userId, channel, fn)`:
+   - Claim the lease: `updateMany` where it has expired, else `create`. A P2002 on `create` means the lease is busy, so it waits 200ms and retries, for up to 45 seconds. If the wait runs out it logs and runs anyway, which is today's behaviour. The TTL is 90 seconds.
+   - If `lastChannel` is set and differs from this turn's channel, quietly:
+     - cancel ACTIVE transfer and bill drafts;
+     - complete any AWAITING_LIMIT weekly review;
+     - drop `beneficiaryPick` from the KEDU session.
+   - Record `lastChannel`.
+   - Re-read the user, since the wait may have seen a stage change.
+   - Run `fn(user)`.
+   - Release by expiring the lease; the row and its `lastChannel` stay.
+7. Dispatch through `ConversationRouterService`, in today's order.
+
+WhatsApp sign-in approval buttons are handled before step 6. They are not a conversation turn, and approving a sign-in must not expire a wizard open in the app.
+
+**Why a switch expires, instead of tagging drafts.** Drafts are only created inside a turn, so anything open when a turn arrives on the other channel was opened there. This is equivalent to a `channel` column on each draft, without touching the nine `transferDraft.create` calls in the wizard. Pending confirmations and PIN challenges are not expired: they act only through their own buttons and tokens.
+
+**The app adapter:**
+
+| Call | Row written |
+| --- | --- |
+| `sendText` | `TEXT` |
+| `sendButtons` | `BUTTONS`, with payload `{buttons}` |
+| `sendList` | `LIST`, with payload `{buttonLabel, rows}` |
+| `sendChunked` | One `TEXT` row per `splitIntoChunks` chunk, with no pauses |
+| `requestForm` | `FORM_REQUEST`, with payload `{form, token, headerText, bodyText, ctaText}`. Always returns true. |
+| `sendTemplate` | None. Logged and dropped; there are no templates in the app, and P5 decides proactive delivery. |
+
+Every insert notifies the user's long-polls.
+
+`ChannelMessenger` picks the adapter:
+- In a context: that channel's adapter.
+- Outside a context: WhatsApp if the user has a WhatsApp number, else the app. P5 replaces this with the delivery policy.
+
+**API:**
+
+| Route | Result |
+| --- | --- |
+| `POST /v1/chat/messages` `{clientMessageId, text}` or `{clientMessageId, reply: {messageId, choiceId}}` | 202 `{id, seq}`. A repeated `clientMessageId` returns the original row and is not processed again. Errors: 400 if neither or both of `text` and `reply` are given; 404 `not_found` if the choice was not offered to this user; 429 `rate_limited`. |
+| `GET /v1/chat/messages?after=<seq>&waitMs=<0..25000>` | `{messages, cursor, processing}`. With no `after`, returns the latest 50. With `waitMs`, it holds the request until a row arrives: it wakes on a notification, and re-checks the database every 2 seconds for rows written by another replica. `processing` is true while an inbound row of this user is still RECEIVED. |
+| `POST /v1/chat/start` `{clientMessageId}` | 202. At DISCOVERY, sends the introduction. Otherwise does nothing. |
+| `POST /v1/forms/kyc` `{clientMessageId, token, firstName, middleName?, lastName, idType, idNumber, email, dateOfBirth}` | 202. The outcome arrives in the chat: the account is created, or the reason and a fresh form. |
+| `POST /v1/forms/pin` `{clientMessageId, token, pin, pinConfirm?, otp?}` | 202. The outcome arrives in the chat. |
+
+Form values are turned into the same `responseJson` / `sensitive` pair the WhatsApp Flow path builds: `id_number`, `date_of_birth`, `pin`, `pin_confirm`, `otp` go in `sensitive`. They are passed to the background task in memory. The stored row is `FORM_SUBMISSION` with payload `{form}` only. DTO validation (digits, lengths, date shape) returns 400 before anything is stored.
+
+**The choice check:** the `AppMessage` named by `reply.messageId` must be OUTBOUND, `BUTTONS` or `LIST`, owned by the caller, and offer `choiceId`. Otherwise the answer is 404, without saying which condition failed. The inbound row stores the choice's title as `body`. The handlers still decide staleness, as for an old WhatsApp button.
+
+**Post-KYC PIN (app-only users):**
+- If `provisionRubiesAccount` succeeds for a user with no `whatsappNumber` and no PIN:
+  1. It sets `extractedData.pinSetupRequired`.
+  2. It sends the account-created message and a lead-in, and stops.
+  3. The conversation router sees `OnboardingService.isAwaitingPinSetup` and calls `PinGateService.requestPinSetup`.
+- While the flag is set, any pre-account text or choice gets a reminder and the form again.
+- `PinOutcomeService` handles `pin_setup_complete` by also calling `OnboardingService.resumeAfterPinSetup`, which clears the flag and asks the money-story questions.
+
+**New-device cap:**
+- `NewDeviceCapService.check(userId, deviceId, amount)`:
+  - It applies while `Device.trustedAt` is within 24 hours.
+  - It sums the user's transfers and bill payments that are `CONFIRMED` or `EXECUTED` with `confirmedAt >= trustedAt`, adds this amount, and compares the total with `NEW_DEVICE_TRANSFER_CAP`.
+  - Counting every channel since the device was trusted is stricter than counting only this device, and needs no device column on transactions.
+- `PinOutcomeService.apply` runs the check before either execute. The check applies only in an app context with a `deviceId`.
+- On refusal, the row is claimed `PENDING_PIN → CANCELLED` and the user is told the remaining allowance and when the cap lifts.
+- The lease serializes the user's turns, so two app PINs cannot both pass on the same headroom.
+
+**Not changed:** `PinFlowOutcome`, prompts and goldens. Session turns gain a `channel` field that the model never sees.
+
 ## Invariants
 
 Code must still enforce:
@@ -182,7 +281,10 @@ Code must still enforce:
 - Every money-state transition is an atomic claim. Bill cancel now is too.
 - A confirm or cancel only ever acts on the caller's own row.
 - A KYC submission reaches `provisionAccount` at most once per form sent.
-- The KYC values and the PIN travel only in the in-memory `sensitive` map (S5, S6 unchanged).
+- The KYC values and the PIN travel only in the in-memory `sensitive` map (S5, S6 unchanged). The app's forms build the same map.
+- A chat choice from the app acts only if the named message offered it to the same user.
+- One conversational turn per user at a time, on either channel.
+- A PIN entered on an app device in its first 24 hours cannot move more than the new-device cap.
 
 ## Tests
 
@@ -191,9 +293,10 @@ Code must still enforce:
   - P1: `npx jest src/messaging`
   - P2: `npx jest src/common/phone src/whatsapp/whatsapp-router src/messaging src/onboarding`
   - P3: `npx jest src/app-auth src/app-api src/common src/config src/whatsapp/whatsapp-router`
+  - P4: `npx jest src/conversation src/messaging src/app-api src/app-auth/new-device-cap src/whatsapp/pin-outcome src/whatsapp/whatsapp-router src/whatsapp/inbound-rate-limit src/onboarding`
   - then the full `npm test`
 - **Golden:** unchanged. P0 does not touch the orchestrator.
-- **E2e:** `npm run e2e` with the dry-run flags. From P3, `e2e/scenarios/app/` needs the server on `APP_API_ENABLED=true SMS_DRY_RUN=true` with `OTP_PEPPER` shared with the runner (see DEVELOPMENT.md).
+- **E2e:** `npm run e2e` with the dry-run flags. From P3, `e2e/scenarios/app/` needs the server on `APP_API_ENABLED=true SMS_DRY_RUN=true` with `OTP_PEPPER` shared with the runner (see DEVELOPMENT.md). Leave `DEEPGRAM_API_KEY` blank on the server, or the audio scenario downloads media from Meta for real.
 
 ## Rollout / risk
 
@@ -209,3 +312,4 @@ Code must still enforce:
 | 2026-09-25 | P1: messenger port as built |
 | 2026-09-25 | P2: identity as built |
 | 2026-09-25 | P3: authentication as built |
+| 2026-09-26 | P4: in-app conversation as built |

@@ -1,5 +1,6 @@
 import { WhatsappRouterService } from "./whatsapp-router.service";
 import { PinOutcomeService } from "./pin-outcome.service";
+import { ConversationRouterService } from "../conversation/conversation-router.service";
 import { OnboardingStage, Prisma, WhatsappMessageType } from "@prisma/client";
 import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
@@ -35,6 +36,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   let inboundMessages: { updateTextBody: jest.Mock; attachUser: jest.Mock };
   let rateLimit: { check: jest.Mock };
   let loginApproval: { decide: jest.Mock };
+  let turns: { run: jest.Mock };
   let service: WhatsappRouterService;
 
   const user = {
@@ -68,6 +70,8 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       handleInboundText: jest.fn(),
       handleInboundButton: jest.fn(),
       handleInboundFlowReply: jest.fn().mockResolvedValue(undefined),
+      isAwaitingPinSetup: jest.fn().mockResolvedValue(false),
+      resumeAfterPinSetup: jest.fn().mockResolvedValue(undefined),
     };
     transferConfirmation = {
       initiateTransfer: jest.fn(),
@@ -133,9 +137,14 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         .mockResolvedValue({ limited: false, justCrossed: false }),
     };
 
-    service = new WhatsappRouterService(
-      prisma as any,
-      whatsapp as any,
+    // Runs the turn inline. The real TurnService re-reads the user inside the
+    // lease; here the turn gets the user the router's own lookup resolved,
+    // which is what every handler received before the lease existed.
+    turns = { run: jest.fn() };
+    const messenger = whatsappTestMessenger({ whatsapp });
+    // The real conversation router over the same mocks: this spec predates the
+    // extraction and still asserts what WhatsApp input ends up doing.
+    const conversation = new ConversationRouterService(
       onboarding as any,
       transferConfirmation as any,
       billPaymentActions as any,
@@ -145,16 +154,31 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       orchestrator as any,
       actionExecutor as any,
       weeklyReview as any,
+      // Real, over the mocks below, so the PIN tests still assert what runs.
+      new PinOutcomeService(
+        prisma as any,
+        transferConfirmation as any,
+        billPaymentConfirmation as any,
+        onboarding as any,
+        { check: jest.fn() } as any,
+        messenger,
+      ),
+      messenger,
+    );
+    service = new WhatsappRouterService(
+      prisma as any,
+      whatsapp as any,
+      conversation,
+      turns as any,
       deepgram as any,
       inboundMessages as any,
       rateLimit as any,
-      // Real, over the mocks below, so the PIN tests still assert what runs.
-      new PinOutcomeService(
-        transferConfirmation as any,
-        billPaymentConfirmation as any,
-      ),
-      whatsappTestMessenger({ whatsapp }),
+      messenger,
       loginApproval as any,
+    );
+    const findOrCreateUser = jest.spyOn(service as any, "findOrCreateUser");
+    turns.run.mockImplementation(async (_userId, _channel, fn) =>
+      fn(await findOrCreateUser.mock.results.at(-1)!.value),
     );
   });
 
@@ -347,6 +371,34 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       expect(loginApproval.decide).toHaveBeenCalled();
       expect(onboarding.handleInboundButton).not.toHaveBeenCalled();
     });
+
+    /**
+     * Approving a sign-in is not a conversation turn. Taken as one, it would
+     * count as switching to WhatsApp and close a wizard the user has open in
+     * the very app they are signing in to.
+     */
+    it("answers them outside a turn", async () => {
+      await service.route({
+        id: "m1",
+        type: WhatsappMessageType.BUTTON_REPLY,
+        fromNumber: "234801",
+        buttonPayload: "login_approve:challenge-9",
+      } as any);
+
+      expect(turns.run).not.toHaveBeenCalled();
+    });
+  });
+
+  it("handles every other message as one WhatsApp turn for that user", async () => {
+    orchestrator.handleMessage.mockResolvedValue({ message: "hi" });
+
+    await service.route(makeMessage("hello"));
+
+    expect(turns.run).toHaveBeenCalledWith(
+      "user-1",
+      "whatsapp",
+      expect.any(Function),
+    );
   });
 
   describe("confirm and cancel buttons", () => {

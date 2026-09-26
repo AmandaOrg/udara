@@ -175,6 +175,12 @@ const INVARIANTS = [
     message: 'inbound Flow responses must be redacted before persistence',
   },
   {
+    id: 'S5',
+    file: 'src/messaging/app-message.service.ts',
+    pattern: /scrubFreeTextSecrets/,
+    message: 'text typed into the app chat must be scrubbed before it is stored, as WhatsApp text is',
+  },
+  {
     id: 'S7',
     file: 'src/whatsapp/transfer-confirmation.service.ts',
     pattern: /PENDING_PIN/,
@@ -464,7 +470,14 @@ const NEEDS_TESTS = [
   'src/whatsapp/pin-outcome.service.ts',
   'src/messaging/channel-messenger.ts',
   'src/messaging/whatsapp-channel.adapter.ts',
+  'src/messaging/app-channel.adapter.ts',
+  'src/messaging/app-message.service.ts',
+  'src/conversation/conversation-router.service.ts',
+  'src/conversation/turn.service.ts',
   'src/app-api/app-auth.guard.ts',
+  'src/app-api/chat/app-conversation.service.ts',
+  'src/app-api/chat/forms.controller.ts',
+  'src/app-auth/new-device-cap.service.ts',
   'src/app-auth/secret-hash.util.ts',
   'src/app-auth/otp.service.ts',
   'src/app-auth/session.service.ts',
@@ -504,6 +517,16 @@ const PUBLIC_ALLOWED = new Set([
   'src/app-api/public.decorator.ts',
 ]);
 
+/** True when line `index` sits inside a `class …QueryDto { … }` body. */
+function inQueryDto(lines, index) {
+  for (let i = index; i >= 0; i--) {
+    if (/^}/.test(lines[i]) && i !== index) return false;
+    const opened = /^export class (\w+)/.exec(lines[i]);
+    if (opened) return /QueryDto$/.test(opened[1]);
+  }
+  return false;
+}
+
 const appApiModule = readIfExists('src/app-api/app-api.module.ts');
 if (
   appApiModule === null ||
@@ -542,9 +565,29 @@ for (const full of ALL_FILES) {
         `${file}:${index + 1}: app API controllers must be mounted under v1, or AppAuthGuard does not protect them`,
       );
     }
-    // S15: request bodies here carry phone numbers, codes, PINs and tokens.
+    // S15: request bodies here carry phone numbers, codes, PINs, ID numbers
+    // and tokens. Nothing in the app API serializes one; services may log
+    // (ids and error names), controllers may not log at all.
+    if (/console\.|JSON\.stringify\(/.test(line)) {
+      fail(
+        'S15',
+        `${file}:${index + 1}: the app API must not print or serialize request data`,
+      );
+    }
+    // Sentry keeps query strings, so a secret or a phone number must never be
+    // a query parameter.
+    if (
+      /@Query\(\s*(['"`])(pin\w*|otp|code|token\w*|phone\w*|idNumber|password)\1/i.test(line) ||
+      (inQueryDto(lines, index) &&
+        /^\s+(pin\w*|otp|code|token\w*|phone\w*|idNumber|password)[!?]?\s*:/i.test(line))
+    ) {
+      fail(
+        'S15',
+        `${file}:${index + 1}: secrets and phone numbers go in the body, never the query string`,
+      );
+    }
     if (file.endsWith('.controller.ts')) {
-      if (/\bLogger\b|console\.|JSON\.stringify\(/.test(line)) {
+      if (/\bLogger\b/.test(line)) {
         fail(
           'S15',
           `${file}:${index + 1}: app API controllers must not log or serialize request data`,

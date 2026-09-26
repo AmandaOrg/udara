@@ -16,6 +16,7 @@ import {
 import { LlmCallLoggerService } from "../ai/llm-call-logger.service";
 import { buildOnboardingPrompt } from "../ai/prompts/onboarding.prompts";
 import { ChannelMessenger } from "../messaging/channel-messenger";
+import { forChannel } from "../messaging/channel-context";
 import { RubiesService } from "../rubies/rubies.service";
 import { displayFirstNameOrThere } from "../common/display-name.util";
 import {
@@ -188,8 +189,55 @@ export class OnboardingService {
   }
 
   // =========================================================================
-  // Entry points — called by WhatsappRouterService for pre-account-stage users
+  // Entry points — called by ConversationRouterService for pre-account-stage users
   // =========================================================================
+
+  /**
+   * Opens the conversation for someone who has not said anything yet. On
+   * WhatsApp the user's first message does this; the app has no first message
+   * to wait for, so it asks for this when the chat first opens. Does nothing
+   * once the conversation has begun, so opening the chat again is harmless.
+   */
+  async startConversation(user: User): Promise<void> {
+    if (user.onboardingStage !== OnboardingStage.DISCOVERY) return;
+    const session = await this.getOrStartSession(user.id);
+    await this.sendIntroduction(user, session.id);
+  }
+
+  /**
+   * True while an app-only user owes a PIN before onboarding may continue.
+   *
+   * A SIM swap gives an attacker the sign-in code. For someone with a PIN that
+   * is not enough to get in, and for someone on WhatsApp the sign-in has to be
+   * approved there; an app-only user with no PIN has neither. So once their
+   * account exists they set a PIN before anything else, and above all before
+   * they are told to fund it (ADR-0002).
+   */
+  async isAwaitingPinSetup(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
+    if (user.pinHash) return false;
+    const session = await this.getOrStartSession(userId);
+    const extractedData = isRecord(session.extractedData)
+      ? session.extractedData
+      : {};
+    return extractedData.pinSetupRequired === true;
+  }
+
+  /** Picks onboarding back up once the PIN it was waiting on is set. */
+  async resumeAfterPinSetup(userId: string): Promise<void> {
+    const session = await this.getOrStartSession(userId);
+    const extractedData = isRecord(session.extractedData)
+      ? session.extractedData
+      : {};
+    if (extractedData.pinSetupRequired !== true) return;
+    await this.mergeExtractedData(session.id, { pinSetupRequired: false });
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
+    await this.sendMoneyStoryQuestions(user, session.id);
+  }
 
   async handleInboundText(user: User, text: string): Promise<void> {
     const session = await this.getOrStartSession(user.id);
@@ -869,10 +917,23 @@ export class OnboardingService {
 
       const confirmText = [
         `your udara account has been created successfully 🎉 your account number is: ${account.accountNumber}.`,
-        "pin this chat so you can send money here anytime.",
+        forChannel({
+          whatsapp: "pin this chat so you can send money here anytime.",
+          app: "you can send money right here in the app, anytime.",
+        }),
       ].join("\n\n");
       await this.appendMessage(sessionId, "assistant", confirmText);
       await this.messenger.sendChunked(user, confirmText);
+
+      if (!freshUser.pinHash && !freshUser.whatsappNumber) {
+        // See isAwaitingPinSetup. The caller sends the PIN form.
+        await this.mergeExtractedData(sessionId, { pinSetupRequired: true });
+        const ask =
+          "one more thing before we carry on: set the 4-digit pin you'll use to approve every transfer. it's what keeps your money safe if someone ever gets hold of your number.";
+        await this.appendMessage(sessionId, "assistant", ask);
+        await this.messenger.sendText(user, ask);
+        return;
+      }
 
       await this.sendMoneyStoryQuestions(user, sessionId);
     } catch (err) {
@@ -914,7 +975,11 @@ export class OnboardingService {
           fields.includes("rubiesAccountId") ||
           fields.includes("rubiesAccountNumber")
         ) {
-          return "that bvn/nin is already linked to a different udara account. if that's a different number of yours, message us from that whatsapp chat instead. if this looks wrong, let us know. here's the form if you'd like to try a different id:";
+          return forChannel({
+            whatsapp:
+              "that bvn/nin is already linked to a different udara account. if that's a different number of yours, message us from that whatsapp chat instead. if this looks wrong, let us know. here's the form if you'd like to try a different id:",
+            app: "that bvn/nin is already linked to a different udara account. if that's a different number of yours, sign in with that number instead. if this looks wrong, let us know. here's the form if you'd like to try a different id:",
+          });
         }
       }
       return "that didn't go through, something on our end needs a look. here's the form to try again:";

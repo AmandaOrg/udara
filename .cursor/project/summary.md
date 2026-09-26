@@ -25,9 +25,10 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 | `src/rubies` | BaaS + VAS purchase/query + inbound webhook |
 | `src/ai` | LLM providers + persona prompts |
 | `src/orchestrator` | propose_turn + validator + surfaces (no send) |
-| `src/messaging` | `ChannelMessenger`: the only way to send; channel context; WhatsApp adapter |
-| `src/app-auth` | App sign-in: SMS codes (Termii), sessions, new-device step-up |
-| `src/app-api` | Mobile app `/v1` API, deny-by-default guard; only with `APP_API_ENABLED=true` |
+| `src/messaging` | `ChannelMessenger`: the only way to send; channel context; WhatsApp and app adapters; `AppMessage` store |
+| `src/conversation` | `ConversationRouterService` (routing for both channels), `TurnService` (per-user turn lease, channel-switch expiry) |
+| `src/app-auth` | App sign-in: SMS codes (Termii), sessions, new-device step-up, new-device transfer cap |
+| `src/app-api` | Mobile app `/v1` API (auth, me, chat, forms), deny-by-default guard; only with `APP_API_ENABLED=true` |
 | `src/whatsapp` | Webhook, router, transfer wizard, bill-pay wizard, PIN gate, ActionExecutor; `WhatsappTransportModule` (Cloud API) |
 | `src/pin` | PIN challenge/verify |
 | `src/cli` | Dry-run golden/fixture runner |
@@ -37,13 +38,13 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 
 ## 4. Routing
 
-Structured payloads → deterministic handlers. Pre-account text (and transcribed voice) → onboarding. Menu shortcuts → list. Weekly-review `AWAITING_LIMIT` intercepts only a parseable amount (or cancel words); other text abandons the wait and continues. Post-onboarding text, transcripts, and images → orchestrator.
+Both channels route through `ConversationRouterService` inside `TurnService.run`. Structured payloads → deterministic handlers. Pre-account text (and transcribed voice) → onboarding. Menu shortcuts → list. Weekly-review `AWAITING_LIMIT` intercepts only a parseable amount (or cancel words); other text abandons the wait and continues. Post-onboarding text, transcripts, and images → orchestrator.
 
 Surfaces: `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `bill_payment_wizard`, `data_bundle_wizard`, `electricity_wizard`, `spending_menu`, `spend_summary`.
 
 ## 5. Data (Prisma)
 
-User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel), BillPaymentDraft, BillPayment, OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WeeklyReview, WhatsappMessage, PIN challenge, Rubies webhook log, LLM call log, nudges.
+User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel), BillPaymentDraft, BillPayment, OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WeeklyReview, WhatsappMessage, AppMessage, UserTurnLease, AuthOtp, Device, AppSession, LoginChallenge, PIN challenge, Rubies webhook log, LLM call log, nudges.
 
 Identity is `User.phoneNumber`; `whatsappNumber` is nullable (set on first WhatsApp contact). `TransferDraft` ≠ `ConversationSession`. Persona enum still `KEDU` | `MANAGER`. Session `contextData.spendCheck` holds pending send hints during the pre-wizard spend check.
 

@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { User } from "@prisma/client";
 import { Channel, currentChannelContext } from "./channel-context";
 import { WhatsappChannelAdapter } from "./whatsapp-channel.adapter";
+import { AppChannelAdapter } from "./app-channel.adapter";
 
 /** Who a message is for. Everything a channel needs to address them. */
 export type MessageRecipient = Pick<User, "id" | "whatsappNumber">;
@@ -44,9 +45,9 @@ export interface FormRequest {
  * - `proactive`: Udara starting a conversation (nudges, the weekly review, the
  *   managers' reply).
  *
- * Until the app channel exists every class goes to WhatsApp; the distinction is
- * recorded now, at the call sites that know it, for the delivery policy that
- * needs it.
+ * Outside a context every class currently goes to WhatsApp when the user has
+ * it, and to the app when they do not. The distinction is recorded at the call
+ * sites that know it, for the P5 delivery policy that will need it.
  */
 export type DeliveryClass = "reply" | "transactional" | "proactive";
 
@@ -92,14 +93,17 @@ export interface ChannelAdapter {
 export class ChannelMessenger {
   private readonly logger = new Logger(ChannelMessenger.name);
 
-  constructor(private readonly whatsapp: WhatsappChannelAdapter) {}
+  constructor(
+    private readonly whatsapp: WhatsappChannelAdapter,
+    private readonly app: AppChannelAdapter,
+  ) {}
 
   async sendText(
     to: MessageRecipient,
     body: string,
     options?: SendOptions,
   ): Promise<void> {
-    return await this.adapterFor("sendText", options).sendText(to, body);
+    return await this.adapterFor("sendText", to, options).sendText(to, body);
   }
 
   async sendButtons(
@@ -108,7 +112,7 @@ export class ChannelMessenger {
     buttons: ReplyButton[],
     options?: SendOptions,
   ): Promise<void> {
-    return await this.adapterFor("sendButtons", options).sendButtons(
+    return await this.adapterFor("sendButtons", to, options).sendButtons(
       to,
       body,
       buttons,
@@ -122,7 +126,7 @@ export class ChannelMessenger {
     rows: ListOption[],
     options?: SendOptions,
   ): Promise<void> {
-    return await this.adapterFor("sendList", options).sendList(
+    return await this.adapterFor("sendList", to, options).sendList(
       to,
       body,
       buttonLabel,
@@ -135,7 +139,10 @@ export class ChannelMessenger {
     text: string,
     options?: SendOptions,
   ): Promise<void> {
-    return await this.adapterFor("sendChunked", options).sendChunked(to, text);
+    return await this.adapterFor("sendChunked", to, options).sendChunked(
+      to,
+      text,
+    );
   }
 
   async requestForm(
@@ -143,7 +150,10 @@ export class ChannelMessenger {
     form: FormRequest,
     options?: SendOptions,
   ): Promise<boolean> {
-    return await this.adapterFor("requestForm", options).requestForm(to, form);
+    return await this.adapterFor("requestForm", to, options).requestForm(
+      to,
+      form,
+    );
   }
 
   async sendTemplate(
@@ -153,7 +163,7 @@ export class ChannelMessenger {
     components?: unknown[],
     options?: SendOptions,
   ): Promise<void> {
-    return await this.adapterFor("sendTemplate", options).sendTemplate(
+    return await this.adapterFor("sendTemplate", to, options).sendTemplate(
       to,
       templateName,
       languageCode,
@@ -161,21 +171,26 @@ export class ChannelMessenger {
     );
   }
 
-  private adapterFor(method: string, options?: SendOptions): ChannelAdapter {
+  private adapterFor(
+    method: string,
+    to: MessageRecipient,
+    options?: SendOptions,
+  ): ChannelAdapter {
     const context = currentChannelContext();
     if (context) return this.adapter(context.channel);
 
     if ((options?.delivery ?? "reply") === "reply") {
       this.reportMissingContext(method);
     }
-    // Delivery policy for sends outside any inbound event. WhatsApp is the only
-    // channel that exists yet.
-    return this.whatsapp;
+    // Delivery policy for sends outside any inbound event, until P5 replaces
+    // it: WhatsApp for anyone who has it, which is every user who existed
+    // before the app, and the app for someone who has only ever used the app,
+    // who would otherwise get nothing at all.
+    return to.whatsappNumber ? this.whatsapp : this.app;
   }
 
   private adapter(channel: Channel): ChannelAdapter {
-    if (channel === "whatsapp") return this.whatsapp;
-    throw new Error(`ChannelMessenger: no adapter for channel "${channel}"`);
+    return channel === "app" ? this.app : this.whatsapp;
   }
 
   /**

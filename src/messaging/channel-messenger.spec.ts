@@ -9,6 +9,7 @@ import { runInChannel } from "./channel-context";
 describe("ChannelMessenger", () => {
   const user = { id: "user-1", whatsappNumber: "234801" };
   let whatsapp: Record<string, jest.Mock>;
+  let app: Record<string, jest.Mock>;
   let messenger: ChannelMessenger;
   let warn: jest.SpyInstance;
 
@@ -21,7 +22,15 @@ describe("ChannelMessenger", () => {
       requestForm: jest.fn().mockResolvedValue(true),
       sendTemplate: jest.fn().mockResolvedValue(undefined),
     };
-    messenger = new ChannelMessenger(whatsapp as any);
+    app = Object.fromEntries(
+      Object.keys(whatsapp).map((method) => [
+        method,
+        jest
+          .fn()
+          .mockResolvedValue(method === "requestForm" ? true : undefined),
+      ]),
+    );
+    messenger = new ChannelMessenger(whatsapp as any, app as any);
     warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
   });
 
@@ -69,11 +78,43 @@ describe("ChannelMessenger", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("refuses a channel it has no adapter for rather than guessing", async () => {
-    await expect(
-      runInChannel({ channel: "app" }, () => messenger.sendText(user, "hi")),
-    ).rejects.toThrow('no adapter for channel "app"');
+  it("replies in the app to an event that arrived from the app", async () => {
+    await runInChannel({ channel: "app", deviceId: "d1" }, () =>
+      messenger.sendText(user, "hi"),
+    );
+
+    expect(app.sendText).toHaveBeenCalledWith(user, "hi");
     expect(whatsapp.sendText).not.toHaveBeenCalled();
+  });
+
+  it("replies on WhatsApp to a WhatsApp event even for a user who also has the app", async () => {
+    await runInChannel({ channel: "whatsapp" }, () =>
+      messenger.sendText(user, "hi"),
+    );
+
+    expect(whatsapp.sendText).toHaveBeenCalled();
+    expect(app.sendText).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Until P5's delivery policy: a transfer result or a credit, sent from a
+   * webhook with no inbound event behind it, would otherwise be dropped for
+   * someone who has never used WhatsApp.
+   */
+  it("sends to the app, outside any context, when the user has no WhatsApp number", async () => {
+    const appOnly = { id: "user-2", whatsappNumber: null };
+
+    await messenger.sendText(appOnly, "done", { delivery: "transactional" });
+
+    expect(app.sendText).toHaveBeenCalledWith(appOnly, "done");
+    expect(whatsapp.sendText).not.toHaveBeenCalled();
+  });
+
+  it("keeps sending to WhatsApp, outside any context, for a user who has it", async () => {
+    await messenger.sendText(user, "done", { delivery: "transactional" });
+
+    expect(whatsapp.sendText).toHaveBeenCalledWith(user, "done");
+    expect(app.sendText).not.toHaveBeenCalled();
   });
 
   it("passes every kind of message through unchanged", async () => {

@@ -35,7 +35,7 @@ Never weaken a guard, the validator, the confirm step, or the PIN step to make s
 - **Deterministic vs LLM:** buttons, lists, Flows, PIN = code. Post-onboarding free text = orchestrator `propose_turn` only. No regex transfer extraction.
 - **Model proposes, validator disposes.** Medium/unknown/ineligible → `reply_only`. Never execute transfers from the LLM.
 - **Surfaces own numbers.** Never quote balance, allowance, or account number from model memory.
-- **KYC and PIN** only via WhatsApp Flows. Never persist or log raw PIN/BVN/NIN.
+- **KYC and PIN** only through a form: a WhatsApp Flow, or the app's `/v1/forms/kyc` and `/v1/forms/pin`, never chat text. Values travel to the handler only in the in-memory `sensitive` map. Never persist or log raw PIN/BVN/NIN. (Amended by [ADR-0002](docs/decisions/0002-app-channel-and-auth.md).)
 - **Spending window** is WAT wall-clock, not overridable in chat.
 - **Confirm then PIN** before money moves.
 - Package name `kedu` vs product **Udara** — user-facing copy is Udara.
@@ -48,6 +48,7 @@ Never weaken a guard, the validator, the confirm step, or the PIN step to make s
 - Comment why, not what
 - `forwardRef` only for existing WhatsApp circulars
 - Send to users only through `ChannelMessenger` (`src/messaging/`), never `WhatsappService` directly. A send outside an inbound event (cron, provider webhook) is labelled `proactive` or `transactional`
+- What a user says, on either channel, is routed by `ConversationRouterService` (`src/conversation/`) inside one `TurnService.run` per event. Add conversational behaviour there, not in the WhatsApp router or the app's chat service
 - Dry-run + `AI_PROVIDER=stub` for local/e2e unless the task is live-LLM
 
 ## Initiatives

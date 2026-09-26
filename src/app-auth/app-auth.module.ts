@@ -9,6 +9,7 @@ import { OtpService } from "./otp.service";
 import { SessionService } from "./session.service";
 import { LoginService } from "./login.service";
 import { LoginApprovalService } from "./login-approval.service";
+import { NewDeviceCapService } from "./new-device-cap.service";
 
 /**
  * Mobile app sign-in: codes, sessions, step-up. No routes; those live in
@@ -32,7 +33,14 @@ import { LoginApprovalService } from "./login-approval.service";
     SessionService,
     LoginService,
     LoginApprovalService,
+    NewDeviceCapService,
   ],
-  exports: [OtpService, SessionService, LoginService, LoginApprovalService],
+  exports: [
+    OtpService,
+    SessionService,
+    LoginService,
+    LoginApprovalService,
+    NewDeviceCapService,
+  ],
 })
 export class AppAuthModule {}

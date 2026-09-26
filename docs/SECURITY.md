@@ -34,7 +34,7 @@ Each row is enforced in code and verified by `npm run security:check`. Do not re
 | S2 | WhatsApp webhook is signature-guarded | `whatsapp.controller.ts` + `whatsapp-signature.guard.ts` |
 | S3 | Rubies webhook is signature-guarded with replay tolerance | `rubies-webhook.controller.ts` + `rubies-signature.guard.ts` |
 | S4 | Signature comparison is constant-time | both guards use `timingSafeEqual` |
-| S5 | Inbound persistence redacts sensitive fields | `whatsapp-message.service.ts` via `sensitive-fields.util.ts` |
+| S5 | Inbound persistence redacts sensitive fields | `whatsapp-message.service.ts` via `sensitive-fields.util.ts`; app chat text via `scrubFreeTextSecrets` in `messaging/app-message.service.ts` |
 | S6 | Every sensitive WhatsApp Flow field is in the redaction list | `SENSITIVE_FLOW_FIELDS` vs `docs/whatsapp-flows/*.json` |
 | S7 | Money moves only after PIN verification | `TransactionStatus.PENDING_PIN` in `transfer-confirmation.service.ts` |
 | S8 | Every LLM turn passes through the validator | `orchestrator.service.ts` calls `ActionValidatorService.validate` |
@@ -44,12 +44,12 @@ Each row is enforced in code and verified by `npm run security:check`. Do not re
 | S12 | Security-critical files have unit tests | colocated `*.spec.ts` |
 | S13 | Webhook controllers never serialize the inbound payload into a log line | `whatsapp.controller.ts` + `rubies-webhook.controller.ts` |
 | S14 | The mobile app API denies by default: every `/v1` controller needs a live session unless a handler is `@Public()`, which only the sign-in controller may use | `app-api/app-auth.guard.ts`, registered globally in `app-api.module.ts`; every app controller mounted under `v1` |
-| S15 | App API controllers never log or serialize request data, and take DTO classes rather than `unknown` | `src/app-api/**/*.controller.ts` |
+| S15 | Nothing in the app API prints or serializes request data; controllers do not log at all and take DTO classes rather than `unknown`; secrets and phone numbers are never query parameters | `src/app-api/**` |
 | S16 | Sign-in codes and session tokens are stored only as HMACs or hashes | `app-auth/secret-hash.util.ts`; no plaintext secret column in `schema.prisma` |
 
 ### Why S14–S16 matter
 
-The app is the first client that can name any id it likes and that authenticates with something other than a Meta signature. An unguarded `/v1` route is a public endpoint onto someone's money; a logged request body is a logged PIN or sign-in code; a plaintext token column turns one database read into every session. See [ADR-0002](decisions/0002-app-channel-and-auth.md). The API is off unless `APP_API_ENABLED=true`.
+The app is the first client that can name any id it likes and that authenticates with something other than a Meta signature. That is also why a chat choice must name a message that offered it to the same user, and why the app's KYC and PIN forms hand their values to the handlers in memory exactly as the WhatsApp Flow path does. An unguarded `/v1` route is a public endpoint onto someone's money; a logged request body is a logged PIN or sign-in code; a plaintext token column turns one database read into every session. See [ADR-0002](decisions/0002-app-channel-and-auth.md). The API is off unless `APP_API_ENABLED=true`.
 
 ### Why S13 matters
 
@@ -90,6 +90,7 @@ Wizard, confirm, PIN, Rubies calls, fees, allowance, window.
 KYC, PIN, onboarding Flows, message persistence, logging.
 
 - [ ] New Flow fields that carry secrets are added to `SENSITIVE_FLOW_FIELDS` in the same change
+- [ ] New app form fields that carry secrets go into the `sensitive` map in `AppConversationService`, never into the stored `AppMessage` row
 - [ ] Plaintext values travel only through the in-memory `sensitive` map, never a DB column
 - [ ] No new log line interpolates a sensitive value
 - [ ] A unit test proves the value is redacted where it is stored

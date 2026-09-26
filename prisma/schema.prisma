@@ -332,6 +332,8 @@ model User {
   devices              Device[]
   appSessions          AppSession[]
   loginChallenges      LoginChallenge[]
+  appMessages          AppMessage[]
+  turnLease            UserTurnLease?
 }
 
 // One row per user per calendar day — the heart of the discipline engine.
@@ -926,4 +928,75 @@ model LoginChallenge {
   createdAt  DateTime          @default(now())
 
   @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// In-app conversation. See docs/tech-design/MOBILE_APP_TECH.md (P4).
+// ---------------------------------------------------------------------------
+
+enum MessageChannel {
+  WHATSAPP
+  APP
+}
+
+enum AppMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum AppMessageKind {
+  // Outbound
+  TEXT
+  BUTTONS
+  LIST
+  FORM_REQUEST
+  // Inbound (TEXT is shared)
+  CHOICE
+  FORM_SUBMISSION
+  START
+}
+
+enum AppMessageStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+// The in-app chat, both directions. `seq` is the cursor the app polls from.
+//
+// Inbound text is stored after scrubFreeTextSecrets, the same as a WhatsApp
+// text. Form values (KYC, PIN) are never stored: a FORM_SUBMISSION row records
+// only which form arrived, and the values travel to the handler in memory.
+model AppMessage {
+  id              String              @id @default(uuid())
+  seq             BigInt              @unique @default(autoincrement())
+  userId          String
+  user            User                @relation(fields: [userId], references: [id])
+  direction       AppMessageDirection
+  kind            AppMessageKind
+  body            String?
+  // Outbound: the buttons, list rows or form offered. Inbound: the choice made
+  // or the form submitted, never its values.
+  payload         Json?
+  // The app's own id for an inbound message, so a retried send is not
+  // processed twice. Null on outbound rows.
+  clientMessageId String?
+  // Inbound only.
+  status          AppMessageStatus?
+  createdAt       DateTime            @default(now())
+  processedAt     DateTime?
+
+  @@unique([userId, clientMessageId])
+  @@index([userId, seq])
+}
+
+// One conversational turn per user at a time, across channels and replicas.
+// The row outlives each turn so `lastChannel` can tell when the user has
+// switched channels, which expires wizards left open on the other one.
+model UserTurnLease {
+  userId      String          @id
+  user        User            @relation(fields: [userId], references: [id])
+  holder      String
+  expiresAt   DateTime
+  lastChannel MessageChannel?
 }

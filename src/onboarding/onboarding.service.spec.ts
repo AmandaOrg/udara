@@ -1,6 +1,7 @@
 import { OnboardingService, isPreAccountStage } from "./onboarding.service";
 import { OnboardingStage, Prisma } from "@prisma/client";
 import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
+import { runInChannel } from "../messaging/channel-context";
 
 /**
  * A tiny in-memory fake for the two models OnboardingService touches. Each
@@ -120,6 +121,7 @@ describe("OnboardingService", () => {
     sendFlow: jest.Mock;
   };
   let rubies: { provisionAccount: jest.Mock };
+  let appMessages: { recordOutbound: jest.Mock };
   let service: OnboardingService;
 
   function makeUser(overrides: Record<string, unknown> = {}) {
@@ -164,6 +166,7 @@ describe("OnboardingService", () => {
       sendFlow: jest.fn().mockResolvedValue({ waMessageId: "wamid.4" }),
     };
     rubies = { provisionAccount: jest.fn() };
+    appMessages = { recordOutbound: jest.fn().mockResolvedValue({}) };
   });
 
   function build(user: Record<string, unknown>) {
@@ -173,7 +176,12 @@ describe("OnboardingService", () => {
       llm as any,
       validator as any,
       llmLogger as any,
-      whatsappTestMessenger({ whatsapp, chunkedMessenger, config }),
+      whatsappTestMessenger({
+        whatsapp,
+        chunkedMessenger,
+        config,
+        appMessages,
+      }),
       rubies as any,
     );
     return prisma._users.get(user.id as string)!;
@@ -842,6 +850,119 @@ describe("OnboardingService", () => {
       await Promise.all([submission(), submission()]);
 
       expect(rubies.provisionAccount).toHaveBeenCalledTimes(1);
+    });
+
+    describe("an app-only user with no PIN (ADR-0002)", () => {
+      const appText = () =>
+        appMessages.recordOutbound.mock.calls
+          .map(([, message]) => message.body ?? "")
+          .join(" | ");
+
+      beforeEach(() => {
+        rubies.provisionAccount.mockResolvedValue({
+          accountId: "CUST-1",
+          accountNumber: "0123456789",
+          accountName: "Daniel Okafor",
+          bankCode: "090175",
+        });
+      });
+
+      it("asks for a PIN straight after the account is created, and holds the money-story questions", async () => {
+        const user = build(
+          makeUser({
+            onboardingStage: OnboardingStage.PLAN_PROPOSED,
+            whatsappNumber: null,
+          }),
+        );
+
+        await runInChannel({ channel: "app", deviceId: "d1" }, () =>
+          submitFlow(user),
+        );
+
+        expect(prisma._users.get("user-1")!.onboardingStage).toBe(
+          OnboardingStage.MONEY_STORY,
+        );
+        expect(appText()).toContain("0123456789");
+        expect(appText()).toContain("set the 4-digit pin");
+        expect(appText()).not.toContain("what financial goal");
+        // The WhatsApp line about pinning the chat means nothing in the app.
+        expect(appText()).not.toContain("pin this chat");
+        expect(appText()).toContain("right here in the app");
+        await expect(service.isAwaitingPinSetup("user-1")).resolves.toBe(true);
+      });
+
+      it("carries on with the money-story questions once the PIN is set", async () => {
+        const user = build(
+          makeUser({
+            onboardingStage: OnboardingStage.PLAN_PROPOSED,
+            whatsappNumber: null,
+          }),
+        );
+        await runInChannel({ channel: "app", deviceId: "d1" }, async () => {
+          await submitFlow(user);
+          prisma._users.get("user-1")!.pinHash = "scrypt$...";
+          await service.resumeAfterPinSetup("user-1");
+        });
+
+        expect(appText()).toContain("what financial goal");
+        await expect(service.isAwaitingPinSetup("user-1")).resolves.toBe(false);
+      });
+
+      it("resumes nothing for a user it was not waiting on", async () => {
+        build(makeUser({ onboardingStage: OnboardingStage.MONEY_STORY }));
+
+        await service.resumeAfterPinSetup("user-1");
+
+        expect(chunkedMessenger.sendChunkedReply).not.toHaveBeenCalled();
+        expect(appMessages.recordOutbound).not.toHaveBeenCalled();
+      });
+
+      it("does not hold a WhatsApp user, whose sign-ins WhatsApp can approve", async () => {
+        const user = build(
+          makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+        );
+
+        await submitFlow(user);
+
+        await expect(service.isAwaitingPinSetup("user-1")).resolves.toBe(false);
+        expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
+          "234801",
+          expect.stringContaining("what financial goal"),
+          "user-1",
+        );
+      });
+    });
+  });
+
+  describe("startConversation (the app's first open)", () => {
+    it("introduces Udara to someone who has not started", async () => {
+      const user = build(makeUser({ whatsappNumber: null }));
+
+      await runInChannel({ channel: "app", deviceId: "d1" }, () =>
+        service.startConversation(user as any),
+      );
+
+      expect(appMessages.recordOutbound).toHaveBeenCalledWith(
+        "user-1",
+        expect.objectContaining({
+          kind: "BUTTONS",
+          body: "do you understand?",
+        }),
+      );
+      expect(prisma._users.get("user-1")!.onboardingStage).toBe(
+        OnboardingStage.WELCOME,
+      );
+    });
+
+    it("does nothing once the conversation has begun, so reopening the chat is harmless", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.WELCOME }),
+      );
+
+      await service.startConversation(user as any);
+
+      expect(appMessages.recordOutbound).not.toHaveBeenCalled();
+      expect(whatsapp.sendInteractiveButtons).not.toHaveBeenCalled();
     });
   });
 

@@ -30,10 +30,11 @@ src/
   rubies/          RubiesService + webhook controller
   ai/              Provider clients + persona/onboarding prompts
   orchestrator/    OrchestratorService, ActionValidator, surface registry, evals
-  messaging/       ChannelMessenger (the only way to send), channel context, WhatsApp adapter
-  app-auth/        App sign-in: SMS codes, sessions, new-device step-up (always loaded)
-  app-api/         Mobile app HTTP API under /v1 (loaded only when APP_API_ENABLED=true)
-  whatsapp/        Webhook, router, wizards, PIN gate, ActionExecutor; transport module
+  messaging/       ChannelMessenger (the only way to send), channel context, WhatsApp and app adapters, app message store
+  conversation/    ConversationRouterService (what a message does, either channel), TurnService (one turn per user)
+  app-auth/        App sign-in: SMS codes, sessions, new-device step-up and cap (always loaded)
+  app-api/         Mobile app HTTP API under /v1 (loaded only when APP_API_ENABLED=true): auth, me, chat, forms
+  whatsapp/        Webhook, WhatsApp router, wizards, PIN gate, ActionExecutor; transport module
   pin/             PIN challenge/verify
   cli/             Dry-run CLI (no WhatsApp/Rubies)
   common/
@@ -51,8 +52,13 @@ initiatives/       Living execution plans
 flowchart TD
   WA[WhatsApp webhook] --> Sig[Signature guard]
   Sig --> Persist[Persist inbound WhatsappMessage]
-  Persist --> Router[WhatsappRouterService]
-  Router --> Structured[Buttons lists Flows PIN]
+  Persist --> WaRouter[WhatsappRouterService: user, rate limit, media]
+  App[App /v1/chat and /v1/forms] --> AppPersist[Persist inbound AppMessage, 202]
+  AppPersist --> AppSvc[AppConversationService, background]
+  WaRouter --> Turn[TurnService: one turn per user]
+  AppSvc --> Turn
+  Turn --> Router[ConversationRouterService]
+  Router --> Structured[Buttons lists forms PIN]
   Router --> Onboard[Onboarding if pre-account]
   Router --> Menu[Menu shortcut]
   Router --> Orch[OrchestratorService]
@@ -73,13 +79,19 @@ Confirm / cancel buttons and the transfer wizard never wait on the LLM. Confirm 
 Domain code never calls `WhatsappService`. It sends through `ChannelMessenger` (`src/messaging/`), addressed by `User`, and the messenger picks the channel:
 
 - **Inside an inbound event:** the entry point opens a channel context (`runInChannel`, AsyncLocalStorage), and everything sent while handling it is a reply on that channel. `WhatsappController` does this per message.
-- **Outside one** (crons, the Rubies webhook, CLIs): the call site labels the send `proactive` or `transactional`, and delivery policy decides. Today that is always WhatsApp. An unlabelled send with no context is logged as a wiring bug.
+- **Outside one** (crons, the Rubies webhook, CLIs): the call site labels the send `proactive` or `transactional`, and delivery policy decides. Today that is WhatsApp for anyone who has it and the app for anyone who does not; P5 of the mobile-app initiative replaces this. An unlabelled send with no context is logged as a wiring bug.
+
+`AppChannelAdapter` writes one `AppMessage` row per bubble (text, buttons, list, form request), which the app reads by polling `GET /v1/chat/messages`.
 
 `WhatsappChannelAdapter` turns the messenger's calls into exactly the `WhatsappService` / `ChunkedMessengerService` calls the services used to make themselves, and owns the WhatsApp Flow ids for the KYC and PIN forms. `WhatsappTransportModule` holds the Cloud API services and depends on no domain module.
 
 ### Mobile app API
 
 `AppApiModule` (`src/app-api/`) is imported by `AppModule` only when `APP_API_ENABLED=true`. Its `AppAuthGuard` is global and denies every controller mounted under `v1` without a live session unless the handler is `@Public()` (S14); it decides by the declared controller path, not the request URL. Sign-in lives in `AppAuthModule` (`src/app-auth/`), which is always loaded because the WhatsApp router answers sign-in approval buttons. The global throttler (`AppThrottlerGuard`) counts per session when a bearer token is present and per client address otherwise; `main.ts` trusts one proxy hop.
+
+### One conversation, two channels
+
+A WhatsApp message and an app chat message end up in the same place: `ConversationRouterService`, run inside `TurnService.run(userId, channel, …)`. The turn is a lease row (`UserTurnLease`), so one user's turns never interleave, across channels and replicas. The row also records the channel of the last turn; when a turn arrives on the other channel, open wizards and waits are expired, so a WhatsApp wizard cannot swallow a number typed in the app. The app's chat and forms are accepted with 202 and handled in the background (`AppConversationService`). Choices must name a message that offered them to the same user. Form values reach the handlers only in memory. The inbound rate limit counts both channels together.
 
 ### Circular Nest imports
 
@@ -90,6 +102,8 @@ Domain code never calls `WhatsappService`. It sends through `ChannelMessenger` (
 Prisma models (see [`prisma/schema.prisma`](../prisma/schema.prisma)): `User`, `DailyAllowance`, `Recipient`, `Transaction`, `OverrideHistory`, `SettingsChangeRequest`, onboarding/conversation sessions, `TransferDraft`, `WhatsappMessage`, PIN challenges, Rubies webhook receipts, LLM call logs, nudges.
 
 A `User` is identified by `phoneNumber` (international digits, no "+"; see `common/phone.util.ts`). `whatsappNumber` is set only once that number has messaged on WhatsApp, and `findOrCreateUser` links a first WhatsApp message to an existing account with the same phone number.
+
+`AppMessage` is the in-app chat, both directions, ordered by `seq`. `UserTurnLease` is the per-user turn lock and last channel. App sign-in has `AuthOtp`, `Device`, `AppSession` and `LoginChallenge`.
 
 `TransferDraft` is the interactive send-money wizard. `ConversationSession` is chat history for the Udara (`KEDU`) and manager personas. Do not merge them.
 

@@ -9,6 +9,7 @@ import { textMessage } from './whatsapp';
 import {
   getUserByWa,
   seedPostOnboardingAccount,
+  waitForInboundSettled,
   waitForOutbound,
 } from './db';
 import type { ScenarioContext } from '../runner/define';
@@ -47,6 +48,12 @@ export async function provisionNewUser(
   if (!user) {
     throw new Error(`provisionNewUser: user ${wa} not created after webhook`);
   }
+
+  // The first outbound bubble arrives before the opening turn has finished
+  // (the introduction is several bubbles, then a stage change). Seeding in
+  // between is overwritten when that turn ends, and the next message waits
+  // for it: one turn per user at a time.
+  await waitForInboundSettled(wa, started);
 
   if (opts.postOnboarding) {
     user = await seedPostOnboardingAccount(wa);

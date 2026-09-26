@@ -27,6 +27,8 @@ import { AiModule } from "../ai/ai.module";
 import { MessagingModule } from "../messaging/messaging.module";
 import { AppAuthModule } from "../app-auth/app-auth.module";
 import { WhatsappTransportModule } from "./whatsapp-transport.module";
+import { ConversationRouterService } from "../conversation/conversation-router.service";
+import { TurnService } from "../conversation/turn.service";
 
 @Module({
   imports: [
@@ -68,11 +70,19 @@ import { WhatsappTransportModule } from "./whatsapp-transport.module";
     WeeklyReviewScheduler,
     DeepgramService,
     InboundRateLimitService,
+    // Channel-neutral, but built from this module's services, so provided here
+    // for the same reason as ActionExecutorService.
+    ConversationRouterService,
+    TurnService,
   ],
   exports: [
     WhatsappTransportModule,
     TransferConfirmationService,
     BillPaymentConfirmationService,
+    // The app's chat (AppApiModule) routes through the same engine and budget.
+    ConversationRouterService,
+    TurnService,
+    InboundRateLimitService,
   ],
 })
 export class WhatsappModule {}

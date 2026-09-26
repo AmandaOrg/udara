@@ -1,5 +1,6 @@
 import { ChannelMessenger } from "../channel-messenger";
 import { WhatsappChannelAdapter } from "../whatsapp-channel.adapter";
+import { AppChannelAdapter } from "../app-channel.adapter";
 
 class QuietChannelMessenger extends ChannelMessenger {
   // Unit tests call services directly, outside any inbound event, so every
@@ -18,11 +19,18 @@ export function whatsappTestMessenger(mocks: {
   whatsapp?: object;
   chunkedMessenger?: object;
   config?: object;
+  /** AppMessageService mock, for specs that also exercise the app channel. */
+  appMessages?: object;
 }): ChannelMessenger {
   const adapter = new WhatsappChannelAdapter(
     (mocks.whatsapp ?? {}) as never,
     (mocks.chunkedMessenger ?? {}) as never,
     (mocks.config ?? { get: () => undefined }) as never,
   );
-  return new QuietChannelMessenger(adapter);
+  const app = new AppChannelAdapter(
+    (mocks.appMessages ?? {
+      recordOutbound: () => Promise.resolve(undefined),
+    }) as never,
+  );
+  return new QuietChannelMessenger(adapter, app);
 }
