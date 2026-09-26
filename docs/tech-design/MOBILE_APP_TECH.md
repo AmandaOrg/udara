@@ -39,6 +39,7 @@ P0, below, is the part built so far. It changes no module wiring beyond one new 
 - `AuthOtp`, `Device`, `AppSession` (P3)
 - `AppMessage` and `UserTurnLease` (P4)
 - `originChannel` on `Transaction` and `BillPayment` (P5)
+- `NameEnquiryLog` and two history indexes (P6)
 - `clientRequestKey` and `originSurface` (P7, P8)
 - `User.emailVerifiedAt` and `SettingsChangeType.ACCOUNT_DELETION` (P9)
 
@@ -319,6 +320,65 @@ Then two adjustments:
 
 **Not changed:** email notifications; replies inside a turn; anything for users who have never signed in to the app.
 
+### P6: native read-only API
+
+**Data** (migration `20260926170000_read_api`):
+- `NameEnquiryLog { id, userId, createdAt }`, indexed `(userId, createdAt)`. It deliberately has no account number: it counts lookups, it is not a record of whose accounts were looked up.
+- `@@index([userId, createdAt])` on `BillPayment` and `@@index([userId, creditedAt])` on `IncomingCredit`, for the history. `Transaction` already has `(userId, status, createdAt)`.
+
+**Conventions:**
+- Every route reads `principal.userId` and nothing from the request identifies a user or a row owner.
+- Amounts are naira as JSON numbers, as the rest of the codebase handles them. Times are ISO strings.
+- Errors are `{ error: <code> }`, as in the auth routes.
+- Responses are view classes (`*.view.ts`) so the OpenAPI document has their shapes.
+
+**Routes:**
+
+| Route | Returns | Errors |
+| --- | --- | --- |
+| `GET /v1/me` | adds `hasAccount` | |
+| `GET /v1/balance` | `{ balance }`, live from Rubies | 409 `no_account`; 503 `balance_unavailable` |
+| `GET /v1/limits` | `{ remainingToday, remainingWeek, restrictionsOff, window: { startHour, endHour, open, opensInHours } }` (`opensInHours` null while open or with restrictions off) | 409 `no_account` |
+| `GET /v1/account` | `{ accountNumber, accountName, bankName: "Rubies MFB", bankCode }` | 409 `no_account` |
+| `GET /v1/transactions?cursor=&limit=` | `{ items, nextCursor }`; `limit` 1–50, default 20 | 400 `bad_cursor` |
+| `GET /v1/recipients` | `{ recipients: [{ id, nickname, accountName, accountNumber, bankCode, bankName, label, lastUsedAt }] }` | |
+| `GET /v1/banks` | `{ banks: [{ code, name }] }`, sorted by name | 503 `banks_unavailable` |
+| `POST /v1/name-enquiry` `{ accountNumber: 10 digits, bankCode }` | `{ accountName }` | 409 `no_account`; 429 `too_many_lookups`; 422 `not_resolved` |
+| `GET /v1/spend-summary?period=week\|month` | `{ period, periodStart, totalSpent, transactionCount, byDay, byLabel }` | |
+| `GET /v1/bills/catalog` | `{ airtime: { networks, minAmount, maxAmount }, data: { networks: [{ billerCode, label, bundles }] }, electricity: { companies, minAmount, maxAmount } }` | |
+| `GET /v1/app-config` (public) | `{ minSupportedVersion }`, null when unset | |
+
+`limits` needs the account because computing it creates today's allowance row, and before the plan is set that row would be wrong. The lists (`transactions`, `recipients`, `spend-summary`) simply return nothing before then.
+
+**Limits.** `describeLimits(user, remaining, windowService, now)` in `allowance/limits-status.ts` returns the numbers and the window state. `AccountActionsService.sendLimitsStatus` renders its unchanged text from it, and `/v1/limits` returns it.
+
+**History (`TransactionHistoryService.page(userId, cursor, limit)`):**
+- Three sources, each scoped by `userId` and read newest first on `(time desc, id desc)`:
+  - `Transaction` with status `CONFIRMED`, `EXECUTED` or `FAILED`, by `createdAt`, with its recipient;
+  - `BillPayment` with the same statuses, by `createdAt`;
+  - `IncomingCredit`, by `creditedAt`.
+- Each source returns at most `limit` rows after the cursor. The three are merged on the same order and cut to `limit`. `nextCursor` is the last item's `(time, id)`, or null when fewer than `limit` came back.
+- The cursor is base64url of `<epoch ms>.<id>`, validated on the way in (`bad_cursor`). It only ever narrows the caller's own rows, so tampering reveals nothing.
+- Row ids are UUIDs, unique across the three tables, so the tie-break on id is total.
+- Item: `{ id, kind: transfer|bill|credit, direction: out|in, status: processing|successful|failed, amount, fee, spendType, occurredAt, title }` plus one of:
+  - `transfer: { accountName, nickname, accountNumber, bankCode, bankName, purpose }`;
+  - `bill: { category, provider, product, target, customerName, token }` (`token` is the electricity token once bought);
+  - `credit: { narration }`.
+- `bankName` comes from the cached bank list and is null when that is unavailable.
+
+**Name enquiry (`NameEnquiryService.lookup(userId, accountNumber, bankCode)`):**
+1. Insert the log row, then count the user's rows in the last hour. Over 20: 429. Inserting first means concurrent calls each count themselves, so a burst cannot all see 19.
+2. Delete the user's rows older than an hour, so the table stays small.
+3. `RubiesService.nameEnquiry`. A throw is 422 `not_resolved`: Rubies does not say whether the account is missing or the service is down.
+
+**Banks (`BankDirectoryService`):** in-memory, 6 hours. Concurrent misses share one in-flight call. `RubiesService.listBanks` already returns `[]` instead of throwing; an empty list is never cached. After one, the next minute answers from what is held (the last good list, or nothing) without asking Rubies again, so an outage does not make every history page wait on Rubies' 30-second timeout.
+
+**App config:** `APP_MIN_SUPPORTED_VERSION` (optional, `x.y.z`, validated at boot). The app compares its own version and blocks with an update screen when older. It is `@Public()`, so S14's allow-list gains `src/app-api/app-config/app-config.controller.ts`.
+
+**OpenAPI:** `@nestjs/swagger` 7.4 (peer range Nest 9–10, no install scripts), with its CLI plugin in `nest-cli.json` so the DTOs and views are read at build time. `main.ts` mounts the UI at `/docs` and the JSON at `/docs-json` only when `APP_API_DOCS=true` and the app API is on. It is outside `v1` and so outside `AppAuthGuard`, which is why it is off by default and never set in a deployed environment. It describes routes only; it grants nothing. Prisma enums and string unions are types the plugin cannot see, so those view fields carry `@ApiProperty({ enum })`.
+
+**Throttles:** the global 300 a minute per session covers the reads. Name enquiry has its own database limit, because the in-memory throttler resets on every token refresh and restart.
+
 ## Invariants
 
 Code must still enforce:
@@ -340,6 +400,7 @@ Code must still enforce:
   - P2: `npx jest src/common/phone src/whatsapp/whatsapp-router src/messaging src/onboarding`
   - P3: `npx jest src/app-auth src/app-api src/common src/config src/whatsapp/whatsapp-router`
   - P5: `npx jest src/messaging src/app-auth/device src/app-api/devices src/allowance/allowance.scheduler src/whatsapp/transfer-confirmation src/whatsapp/bill-payment-confirmation src/app-auth/login`
+  - P6: `npx jest src/app-api src/allowance/limits-status src/whatsapp/account-actions`
   - P4: `npx jest src/conversation src/messaging src/app-api src/app-auth/new-device-cap src/whatsapp/pin-outcome src/whatsapp/whatsapp-router src/whatsapp/inbound-rate-limit src/onboarding`
   - then the full `npm test`
 - **Golden:** unchanged. P0 does not touch the orchestrator.
@@ -361,3 +422,4 @@ Code must still enforce:
 | 2026-09-25 | P3: authentication as built |
 | 2026-09-26 | P4: in-app conversation as built |
 | 2026-09-26 | P5: delivery rules and push as built |
+| 2026-09-26 | P6: read-only API as built |

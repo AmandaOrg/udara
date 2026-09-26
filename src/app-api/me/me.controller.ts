@@ -21,6 +21,7 @@ export class MeController {
       hasPin: user.pinHash !== null,
       whatsappLinked: user.whatsappNumber !== null,
       hasEmail: user.email !== null,
+      hasAccount: user.rubiesAccountNumber !== null,
     };
   }
 }

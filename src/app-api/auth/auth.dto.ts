@@ -7,6 +7,7 @@ import {
   MaxLength,
   ValidateNested,
 } from "class-validator";
+import { ApiProperty } from "@nestjs/swagger";
 import { DevicePlatform } from "@prisma/client";
 
 export class RequestCodeDto {
@@ -16,6 +17,7 @@ export class RequestCodeDto {
 }
 
 export class DeviceDto {
+  @ApiProperty({ enum: DevicePlatform, enumName: "DevicePlatform" })
   @IsEnum(DevicePlatform)
   platform!: DevicePlatform;
 

@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  Matches,
   Max,
   Min,
   validateSync,
@@ -261,6 +262,16 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   EXPO_ACCESS_TOKEN?: string;
+
+  /** The oldest app version the server supports, x.y.z; blank for none. */
+  @IsOptional()
+  @Matches(/^(\d{1,4}\.\d{1,4}\.\d{1,4})?$/)
+  APP_MIN_SUPPORTED_VERSION?: string;
+
+  /** "true" serves the OpenAPI document at /docs. Never in a deployed environment. */
+  @IsOptional()
+  @IsString()
+  APP_API_DOCS?: string;
 }
 
 /** Webhook signing secrets. Blank means "accept forged requests", so blank is opt-in. */

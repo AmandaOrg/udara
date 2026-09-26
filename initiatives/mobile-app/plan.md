@@ -286,26 +286,57 @@ Users decided (2026-09-25, Egwu David Samuel):
 
 ## Phase 6 — Native read-only API
 
-**Status:** not started
-**Started:**
-**Completed:**
-**Owner:**
+**Status:** completed
+**Started:** 2026-09-26
+**Completed:** 2026-09-26
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] `/v1/me`, balance, limits, account, transactions (new `TransactionHistoryService`), recipients, banks, name enquiry (rate-limited), spend summary, bill catalog, app config; OpenAPI served outside production only
+Every route is signed-in only and reads only the caller's own rows, except `app-config`. Shapes are in the tech design.
+
+- [x] `GET /v1/me` also says whether the account exists (`hasAccount`)
+- [x] `GET /v1/balance`: the live Rubies balance, never a cached figure. 409 `no_account` before the account exists; 503 `balance_unavailable` when Rubies does not answer.
+- [x] `GET /v1/limits`: remaining today and this week, and the window (open, opens in how long, restrictions off). The window and restrictions-off logic moves out of `AccountActionsService.sendLimitsStatus` into a shared `describeLimits`, so the WhatsApp reply and the screen cannot disagree. The WhatsApp text is unchanged.
+- [x] `GET /v1/account`: account number and name, and the bank, for funding
+- [x] `GET /v1/transactions?cursor=&limit=`: one history of transfers, bill purchases and money received, newest first, from a new `TransactionHistoryService`.
+  - Shows only what has been committed to (confirmed, done or failed). Quotes and cancellations are left out.
+  - The cursor is opaque and stable while new rows arrive.
+  - New indexes so each source is read in order: `BillPayment(userId, createdAt)` and `IncomingCredit(userId, creditedAt)`.
+- [x] `GET /v1/recipients`: saved recipients, most recently used first
+- [x] `GET /v1/banks`: the bank list, cached in memory for 6 hours. An empty answer from Rubies is not cached and returns 503.
+- [x] `POST /v1/name-enquiry {accountNumber, bankCode}`: who owns an account, before sending to it.
+  - At most 20 per user per rolling hour, counted in the database (new `NameEnquiryLog`: user and time only, never the account looked up), so neither a token refresh nor a restart resets it.
+  - Needs an account, so a phone that has only signed up cannot use it.
+- [x] `GET /v1/spend-summary?period=week|month`: the same figures as the weekly check-in (`SpendSummaryService`)
+- [x] `GET /v1/bills/catalog`: airtime networks, data networks and bundles, electricity companies, and the amount bounds, from the existing catalog
+- [x] `GET /v1/app-config`, public: the oldest app version the server still supports (`APP_MIN_SUPPORTED_VERSION`, optional). S14's public list gains this one file.
+- [x] OpenAPI (`@nestjs/swagger` 7.4, the Nest 10 line) at `/docs` only when `APP_API_DOCS=true`, which is off by default and never set in a deployed environment. The CLI plugin reads the DTOs, so there is no second copy of the shapes to keep in step.
 
 ### Acceptance tests
 
-- [ ] Every endpoint returns only the caller's own data
+- [x] Unit: history merge order across the three sources, cursor paging with no gaps or repeats (including rows with the same timestamp), a tampered cursor is a 400, and quotes and cancelled rows never appear
+- [x] Unit: `describeLimits` covers restrictions off, window open and window closed; the WhatsApp limits text is byte-for-byte unchanged
+- [x] Unit: name enquiry is refused on the 21st call in an hour, and the log row holds no account number
+- [x] Unit: the bank cache does not keep an empty list, and concurrent misses make one Rubies call
+- [x] E2E: a signed-in user sees their own balance, limits, account and history, and none of another user's rows. Every new route is 401 without a session, except `app-config`.
+- [x] `check-security` fails on a `@Public()` anywhere else
+- [x] Full suite: 88 suites, 1100 tests. E2E: 22 pass, 3 skipped by design, and the same two stale failures.
+- [x] Server log: no account number looked up, recipient name, electricity token, session token or pepper
+- [x] The OpenAPI document lists all 25 routes, with no untyped fields; `/docs` is not mounted unless both `APP_API_ENABLED` and `APP_API_DOCS` are `true`
 
 ### Progress log
 
--
+- 2026-09-26: Designed. Amounts are naira as JSON numbers, as everywhere else in the codebase. The spend summary covers transfers only, as the weekly check-in does. Bills are in the history but not the summary; counting them would change the check-in too, so that is left for later.
+- 2026-09-26: Built and verified.
+- 2026-09-26: `@nestjs/swagger` 7.4.2 added (no install scripts). `npm audit` flags the `js-yaml` it brings; every advisory is in YAML parsing, which swagger never does with request input. Recorded in SECURITY.md §6.
+- 2026-09-26: Two things beyond the design. The bank cache answers from what it holds for a minute after an empty reply, so a Rubies outage does not make each history page wait out a 30-second timeout. Prisma enums and string unions in the views carry `@ApiProperty({ enum })`, including P3's `DeviceDto.platform`, because the plugin cannot see types.
+- 2026-09-26: The existing WhatsApp limits tests only checked fragments, so exact-text tests were added and run against the code before the extraction as well as after.
 
 ### Risk
 
-- Name enquiry being used to look up who owns an account. It is rate-limited per user.
+- Name enquiry being used to look up who owns an account. It is limited per user in the database and needs an opened account, which needs a verified identity.
+- The history reads three tables per page. Per-user volumes are small and each read is an index range.
 
 ## Phase 7 — Native transfers
 
@@ -386,7 +417,7 @@ Users decided (2026-09-25, Egwu David Samuel):
 | 3 | Authentication | completed |
 | 4 | In-app conversation | completed |
 | 5 | Push and delivery rules | completed |
-| 6 | Native read-only API | not started |
+| 6 | Native read-only API | completed |
 | 7 | Native transfers | not started |
 | 8 | Native bills | not started |
 | 9 | Account and compliance | not started |

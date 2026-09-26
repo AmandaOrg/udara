@@ -487,6 +487,8 @@ const NEEDS_TESTS = [
   'src/app-api/app-auth.guard.ts',
   'src/app-api/chat/app-conversation.service.ts',
   'src/app-api/chat/forms.controller.ts',
+  'src/app-api/history/transaction-history.service.ts',
+  'src/app-api/banks/name-enquiry.service.ts',
   'src/app-auth/new-device-cap.service.ts',
   'src/app-auth/secret-hash.util.ts',
   'src/app-auth/otp.service.ts',
@@ -525,6 +527,8 @@ const APP_API_DIR = 'src/app-api/';
 const PUBLIC_ALLOWED = new Set([
   'src/app-api/auth/auth.controller.ts',
   'src/app-api/public.decorator.ts',
+  // The minimum app version, read before sign-in; holds nothing about a user.
+  'src/app-api/app-config/app-config.controller.ts',
 ]);
 
 /** True when line `index` sits inside a `class …QueryDto { … }` body. */
@@ -566,7 +570,7 @@ for (const full of ALL_FILES) {
     if (isWaived(lines, index)) return;
     // Applied as a decorator, not mentioned in a comment.
     if (/^\s*@Public\(\)/.test(line) && !PUBLIC_ALLOWED.has(file)) {
-      fail('S14', `${file}:${index + 1}: @Public() is only for the sign-in routes`);
+      fail('S14', `${file}:${index + 1}: @Public() is only for the sign-in routes and app-config`);
     }
     const mount = /@Controller\(\s*(?:(['"`])([^'"`]*)\1)?\s*\)/.exec(line);
     if (mount && !/^\/?v1(\/|$)/i.test(mount[2] || '')) {

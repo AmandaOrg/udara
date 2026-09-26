@@ -75,6 +75,21 @@ Messages Udara sends when the user hasn't just written (money arriving, a transf
 - **Only signed-in phones get pushes.** Signing out, or a session revoked as stolen, stops them. When a phone signs in as someone else, the previous account's pushes stop reaching it.
 - **Sign-in approvals and new-device warnings always go to WhatsApp**, never to the app: the warning is for the other phone.
 
+### P6 (read-only screens)
+
+The app can show, without going through the chat:
+- **Balance**, always fetched live from the bank, as on WhatsApp.
+- **Limits:** what is left today and this week, whether the spending window is open or how long until it opens, and whether restrictions are off. These are the same figures and wording rules as the WhatsApp "Limits" reply, from one place.
+- **Account details** for funding: account number, name and bank.
+- **History:** transfers, airtime, data and electricity purchases, and money received, newest first. It shows what the user committed to: done, still processing, or failed. Quotes that were never confirmed and cancelled ones are left out. An electricity purchase shows its token once it is bought.
+- **Saved recipients**, most recently used first, with their bank's name.
+- **Spend summary** for this week or this month. Like the weekly check-in, it counts transfers only.
+- **What can be bought:** networks, data bundles, electricity companies, and the amount limits, as the WhatsApp wizards offer them.
+- **Check an account's name** before sending to it. At most 20 checks an hour per person. Only someone whose account is open can check, so a phone that has only signed up cannot use it to find out who owns accounts.
+- **Is this app version still supported?** This is readable before sign-in, and tells an old app to show an update screen.
+
+Before the account is opened, balance, limits and account details answer "no account yet", and the lists are empty. Nobody can see another person's data: the user always comes from the session, never from the request.
+
 ### Later phases (outline)
 
 - **Sign-up and login.**
@@ -110,3 +125,4 @@ Messages Udara sends when the user hasn't just written (money arriving, a transf
 | Date | Change |
 | --- | --- |
 | 2026-09-25 | Initial: P0 behavior in full, later phases outlined |
+| 2026-09-26 | P6: read-only screens |

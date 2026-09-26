@@ -33,7 +33,7 @@ src/
   messaging/       ChannelMessenger (the only way to send), channel context, WhatsApp and app adapters, app message store
   conversation/    ConversationRouterService (what a message does, either channel), TurnService (one turn per user)
   app-auth/        App sign-in: SMS codes, sessions, new-device step-up and cap (always loaded)
-  app-api/         Mobile app HTTP API under /v1 (loaded only when APP_API_ENABLED=true): auth, me, chat, forms
+  app-api/         Mobile app HTTP API under /v1 (loaded only when APP_API_ENABLED=true): auth, me, chat, forms, devices, and the read-only screens (balance, limits, account, history, recipients, banks, name enquiry, spend summary, bill catalog, app config)
   whatsapp/        Webhook, WhatsApp router, wizards, PIN gate, ActionExecutor; transport module
   pin/             PIN challenge/verify
   cli/             Dry-run CLI (no WhatsApp/Rubies)
@@ -95,6 +95,8 @@ Domain code never calls `WhatsappService`. It sends through `ChannelMessenger` (
 
 `AppApiModule` (`src/app-api/`) is imported by `AppModule` only when `APP_API_ENABLED=true`. Its `AppAuthGuard` is global and denies every controller mounted under `v1` without a live session unless the handler is `@Public()` (S14); it decides by the declared controller path, not the request URL. Sign-in lives in `AppAuthModule` (`src/app-auth/`), which is always loaded because the WhatsApp router answers sign-in approval buttons. The global throttler (`AppThrottlerGuard`) counts per session when a bearer token is present and per client address otherwise; `main.ts` trusts one proxy hop.
 
+The read-only routes take the user from the session and nothing else. History (`TransactionHistoryService`) merges `Transaction`, `BillPayment` and `IncomingCredit` newest first behind an opaque cursor. Name enquiry is limited per user in the database (`NameEnquiryLog`), because the in-memory throttler resets on token refresh and restart. Response shapes are `*.view.ts` classes; the `@nestjs/swagger` CLI plugin reads them and the DTOs at build time, and `APP_API_DOCS=true` serves the document at `/docs` (local only; outside `AppAuthGuard`).
+
 ### One conversation, two channels
 
 A WhatsApp message and an app chat message end up in the same place: `ConversationRouterService`, run inside `TurnService.run(userId, channel, …)`. The turn is a lease row (`UserTurnLease`), so one user's turns never interleave, across channels and replicas. The row also records the channel of the last turn; when a turn arrives on the other channel, open wizards and waits are expired, so a WhatsApp wizard cannot swallow a number typed in the app. The app's chat and forms are accepted with 202 and handled in the background (`AppConversationService`). Choices must name a message that offered them to the same user. Form values reach the handlers only in memory. The inbound rate limit counts both channels together.
@@ -109,7 +111,7 @@ Prisma models (see [`prisma/schema.prisma`](../prisma/schema.prisma)): `User`, `
 
 A `User` is identified by `phoneNumber` (international digits, no "+"; see `common/phone.util.ts`). `whatsappNumber` is set only once that number has messaged on WhatsApp, and `findOrCreateUser` links a first WhatsApp message to an existing account with the same phone number.
 
-`AppMessage` is the in-app chat, both directions, ordered by `seq`. `UserTurnLease` is the per-user turn lock and last channel. App sign-in has `AuthOtp`, `Device`, `AppSession` and `LoginChallenge`.
+`AppMessage` is the in-app chat, both directions, ordered by `seq`. `UserTurnLease` is the per-user turn lock and last channel. App sign-in has `AuthOtp`, `Device`, `AppSession` and `LoginChallenge`. `NameEnquiryLog` counts the app's account-name lookups per user, and deliberately holds no account number.
 
 `TransferDraft` is the interactive send-money wizard. `ConversationSession` is chat history for the Udara (`KEDU`) and manager personas. Do not merge them.
 

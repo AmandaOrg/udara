@@ -287,6 +287,43 @@ describe("AccountActionsService", () => {
       expect(text).toContain("restrictions are off");
       expect(windowService.isWithinWindow).not.toHaveBeenCalled();
     });
+
+    // The text as it was before describeLimits was extracted for /v1/limits.
+    it.each([
+      [
+        { disciplineExitedAt: null },
+        true,
+        "today's remaining allowance: ₦1,500\nremaining this week: ₦9,000\nspending window is open until 20:00.",
+      ],
+      [
+        { disciplineExitedAt: null },
+        false,
+        "today's remaining allowance: ₦1,500\nremaining this week: ₦9,000\nspending window is closed, opens in about 4h (11:00).",
+      ],
+      [
+        { disciplineExitedAt: new Date() },
+        false,
+        "today's remaining allowance: ₦1,500\nremaining this week: ₦9,000\nrestrictions are off for your account, the spending window and override fees don't apply.",
+      ],
+    ])("renders the exact text (%#)", async (overrides, open, expected) => {
+      allowance.getRemainingSummary.mockResolvedValue({
+        allowance: {},
+        remainingToday: 1_500,
+        remainingWeek: 9_000,
+      });
+      windowService.isWithinWindow.mockReturnValue(open);
+      windowService.hoursUntilWindowOpens.mockReturnValue(4);
+
+      await service.sendLimitsStatus(
+        makeUser({
+          ...overrides,
+          windowStartHour: 11,
+          windowEndHour: 20,
+        }) as any,
+      );
+
+      expect(whatsapp.sendText.mock.calls[0][1]).toBe(expected);
+    });
   });
 
   describe("sendAccountDetails", () => {

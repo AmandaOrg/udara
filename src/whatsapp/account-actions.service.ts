@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { isCancelWord } from "../common/cancel-words.util";
 import { AllowanceService } from "../allowance/allowance.service";
 import { WindowService } from "../allowance/window.service";
+import { describeLimits } from "../allowance/limits-status";
 import { RubiesService } from "../rubies/rubies.service";
 import { TaggingService } from "../tagging/tagging.service";
 import { ChannelMessenger } from "../messaging/channel-messenger";
@@ -139,31 +140,26 @@ export class AccountActionsService {
   }
 
   async sendLimitsStatus(user: User): Promise<void> {
-    const { remainingToday, remainingWeek } =
-      await this.allowance.getRemainingSummary(user.id);
+    const status = describeLimits(
+      user,
+      await this.allowance.getRemainingSummary(user.id),
+      this.windowService,
+    );
 
     const lines = [
-      `today's remaining allowance: ₦${remainingToday.toLocaleString("en-NG")}`,
-      `remaining this week: ₦${remainingWeek.toLocaleString("en-NG")}`,
+      `today's remaining allowance: ₦${status.remainingToday.toLocaleString("en-NG")}`,
+      `remaining this week: ₦${status.remainingWeek.toLocaleString("en-NG")}`,
     ];
 
-    if (user.disciplineExitedAt) {
+    if (status.restrictionsOff) {
       lines.push(
         "restrictions are off for your account, the spending window and override fees don't apply.",
       );
-    } else if (
-      this.windowService.isWithinWindow(
-        user.windowStartHour,
-        user.windowEndHour,
-      )
-    ) {
-      lines.push(`spending window is open until ${user.windowEndHour}:00.`);
+    } else if (status.window.open) {
+      lines.push(`spending window is open until ${status.window.endHour}:00.`);
     } else {
-      const hoursUntil = this.windowService.hoursUntilWindowOpens(
-        user.windowStartHour,
-      );
       lines.push(
-        `spending window is closed, opens in about ${hoursUntil}h (${user.windowStartHour}:00).`,
+        `spending window is closed, opens in about ${status.window.opensInHours}h (${status.window.startHour}:00).`,
       );
     }
 

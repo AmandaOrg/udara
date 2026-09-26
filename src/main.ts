@@ -4,6 +4,7 @@ import { LogLevel, Logger, ValidationPipe } from "@nestjs/common";
 import { initSentry } from "./common/sentry";
 import { AllExceptionsFilter } from "./common/all-exceptions.filter";
 import { AppModule } from "./app.module";
+import { mountApiDocs } from "./app-api/api-docs";
 
 const ALL_LOG_LEVELS: LogLevel[] = ["error", "warn", "log", "debug", "verbose"];
 
@@ -46,6 +47,7 @@ async function bootstrap() {
   // SIGTERM on every deploy and the process would drop its connections mid-flight
   // instead of draining them.
   app.enableShutdownHooks();
+  mountApiDocs(app);
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   await app.listen(port);
   const logger = new Logger("Bootstrap");

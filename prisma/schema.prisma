@@ -334,6 +334,7 @@ model User {
   loginChallenges      LoginChallenge[]
   appMessages          AppMessage[]
   turnLease            UserTurnLease?
+  nameEnquiries        NameEnquiryLog[]
 }
 
 // One row per user per calendar day — the heart of the discipline engine.
@@ -463,6 +464,8 @@ model BillPayment {
   pinChallenges PinChallenge[]
 
   @@index([userId, status])
+  // The app's history reads a user's purchases newest first.
+  @@index([userId, createdAt])
 }
 
 model Transaction {
@@ -688,6 +691,9 @@ model IncomingCredit {
   sourceNarration String?
   creditedAt      DateTime
   createdAt       DateTime @default(now())
+
+  // The app's history reads a user's credits newest first.
+  @@index([userId, creditedAt])
 }
 
 // Proactive nudge dedup (PRD #13 — post-v0, see plan Phase 9).
@@ -978,6 +984,18 @@ enum AppMessageStatus {
 // Inbound text is stored after scrubFreeTextSecrets, the same as a WhatsApp
 // text. Form values (KYC, PIN) are never stored: a FORM_SUBMISSION row records
 // only which form arrived, and the values travel to the handler in memory.
+// One row per account-name lookup from the app, to limit them per user
+// (POST /v1/name-enquiry). Deliberately holds no account number: it counts
+// lookups, it is not a record of whose accounts were looked up.
+model NameEnquiryLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
 model AppMessage {
   id              String              @id @default(uuid())
   seq             BigInt              @unique @default(autoincrement())
