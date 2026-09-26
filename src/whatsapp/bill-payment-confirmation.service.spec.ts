@@ -5,6 +5,8 @@ import {
 import { BillPaymentConfirmationService } from "./bill-payment-confirmation.service";
 import { TransactionType } from "../common/enums/transaction-type.enum";
 import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
+import { ChannelMessenger } from "../messaging/channel-messenger";
+import { runInChannel } from "../messaging/channel-context";
 
 describe("BillPaymentConfirmationService", () => {
   let prisma: {
@@ -106,6 +108,24 @@ describe("BillPaymentConfirmationService", () => {
     );
   });
 
+  it("records which channel the purchase was quoted on", async () => {
+    await runInChannel({ channel: "app", deviceId: "d1" }, () =>
+      service.initiateBillPayment({
+        userId: user.id,
+        category: BillPaymentCategory.AIRTIME,
+        billerCode: "MTN",
+        productCode: "MTN_VTU",
+        telcoLabel: "MTN",
+        msisdn: "08012345678",
+        amount: 500,
+      }),
+    );
+
+    expect(prisma.billPayment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ originChannel: "APP" }),
+    });
+  });
+
   it("shows verified customer name on electricity confirm card", async () => {
     await service.initiateBillPayment({
       userId: user.id,
@@ -159,6 +179,30 @@ describe("BillPaymentConfirmationService", () => {
         data: expect.objectContaining({ vendorToken: "1234-5678-9012" }),
       }),
     );
+  });
+
+  it("sends a purchase's result back to the channel it was made on", async () => {
+    const send = jest.spyOn(ChannelMessenger.prototype, "sendText");
+    prisma.billPayment.findUniqueOrThrow.mockResolvedValue({
+      id: "bill-1",
+      status: BillPaymentStatus.CONFIRMED,
+      category: BillPaymentCategory.AIRTIME,
+      amount: 1000,
+      telcoLabel: "MTN",
+      msisdn: "08012345678",
+      productLabel: null,
+      vendorToken: null,
+      originChannel: "APP",
+      user,
+    });
+
+    await service.applyBillPaymentResult("bill-1", "FAILED", "RUB-1");
+
+    expect(send).toHaveBeenCalledWith(user, expect.any(String), {
+      delivery: "transactional",
+      origin: "app",
+    });
+    send.mockRestore();
   });
 
   function pendingBill(overrides: Partial<Record<string, unknown>> = {}) {

@@ -19,7 +19,13 @@ import {
 } from "./login-approval.service";
 
 const LOGIN_CHALLENGE_TTL_MS = 10 * 60_000;
-const TRANSACTIONAL = { delivery: "transactional" } as const;
+/**
+ * Sign-in approvals and new-device warnings go to WhatsApp and nowhere else,
+ * whatever channel the user was last on (S14). Only the WhatsApp router
+ * answers the approval buttons, and a warning delivered to the phone that is
+ * signing in warns nobody.
+ */
+const ON_WHATSAPP = { delivery: "transactional", channel: "whatsapp" } as const;
 
 export type Authenticated = {
   status: "authenticated";
@@ -146,7 +152,7 @@ export class LoginService {
           },
           { id: `${LOGIN_DENY_PREFIX}${challenge.id}`, title: "No, block it" },
         ],
-        TRANSACTIONAL,
+        ON_WHATSAPP,
       );
     }
 
@@ -262,7 +268,7 @@ export class LoginService {
       await this.messenger.sendText(
         user,
         `heads up: your udara account was just opened in the app on ${describeDevice(device)}. if that wasn't you, tell me here right away and don't share any code you're sent.`,
-        TRANSACTIONAL,
+        ON_WHATSAPP,
       );
     }
     if (options.notifyEmail) {

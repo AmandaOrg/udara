@@ -25,7 +25,7 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 | `src/rubies` | BaaS + VAS purchase/query + inbound webhook |
 | `src/ai` | LLM providers + persona prompts |
 | `src/orchestrator` | propose_turn + validator + surfaces (no send) |
-| `src/messaging` | `ChannelMessenger`: the only way to send; channel context; WhatsApp and app adapters; `AppMessage` store |
+| `src/messaging` | `ChannelMessenger`: the only way to send; channel context; WhatsApp and app adapters; `AppMessage` store; delivery policy; Expo push |
 | `src/conversation` | `ConversationRouterService` (routing for both channels), `TurnService` (per-user turn lease, channel-switch expiry) |
 | `src/app-auth` | App sign-in: SMS codes (Termii), sessions, new-device step-up, new-device transfer cap |
 | `src/app-api` | Mobile app `/v1` API (auth, me, chat, forms), deny-by-default guard; only with `APP_API_ENABLED=true` |

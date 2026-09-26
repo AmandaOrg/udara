@@ -1,3 +1,4 @@
+import { createHmac } from 'crypto';
 import { e2eEnv } from './env';
 
 export interface HttpResponse<T = unknown> {
@@ -93,6 +94,26 @@ export function postRubiesWebhook(
   opts: RequestOpts = {},
 ): Promise<HttpResponse> {
   return request('POST', e2eEnv.rubiesWebhookPath, payload, opts);
+}
+
+/**
+ * A Rubies webhook signed as Rubies signs it (`t=<unix>,v1=<hmac>` over
+ * "t.body"), with the RUBIES_SECRET_KEY the runner shares with the server.
+ * Unsigned when no secret is configured, which the server then accepts only
+ * under ALLOW_UNSIGNED_WEBHOOKS.
+ */
+export function postSignedRubiesWebhook(
+  payload: unknown,
+): Promise<HttpResponse> {
+  const body = JSON.stringify(payload);
+  if (!e2eEnv.rubiesSecretKey) return postRubiesWebhook(body);
+  const t = Math.floor(Date.now() / 1000).toString();
+  const v1 = createHmac('sha256', e2eEnv.rubiesSecretKey)
+    .update(`${t}.${body}`)
+    .digest('hex');
+  return postRubiesWebhook(body, {
+    headers: { 'X-Webhook-Signature': `t=${t},v1=${v1}` },
+  });
 }
 
 export { request };

@@ -73,7 +73,7 @@ export async function requestCode(phoneNumber: string): Promise<void> {
  * after a few runs. The server trusts one proxy hop, so present a fresh client
  * address the way Railway's edge would.
  */
-function forwardedFromFreshAddress() {
+export function forwardedFromFreshAddress() {
   const octet = () => Math.floor(Math.random() * 254) + 1;
   return {
     headers: { 'X-Forwarded-For': `10.${octet()}.${octet()}.${octet()}` },
@@ -81,11 +81,16 @@ function forwardedFromFreshAddress() {
 }
 
 export function verifyCode(phoneNumber: string, code = KNOWN_CODE) {
-  return request<any>('POST', '/v1/auth/verify', {
-    phoneNumber,
-    code,
-    device: { platform: 'ANDROID', name: 'e2e phone' },
-  });
+  return request<any>(
+    'POST',
+    '/v1/auth/verify',
+    {
+      phoneNumber,
+      code,
+      device: { platform: 'ANDROID', name: 'e2e phone' },
+    },
+    forwardedFromFreshAddress(),
+  );
 }
 
 /** A transfer PIN on the user, in PinService's stored format. */

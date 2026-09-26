@@ -10,6 +10,7 @@ import { SessionService } from "./session.service";
 import { LoginService } from "./login.service";
 import { LoginApprovalService } from "./login-approval.service";
 import { NewDeviceCapService } from "./new-device-cap.service";
+import { DeviceService } from "./device.service";
 
 /**
  * Mobile app sign-in: codes, sessions, step-up. No routes; those live in
@@ -34,8 +35,10 @@ import { NewDeviceCapService } from "./new-device-cap.service";
     LoginService,
     LoginApprovalService,
     NewDeviceCapService,
+    DeviceService,
   ],
   exports: [
+    DeviceService,
     OtpService,
     SessionService,
     LoginService,

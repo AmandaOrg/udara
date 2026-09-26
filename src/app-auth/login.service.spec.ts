@@ -183,7 +183,7 @@ describe("LoginService", () => {
           { id: "login_approve:challenge-1", title: "Yes, it's me" },
           { id: "login_deny:challenge-1", title: "No, block it" },
         ],
-        { delivery: "transactional" },
+        { delivery: "transactional", channel: "whatsapp" },
       );
       expect(sessions.issue).not.toHaveBeenCalled();
     });
@@ -248,7 +248,7 @@ describe("LoginService", () => {
       expect(messenger.sendText).toHaveBeenCalledWith(
         expect.objectContaining({ id: "user-1" }),
         expect.stringContaining("heads up"),
-        { delivery: "transactional" },
+        { delivery: "transactional", channel: "whatsapp" },
       );
       expect(email.sendNewDeviceLogin).toHaveBeenCalled();
     });

@@ -3,6 +3,8 @@ import { User } from "@prisma/client";
 import { Channel, currentChannelContext } from "./channel-context";
 import { WhatsappChannelAdapter } from "./whatsapp-channel.adapter";
 import { AppChannelAdapter } from "./app-channel.adapter";
+import { DeliveryPlan, DeliveryPolicyService } from "./delivery-policy";
+import { PushService } from "./push.service";
 
 /** Who a message is for. Everything a channel needs to address them. */
 export type MessageRecipient = Pick<User, "id" | "whatsappNumber">;
@@ -36,7 +38,7 @@ export interface FormRequest {
 
 /**
  * Why a message is being sent, which decides where it goes when no inbound
- * event is being handled.
+ * event is being handled (see delivery-policy.ts).
  *
  * - `reply`: answering the user. Always has a channel context; one without is
  *   a wiring bug and is reported.
@@ -44,15 +46,20 @@ export interface FormRequest {
  *   credit landing).
  * - `proactive`: Udara starting a conversation (nudges, the weekly review, the
  *   managers' reply).
- *
- * Outside a context every class currently goes to WhatsApp when the user has
- * it, and to the app when they do not. The distinction is recorded at the call
- * sites that know it, for the P5 delivery policy that will need it.
  */
 export type DeliveryClass = "reply" | "transactional" | "proactive";
 
 export interface SendOptions {
   delivery?: DeliveryClass;
+  /** The channel a payment was quoted on, so its result goes back there. */
+  origin?: Channel;
+  /**
+   * Send on exactly this channel, whatever the context or the policy would
+   * choose. For messages whose meaning depends on where they land: a sign-in
+   * approval only WhatsApp can answer, a new-device warning that must reach a
+   * channel other than the new phone.
+   */
+  channel?: Channel;
 }
 
 export interface ChannelAdapter {
@@ -81,6 +88,12 @@ export interface ChannelAdapter {
   ): Promise<void>;
 }
 
+const REPLY_PLAN: DeliveryPlan = {
+  channel: "whatsapp",
+  mirrorToApp: false,
+  push: false,
+};
+
 /**
  * The only way domain code sends a user anything.
  *
@@ -96,6 +109,8 @@ export class ChannelMessenger {
   constructor(
     private readonly whatsapp: WhatsappChannelAdapter,
     private readonly app: AppChannelAdapter,
+    private readonly policy: DeliveryPolicyService,
+    private readonly push: PushService,
   ) {}
 
   async sendText(
@@ -103,7 +118,9 @@ export class ChannelMessenger {
     body: string,
     options?: SendOptions,
   ): Promise<void> {
-    return await this.adapterFor("sendText", to, options).sendText(to, body);
+    await this.deliver("sendText", to, options, (adapter) =>
+      adapter.sendText(to, body),
+    );
   }
 
   async sendButtons(
@@ -112,10 +129,8 @@ export class ChannelMessenger {
     buttons: ReplyButton[],
     options?: SendOptions,
   ): Promise<void> {
-    return await this.adapterFor("sendButtons", to, options).sendButtons(
-      to,
-      body,
-      buttons,
+    await this.deliver("sendButtons", to, options, (adapter) =>
+      adapter.sendButtons(to, body, buttons),
     );
   }
 
@@ -126,11 +141,8 @@ export class ChannelMessenger {
     rows: ListOption[],
     options?: SendOptions,
   ): Promise<void> {
-    return await this.adapterFor("sendList", to, options).sendList(
-      to,
-      body,
-      buttonLabel,
-      rows,
+    await this.deliver("sendList", to, options, (adapter) =>
+      adapter.sendList(to, body, buttonLabel, rows),
     );
   }
 
@@ -139,9 +151,8 @@ export class ChannelMessenger {
     text: string,
     options?: SendOptions,
   ): Promise<void> {
-    return await this.adapterFor("sendChunked", to, options).sendChunked(
-      to,
-      text,
+    await this.deliver("sendChunked", to, options, (adapter) =>
+      adapter.sendChunked(to, text),
     );
   }
 
@@ -150,9 +161,8 @@ export class ChannelMessenger {
     form: FormRequest,
     options?: SendOptions,
   ): Promise<boolean> {
-    return await this.adapterFor("requestForm", to, options).requestForm(
-      to,
-      form,
+    return await this.deliver("requestForm", to, options, (adapter) =>
+      adapter.requestForm(to, form),
     );
   }
 
@@ -163,30 +173,63 @@ export class ChannelMessenger {
     components?: unknown[],
     options?: SendOptions,
   ): Promise<void> {
-    return await this.adapterFor("sendTemplate", to, options).sendTemplate(
-      to,
-      templateName,
-      languageCode,
-      components,
+    await this.deliver("sendTemplate", to, options, (adapter) =>
+      adapter.sendTemplate(to, templateName, languageCode, components),
     );
   }
 
-  private adapterFor(
+  /**
+   * Where a send with these options would go, without sending it. For callers
+   * that must say it differently per channel: the allowance nudge needs a
+   * WhatsApp template only when it is actually going to WhatsApp.
+   */
+  async resolveDelivery(
+    to: MessageRecipient,
+    options?: SendOptions,
+  ): Promise<Channel> {
+    return (await this.plan("resolveDelivery", to, options)).channel;
+  }
+
+  private async deliver<T>(
+    method: string,
+    to: MessageRecipient,
+    options: SendOptions | undefined,
+    send: (adapter: ChannelAdapter) => Promise<T>,
+  ): Promise<T> {
+    const plan = await this.plan(method, to, options);
+    const result = await send(this.adapter(plan.channel));
+
+    // Both are extras on a message already delivered: a failure is logged,
+    // never allowed to fail the send, which may sit inside a money path.
+    if (plan.mirrorToApp) {
+      await send(this.app).catch((err) =>
+        this.logger.warn(
+          `${method}: copying to the app chat for user ${to.id} failed: ${String(err)}`,
+        ),
+      );
+    }
+    if (plan.push) {
+      await this.push.notify(
+        to.id,
+        options?.delivery === "proactive" ? "proactive" : "transactional",
+      );
+    }
+    return result;
+  }
+
+  private async plan(
     method: string,
     to: MessageRecipient,
     options?: SendOptions,
-  ): ChannelAdapter {
-    const context = currentChannelContext();
-    if (context) return this.adapter(context.channel);
+  ): Promise<DeliveryPlan> {
+    if (options?.channel) return { ...REPLY_PLAN, channel: options.channel };
 
-    if ((options?.delivery ?? "reply") === "reply") {
-      this.reportMissingContext(method);
-    }
-    // Delivery policy for sends outside any inbound event, until P5 replaces
-    // it: WhatsApp for anyone who has it, which is every user who existed
-    // before the app, and the app for someone who has only ever used the app,
-    // who would otherwise get nothing at all.
-    return to.whatsappNumber ? this.whatsapp : this.app;
+    const context = currentChannelContext();
+    if (context) return { ...REPLY_PLAN, channel: context.channel };
+
+    const delivery = options?.delivery ?? "reply";
+    if (delivery === "reply") this.reportMissingContext(method);
+    return this.policy.plan(to, { delivery, origin: options?.origin });
   }
 
   private adapter(channel: Channel): ChannelAdapter {
@@ -196,8 +239,8 @@ export class ChannelMessenger {
   /**
    * A reply with nobody to reply to means an entry point forgot to open a
    * channel context, or a proactive send was not labelled as one. Either way
-   * the message still goes out, but it would go to the wrong channel for an
-   * app user, so it is logged rather than swallowed.
+   * the message still goes out, by delivery policy, but it is logged rather
+   * than swallowed.
    */
   protected reportMissingContext(method: string): void {
     this.logger.warn(

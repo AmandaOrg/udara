@@ -237,26 +237,52 @@ Users decided (2026-09-25, Egwu David Samuel):
 
 ## Phase 5 — Push and delivery rules
 
-**Status:** not started
-**Started:**
-**Completed:**
-**Owner:**
+**Status:** completed
+**Started:** 2026-09-26
+**Completed:** 2026-09-26
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] `PushService` (Expo); `originChannel`; the delivery policy wired into the schedulers, the Rubies webhook and reconciliation
+- [x] `decideDelivery`: a pure function that decides where a message sent outside any user's turn goes. The rules are in the tech design.
+  - Money results follow the channel the payment started on.
+  - Credits, check-ins and the managers' replies follow the channel the user last used.
+  - WhatsApp is used only while Meta's 24-hour window is open, unless the user has no app to fall back to.
+  - Whatever reaches WhatsApp is also written to the app chat (silently) for anyone who has signed in to the app.
+  - Anything that lands only in the app raises a push.
+- [x] `ChannelMessenger` applies it. A send can also pin a channel: sign-in approvals and new-device warnings are pinned to WhatsApp, because only WhatsApp answers those buttons and the warning must reach a channel other than the new phone.
+- [x] `PushService` (Expo push API, `PUSH_DRY_RUN`):
+  - One push per device per minute, so a multi-bubble message is one alert.
+  - Generic text only, never amounts, names or account numbers.
+  - Only to devices with a live session.
+  - A token Expo reports as `DeviceNotRegistered` is dropped.
+- [x] `POST` and `DELETE /v1/devices/push-token`. Registering a token takes it off any other device row holding it, so a phone that changes hands stops getting the previous user's alerts.
+- [x] `Transaction.originChannel` and `BillPayment.originChannel`, set from the channel context when the quote is made
+- [x] The allowance nudge asks the policy first, and uses a WhatsApp template only when the message is actually going to WhatsApp
+- [x] S14: sign-in approvals and warnings must stay pinned to WhatsApp
 
 ### Acceptance tests
 
-- [ ] No double alerts; nothing sent to WhatsApp outside the 24-hour window without a template
+- [x] Unit: every branch of the delivery rules; a pinned channel beats both the context and the policy; one push for a burst of messages; no amount in any push body; token hand-over clears the other device
+- [x] E2E: a credit for an app-only user lands in the app chat and raises one push. A credit for a WhatsApp user who is inside the window goes to WhatsApp, is mirrored to the app, and raises no push.
+- [x] WhatsApp-only users (no device) get exactly what they get today, including outside the window. The test messenger reproduces that routing, and every existing spec still asserts unchanged WhatsApp output. Full suite: 78 suites, 1042 tests.
+- [x] Full e2e: 21 pass, 3 skipped by design, and the same 2 stale failures. Three back-to-back runs of the app scenarios were clean.
+- [x] Server log: no PIN, pepper, session token, push token or payment reference. Dry-run push lines name only the device.
+- [x] `check-security` catches a sign-in message that is no longer pinned to WhatsApp
 
 ### Progress log
 
--
+- 2026-09-26: Designed. One refinement of the outline's acceptance wording ("nothing sent to WhatsApp outside the 24-hour window without a template"). For someone with the app, a message that would hit a closed window goes to the app and raises a push instead. For a WhatsApp-only user there is nowhere else to send it, so their behaviour is unchanged; a template for transactional messages would be needed, and none is approved.
+
+- 2026-09-26: Built and verified.
+- 2026-09-26: `Device.pushToken` is unique, in its own migration (`20260926151000_push_token_unique`). While adding it I ran `prisma migrate reset --force` on the local docker database, which wiped its data; it was local only, and the migrations re-applied cleanly. The index then went into a new migration rather than an edited one.
+- 2026-09-26: e2e helper fixes. `waitForInboundSettled` now waits for the message to exist as well as to be handled; the webhook acks before recording. `verifyCode` presents a fresh client address, as `requestCode` already did; with more sign-ins per run, back-to-back runs from localhost hit the sign-in throttle. New `postSignedRubiesWebhook` signs credits with the shared secret.
+- 2026-09-26: Not built, deferred: Expo push receipts (the second step that reports delivery failures after the send is accepted). Tickets already drop `DeviceNotRegistered` tokens.
 
 ### Risk
 
 - Silent failures on Meta's side when routing gets it wrong.
+- A push to a phone that has changed hands. The token hand-over and the live-session requirement cover this.
 
 ## Phase 6 — Native read-only API
 
@@ -359,7 +385,7 @@ Users decided (2026-09-25, Egwu David Samuel):
 | 2 | Identity | completed |
 | 3 | Authentication | completed |
 | 4 | In-app conversation | completed |
-| 5 | Push and delivery rules | not started |
+| 5 | Push and delivery rules | completed |
 | 6 | Native read-only API | not started |
 | 7 | Native transfers | not started |
 | 8 | Native bills | not started |
@@ -377,6 +403,8 @@ Allowed status: `not started` · `in progress` · `blocked` · `completed` · `d
 - Local development safety: `.env` points at the hosted database, and the e2e runner inherits it. Point `.env` at the docker Postgres, or give the e2e runner its own `E2E_DATABASE_URL` by default.
 - The new-device cap covers PINs entered in the app only. A SIM swap can also re-register WhatsApp, and WhatsApp PINs are not capped. Detecting a WhatsApp re-registration (Meta does not report one) or capping WhatsApp after any new app device is a decision for P7.
 - `AppMessage.seq` comes from a Postgres sequence, assigned at insert rather than at commit, so two concurrent inserts for one user could become visible out of order and a poll could step past one. Turns are serialized per user, so only a proactive send racing a turn could do this. Revisit with P5's delivery policy.
+- Expo push receipts: fetch them after a send to catch tokens that fail after acceptance
+- A WhatsApp template for transactional messages (money in and out), so WhatsApp-only users outside the 24-hour window are reached. Needs a Meta-approved template.
 - Voice notes and images from the app
 - Prompt and golden changes to drop "WhatsApp bubble" wording
 - An operator console for settings and deletion requests

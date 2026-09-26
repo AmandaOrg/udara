@@ -63,6 +63,18 @@ Edge cases:
 - **The app names a choice that was never offered**, or one offered to someone else: 404, and nothing is recorded.
 - **The PIN or BVN is typed into the chat instead of the form:** it is scrubbed before it is stored, as on WhatsApp.
 
+### P5 (push and delivery rules)
+
+Messages Udara sends when the user hasn't just written (money arriving, a transfer that finished later, the daily "your day is unlocked", the weekly check-in, the managers' answer) now go where the user will see them:
+- **A transfer or purchase result** goes back to where it was started: the app or WhatsApp.
+- **Everything else** goes to whichever of the two the user used last.
+- **WhatsApp only while Meta allows it.** WhatsApp refuses ordinary messages more than 24 hours after the user last wrote there, and fails them silently. For someone who also has the app, such a message goes to the app instead. Someone who has never used the app gets exactly what they get today.
+- **One alert per event.** A WhatsApp message is its own alert. Anything that lands only in the app raises a push notification. Several messages at once (a recap and its buttons) raise one push, not several.
+- **A push never shows an amount, a name or an account number.** It says "There's an update on your Udara account." or "Udara has a message for you." and opens the chat.
+- **The app's chat shows the whole story.** Anything sent to WhatsApp is also added to the app chat, silently, for someone who has signed in to the app.
+- **Only signed-in phones get pushes.** Signing out, or a session revoked as stolen, stops them. When a phone signs in as someone else, the previous account's pushes stop reaching it.
+- **Sign-in approvals and new-device warnings always go to WhatsApp**, never to the app: the warning is for the other phone.
+
 ### Later phases (outline)
 
 - **Sign-up and login.**

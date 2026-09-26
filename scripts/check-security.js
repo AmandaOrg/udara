@@ -181,6 +181,13 @@ const INVARIANTS = [
     message: 'text typed into the app chat must be scrubbed before it is stored, as WhatsApp text is',
   },
   {
+    id: 'S14',
+    file: 'src/app-auth/login.service.ts',
+    pattern: /channel:\s*"whatsapp"/,
+    message:
+      'sign-in approvals and new-device warnings must stay pinned to WhatsApp; routed by the delivery policy they could land on the phone that is signing in',
+  },
+  {
     id: 'S7',
     file: 'src/whatsapp/transfer-confirmation.service.ts',
     pattern: /PENDING_PIN/,
@@ -472,6 +479,9 @@ const NEEDS_TESTS = [
   'src/messaging/whatsapp-channel.adapter.ts',
   'src/messaging/app-channel.adapter.ts',
   'src/messaging/app-message.service.ts',
+  'src/messaging/delivery-policy.ts',
+  'src/messaging/push.service.ts',
+  'src/app-auth/device.service.ts',
   'src/conversation/conversation-router.service.ts',
   'src/conversation/turn.service.ts',
   'src/app-api/app-auth.guard.ts',

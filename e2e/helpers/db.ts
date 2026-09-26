@@ -150,18 +150,23 @@ export async function waitForInboundSettled(
   timeoutMs = 30_000,
 ) {
   const deadline = Date.now() + timeoutMs;
+  const inbound = {
+    fromNumber: waNumber,
+    direction: WhatsappMessageDirection.INBOUND,
+    createdAt: { gte: after },
+  };
   while (Date.now() < deadline) {
-    const pending = await withDbRetry('waitForInboundSettled', () =>
-      prisma().whatsappMessage.count({
-        where: {
-          fromNumber: waNumber,
-          direction: WhatsappMessageDirection.INBOUND,
-          status: 'RECEIVED',
-          createdAt: { gte: after },
-        },
-      }),
+    // The webhook acks before it records, so "none pending" only counts once
+    // the message is there at all.
+    const [arrived, pending] = await withDbRetry('waitForInboundSettled', () =>
+      Promise.all([
+        prisma().whatsappMessage.count({ where: inbound }),
+        prisma().whatsappMessage.count({
+          where: { ...inbound, status: 'RECEIVED' },
+        }),
+      ]),
     );
-    if (pending === 0) return;
+    if (arrived > 0 && pending === 0) return;
     await new Promise((r) => setTimeout(r, 200));
   }
   throw new Error(

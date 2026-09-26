@@ -79,7 +79,13 @@ Confirm / cancel buttons and the transfer wizard never wait on the LLM. Confirm 
 Domain code never calls `WhatsappService`. It sends through `ChannelMessenger` (`src/messaging/`), addressed by `User`, and the messenger picks the channel:
 
 - **Inside an inbound event:** the entry point opens a channel context (`runInChannel`, AsyncLocalStorage), and everything sent while handling it is a reply on that channel. `WhatsappController` does this per message.
-- **Outside one** (crons, the Rubies webhook, CLIs): the call site labels the send `proactive` or `transactional`, and delivery policy decides. Today that is WhatsApp for anyone who has it and the app for anyone who does not; P5 of the mobile-app initiative replaces this. An unlabelled send with no context is logged as a wiring bug.
+- **Outside one** (crons, the Rubies webhook, reconciliation, CLIs): the call site labels the send `proactive` or `transactional`, and `decideDelivery` (`messaging/delivery-policy.ts`) chooses:
+  - a payment's result goes to the channel it was quoted on (`originChannel`);
+  - everything else goes to the channel the user last used;
+  - WhatsApp is used only inside Meta's 24-hour window, unless the user has no app to fall back to.
+
+  Exactly one channel alerts: a WhatsApp message, silently copied into the app chat for app users, or an app message with an Expo push (`PushService`). An unlabelled send with no context is logged as a wiring bug.
+- **Pinned** (`channel` in the send options): that channel regardless. Sign-in approvals and new-device warnings are pinned to WhatsApp (S14).
 
 `AppChannelAdapter` writes one `AppMessage` row per bubble (text, buttons, list, form request), which the app reads by polling `GET /v1/chat/messages`.
 

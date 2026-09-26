@@ -49,7 +49,7 @@ For non-trivial changes, cover where applicable:
 
 CI does not run e2e. Run the relevant subset locally (`npm run e2e:smoke` or a name prefix).
 
-The mobile app scenarios (`e2e/scenarios/app/`, prefix `app.`) need the server started with `APP_API_ENABLED=true SMS_DRY_RUN=true OTP_PEPPER=<value>` and the same `OTP_PEPPER` in the runner's environment. See [DEVELOPMENT.md](DEVELOPMENT.md#environment), including the note on overriding a hosted `DATABASE_URL`.
+The mobile app scenarios (`e2e/scenarios/app/`, prefix `app.`) need the server started with `APP_API_ENABLED=true SMS_DRY_RUN=true PUSH_DRY_RUN=true OTP_PEPPER=<value>` and the same `OTP_PEPPER` in the runner's environment. See [DEVELOPMENT.md](DEVELOPMENT.md#environment), including the note on overriding a hosted `DATABASE_URL`.
 
 ## Matrix for common change types
 

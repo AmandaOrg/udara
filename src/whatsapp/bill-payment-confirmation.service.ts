@@ -4,6 +4,10 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AllowanceService } from "../allowance/allowance.service";
 import { RubiesService } from "../rubies/rubies.service";
 import { ChannelMessenger } from "../messaging/channel-messenger";
+import {
+  currentMessageChannel,
+  fromMessageChannel,
+} from "../messaging/channel-context";
 import { PinGateService } from "./pin-gate.service";
 import { BillPayment, TransactionType, User } from "@prisma/client";
 import {
@@ -77,6 +81,7 @@ export class BillPaymentConfirmationService {
         feeAmount: evaluation.feeAmount,
         requestReference,
         idempotencyKey: requestReference,
+        originChannel: currentMessageChannel(),
       },
     });
 
@@ -473,19 +478,25 @@ export class BillPaymentConfirmationService {
     }
 
     const payment = existing;
+    // A result that arrives later (webhook, reconciliation) goes back to the
+    // channel the purchase was made on.
+    const result = {
+      delivery: "transactional",
+      origin: fromMessageChannel(payment.originChannel),
+    } as const;
 
     if (newStatus === BillPaymentStatus.EXECUTED) {
       await this.allowance.recordBillPaymentSpend(payment.id);
       await this.messenger.sendText(
         payment.user,
         successMessageForPayment(payment, vendorToken ?? payment.vendorToken),
-        { delivery: "transactional" },
+        result,
       );
     } else {
       await this.messenger.sendText(
         payment.user,
         failureMessageForCategory(payment.category),
-        { delivery: "transactional" },
+        result,
       );
     }
   }

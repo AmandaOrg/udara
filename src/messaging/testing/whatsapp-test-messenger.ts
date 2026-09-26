@@ -32,5 +32,22 @@ export function whatsappTestMessenger(mocks: {
       recordOutbound: () => Promise.resolve(undefined),
     }) as never,
   );
-  return new QuietChannelMessenger(adapter, app);
+  // Outside a context, the routing every spec was written against: WhatsApp
+  // for anyone who has it, no copy to the app, no push. delivery-policy.spec.ts
+  // covers the real rules.
+  const policy = {
+    plan: (to: { whatsappNumber?: string | null }) =>
+      Promise.resolve({
+        channel: to.whatsappNumber ? "whatsapp" : "app",
+        mirrorToApp: false,
+        push: false,
+      }),
+  };
+  const push = { notify: () => Promise.resolve() };
+  return new QuietChannelMessenger(
+    adapter,
+    app,
+    policy as never,
+    push as never,
+  );
 }

@@ -134,9 +134,11 @@ export class AllowanceScheduler {
   }
 
   /**
-   * WhatsApp free-form sends are blocked more than 24h after the user's last
-   * inbound message — falls back to a pre-approved template in that case, or
-   * skips (loudly logged, not silently) if no template name is configured.
+   * Goes wherever the delivery policy sends proactive messages. In the app it
+   * is plain text with a push. On WhatsApp, free-form sends are blocked more
+   * than 24h after the user's last inbound message, so it falls back to a
+   * pre-approved template there, or skips (loudly logged, not silently) if no
+   * template name is configured.
    */
   private async sendNudge(
     user: User,
@@ -144,6 +146,14 @@ export class AllowanceScheduler {
     text: string,
     dedupeKey: string,
   ): Promise<void> {
+    if ((await this.messenger.resolveDelivery(user, PROACTIVE)) === "app") {
+      if (!(await this.claimNudge(user.id, type, dedupeKey, null, "app"))) {
+        return;
+      }
+      await this.messenger.sendText(user, text, PROACTIVE);
+      return;
+    }
+
     const withinFreeFormWindow =
       !!user.lastInboundMessageAt &&
       Date.now() - user.lastInboundMessageAt.getTime() < FREE_FORM_WINDOW_MS;
@@ -167,7 +177,15 @@ export class AllowanceScheduler {
     // make: if the send fails after the claim, this nudge is skipped rather than
     // retried. For a courtesy message that is the right way round — a missed
     // nudge is a non-event, a duplicate one is a bill and an annoyance.
-    if (!(await this.claimNudge(user.id, type, dedupeKey, templateName))) {
+    if (
+      !(await this.claimNudge(
+        user.id,
+        type,
+        dedupeKey,
+        templateName,
+        templateName ? "template" : "freeform",
+      ))
+    ) {
       return;
     }
 
@@ -175,12 +193,13 @@ export class AllowanceScheduler {
       await this.messenger.sendText(user, text, PROACTIVE);
       return;
     }
+    // Pinned: a template only means anything on WhatsApp.
     await this.messenger.sendTemplate(
       user,
       templateName as string,
       "en_US",
       undefined,
-      PROACTIVE,
+      { ...PROACTIVE, channel: "whatsapp" },
     );
   }
 
@@ -190,6 +209,7 @@ export class AllowanceScheduler {
     type: NudgeType,
     dedupeKey: string,
     templateName: string | null,
+    channel: "template" | "freeform" | "app",
   ): Promise<boolean> {
     try {
       await this.prisma.nudgeLog.create({
@@ -197,7 +217,7 @@ export class AllowanceScheduler {
           userId,
           type,
           dedupeKey,
-          channel: templateName ? "template" : "freeform",
+          channel,
           templateName: templateName ?? undefined,
         },
       });

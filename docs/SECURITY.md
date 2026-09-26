@@ -43,7 +43,7 @@ Each row is enforced in code and verified by `npm run security:check`. Do not re
 | S11 | No credentials in the repository | whole tree |
 | S12 | Security-critical files have unit tests | colocated `*.spec.ts` |
 | S13 | Webhook controllers never serialize the inbound payload into a log line | `whatsapp.controller.ts` + `rubies-webhook.controller.ts` |
-| S14 | The mobile app API denies by default: every `/v1` controller needs a live session unless a handler is `@Public()`, which only the sign-in controller may use | `app-api/app-auth.guard.ts`, registered globally in `app-api.module.ts`; every app controller mounted under `v1` |
+| S14 | The mobile app API denies by default: every `/v1` controller needs a live session unless a handler is `@Public()`, which only the sign-in controller may use. Sign-in approvals and new-device warnings are pinned to WhatsApp | `app-api/app-auth.guard.ts`, registered globally in `app-api.module.ts`; every app controller mounted under `v1`; `app-auth/login.service.ts` |
 | S15 | Nothing in the app API prints or serializes request data; controllers do not log at all and take DTO classes rather than `unknown`; secrets and phone numbers are never query parameters | `src/app-api/**` |
 | S16 | Sign-in codes and session tokens are stored only as HMACs or hashes | `app-auth/secret-hash.util.ts`; no plaintext secret column in `schema.prisma` |
 

@@ -273,6 +273,52 @@ Form values are turned into the same `responseJson` / `sensitive` pair the Whats
 
 **Not changed:** `PinFlowOutcome`, prompts and goldens. Session turns gain a `channel` field that the model never sees.
 
+### P5: push and delivery rules
+
+**Data** (migration `20260926150000_delivery_rules`):
+- `Transaction.originChannel` and `BillPayment.originChannel` (`MessageChannel`, default `WHATSAPP`). Set at `create` from the channel context; every existing row came from WhatsApp.
+- `Device.lastPushAt DateTime?`, the push cooldown claim.
+- `Device.pushToken` made unique (migration `20260926151000_push_token_unique`).
+
+**Deciding a send (`ChannelMessenger`), in order:**
+1. **`options.channel` is set (pinned).** That channel only. Used by `LoginService` for sign-in approvals and new-device warnings (S14).
+2. **A channel context is set.** That channel only; it is a reply. No mirror and no push: the user is looking at the conversation.
+3. **Otherwise**, `DeliveryPolicyService` loads the recipient's state:
+   - `whatsappNumber`, `lastInboundMessageAt`, `lastAppActiveAt`;
+   - whether any `Device` exists;
+   - whether any device can take a push (not revoked, has a token, has a session that is neither revoked nor past its refresh expiry).
+
+   It then calls the pure `decideDelivery`.
+
+**`decideDelivery` rules:**
+
+| Message | Goes to |
+| --- | --- |
+| Transactional with `origin` (a transfer or bill result) | The origin channel |
+| Transactional without origin (a credit), proactive (nudge, weekly review, managers), or an unlabelled reply | The channel last used: the app if `lastAppActiveAt` is later than `lastInboundMessageAt`, else WhatsApp. The app if there is no WhatsApp number. |
+
+Then two adjustments:
+- **WhatsApp chosen but the 24-hour window is closed, and the user has had a device:** the app instead. A WhatsApp-only user still gets WhatsApp, which is today's behaviour.
+- **Result:**
+  - `whatsapp`: mirrored to the app, with no push, when the user has had a device, so the app's history is complete. Only one channel ever alerts.
+  - `app`: a push when a device can take one.
+
+**Push (`PushService.notify(userId, delivery)`):**
+- For each eligible device, claim a 60-second cooldown: `updateMany` where `lastPushAt` is null or older, and set it.
+- `POST https://exp.host/--/api/v2/push/send` with `{ to, title: "Udara", body, data: { screen: "chat" }, sound: "default" }`, plus a bearer `EXPO_ACCESS_TOKEN` if set.
+- Body by class: transactional "There's an update on your Udara account."; proactive "Udara has a message for you."
+- On a `DeviceNotRegistered` ticket, clear that token (conditional on it still being the token).
+- Never throws into the send path; failures are logged with the device id only.
+- `PUSH_DRY_RUN=true` logs "not sent" and still claims the cooldown, so e2e can observe it.
+
+**Registration:**
+- `POST /v1/devices/push-token {pushToken}` matching `^Expo(nent)?PushToken\[[A-Za-z0-9_-]+\]$`: set it on the caller's device and clear it from every other device row, returns 204.
+- `DELETE /v1/devices/push-token`: clear it, returns 204.
+
+**Nudges:** `AllowanceScheduler.sendNudge` calls `ChannelMessenger.resolveDelivery(user, PROACTIVE)`. If the answer is `app`, it claims the nudge (`channel: "app"`) and sends text, which the messenger delivers to the app with a push. Otherwise the existing window-or-template logic runs, with the template send pinned to WhatsApp.
+
+**Not changed:** email notifications; replies inside a turn; anything for users who have never signed in to the app.
+
 ## Invariants
 
 Code must still enforce:
@@ -293,6 +339,7 @@ Code must still enforce:
   - P1: `npx jest src/messaging`
   - P2: `npx jest src/common/phone src/whatsapp/whatsapp-router src/messaging src/onboarding`
   - P3: `npx jest src/app-auth src/app-api src/common src/config src/whatsapp/whatsapp-router`
+  - P5: `npx jest src/messaging src/app-auth/device src/app-api/devices src/allowance/allowance.scheduler src/whatsapp/transfer-confirmation src/whatsapp/bill-payment-confirmation src/app-auth/login`
   - P4: `npx jest src/conversation src/messaging src/app-api src/app-auth/new-device-cap src/whatsapp/pin-outcome src/whatsapp/whatsapp-router src/whatsapp/inbound-rate-limit src/onboarding`
   - then the full `npm test`
 - **Golden:** unchanged. P0 does not touch the orchestrator.
@@ -313,3 +360,4 @@ Code must still enforce:
 | 2026-09-25 | P2: identity as built |
 | 2026-09-25 | P3: authentication as built |
 | 2026-09-26 | P4: in-app conversation as built |
+| 2026-09-26 | P5: delivery rules and push as built |

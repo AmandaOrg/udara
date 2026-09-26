@@ -431,6 +431,9 @@ model BillPayment {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
+  // Where the quote was made; see Transaction.originChannel.
+  originChannel MessageChannel @default(WHATSAPP)
+
   category     BillPaymentCategory @default(AIRTIME)
   billerCode   String
   productCode  String
@@ -469,13 +472,16 @@ model Transaction {
   recipientId String
   recipient   Recipient @relation(fields: [recipientId], references: [id])
 
-  amount       Decimal           @db.Decimal(14, 2)
-  type         TransactionType   @default(NORMAL)
-  status       TransactionStatus @default(PENDING_CONFIRMATION)
+  amount        Decimal           @db.Decimal(14, 2)
+  type          TransactionType   @default(NORMAL)
+  status        TransactionStatus @default(PENDING_CONFIRMATION)
+  // Where the quote was made. Decides where the result is sent when it arrives
+  // later, from the Rubies webhook or reconciliation (P5 delivery rules).
+  originChannel MessageChannel    @default(WHATSAPP)
   // This send's stated purpose (spend-check / orchestrator label_hint) — may
   // differ from Recipient.label when the person was tagged on an earlier send.
-  purposeLabel RecipientLabel?
-  purposeNote  String?
+  purposeLabel  RecipientLabel?
+  purposeNote   String?
 
   feeAmount         Decimal   @default(0) @db.Decimal(14, 2)
   // Set once the feeAmount (if any) has actually been moved to
@@ -691,7 +697,7 @@ model NudgeLog {
   user         User      @relation(fields: [userId], references: [id])
   type         NudgeType
   sentAt       DateTime  @default(now())
-  channel      String // "template" | "freeform"
+  channel      String // "template" | "freeform" | "app"
   templateName String?
 
   // Idempotency guard, same shape and reasoning as EmailLog.dedupeKey. Dedup
@@ -871,7 +877,12 @@ model Device {
   user       User           @relation(fields: [userId], references: [id])
   platform   DevicePlatform
   name       String?
-  pushToken  String?
+  // One device per token: a phone that changes hands, or signs in as someone
+  // else, must stop receiving the previous account's alerts.
+  pushToken  String?        @unique
+  // Last push sent to this device. Claimed atomically so a burst of messages
+  // (several bubbles, or a result and a follow-up) raises one alert.
+  lastPushAt DateTime?
   trustedAt  DateTime?
   lastSeenAt DateTime?
   revokedAt  DateTime?

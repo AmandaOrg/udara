@@ -251,6 +251,16 @@ class EnvironmentVariables {
   @IsInt()
   @Min(0)
   NEW_DEVICE_TRANSFER_CAP?: number;
+
+  /** "true" sends no push notifications; local and e2e only. */
+  @IsOptional()
+  @IsString()
+  PUSH_DRY_RUN?: string;
+
+  /** Needed only if push security is turned on for the Expo project. */
+  @IsOptional()
+  @IsString()
+  EXPO_ACCESS_TOKEN?: string;
 }
 
 /** Webhook signing secrets. Blank means "accept forged requests", so blank is opt-in. */

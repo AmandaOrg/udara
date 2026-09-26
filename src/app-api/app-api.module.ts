@@ -9,6 +9,7 @@ import { AuthController } from "./auth/auth.controller";
 import { MeController } from "./me/me.controller";
 import { ChatController } from "./chat/chat.controller";
 import { FormsController } from "./chat/forms.controller";
+import { DevicesController } from "./devices/devices.controller";
 import { AppConversationService } from "./chat/app-conversation.service";
 
 /**
@@ -26,7 +27,13 @@ import { AppConversationService } from "./chat/app-conversation.service";
     WhatsappModule,
     OnboardingModule,
   ],
-  controllers: [AuthController, MeController, ChatController, FormsController],
+  controllers: [
+    AuthController,
+    MeController,
+    ChatController,
+    FormsController,
+    DevicesController,
+  ],
   providers: [
     { provide: APP_GUARD, useClass: AppAuthGuard },
     AppConversationService,

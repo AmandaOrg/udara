@@ -11,6 +11,8 @@ import {
 } from "@prisma/client";
 import { TransactionType } from "../common/enums/transaction-type.enum";
 import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
+import { ChannelMessenger } from "../messaging/channel-messenger";
+import { runInChannel } from "../messaging/channel-context";
 
 describe("formatSpendFeeLine", () => {
   it("uses plain language instead of enum names", () => {
@@ -230,6 +232,27 @@ describe("TransferConfirmationService", () => {
           }),
         }),
       );
+    });
+
+    /** So a result that arrives later can go back to where the user asked. */
+    it("records which channel the quote was made on", async () => {
+      prisma.transaction.create.mockResolvedValue({ id: "txn-1" });
+      const params = {
+        userId: "user-1",
+        accountNumber: "0011223344",
+        bankCode: "000005",
+        amount: 5000,
+      };
+
+      await service.initiateTransfer(params);
+      await runInChannel({ channel: "app", deviceId: "d1" }, () =>
+        service.initiateTransfer(params),
+      );
+
+      const origins = prisma.transaction.create.mock.calls.map(
+        ([args]: any[]) => args.data.originChannel,
+      );
+      expect(origins).toEqual(["WHATSAPP", "APP"]);
     });
 
     it("resolves and auto-tags a new recipient as OTHER", async () => {
@@ -874,6 +897,28 @@ describe("TransferConfirmationService", () => {
       });
       expect(allowance.recordSpend).toHaveBeenCalledWith("txn-1");
       expect(prisma.transferDraft.updateMany).toHaveBeenCalled();
+    });
+
+    it("sends the result back to the channel the transfer was quoted on", async () => {
+      const send = jest.spyOn(ChannelMessenger.prototype, "sendText");
+      prisma.transaction.findUniqueOrThrow.mockResolvedValue({
+        id: "txn-1",
+        status: TransactionStatus.CONFIRMED,
+        user,
+        recipient,
+        amount: 5000,
+        type: TransactionType.NORMAL,
+        feeAmount: 0,
+        originChannel: "APP",
+      });
+
+      await service.applyTransferResult("txn-1", "SUCCESS", "REF-1");
+
+      expect(send).toHaveBeenCalledWith(user, expect.any(String), {
+        delivery: "transactional",
+        origin: "app",
+      });
+      send.mockRestore();
     });
 
     it("appends a completed-send fact to the orchestrator chat session", async () => {

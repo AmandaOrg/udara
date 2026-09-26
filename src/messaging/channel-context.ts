@@ -48,3 +48,15 @@ export function forChannel<T>(copy: Record<Channel, T>): T {
 export function toMessageChannel(channel: Channel): MessageChannel {
   return channel === "app" ? MessageChannel.APP : MessageChannel.WHATSAPP;
 }
+
+export function fromMessageChannel(channel: MessageChannel): Channel {
+  return channel === MessageChannel.APP ? "app" : "whatsapp";
+}
+
+/**
+ * The channel of the event being handled, as stored on a row. Outside any
+ * context that is WhatsApp, where everything happened before the app.
+ */
+export function currentMessageChannel(): MessageChannel {
+  return toMessageChannel(currentChannelContext()?.channel ?? "whatsapp");
+}

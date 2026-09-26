@@ -8,7 +8,12 @@ import { TaggingService } from "../tagging/tagging.service";
 import {
   ChannelMessenger,
   MessageRecipient,
+  SendOptions,
 } from "../messaging/channel-messenger";
+import {
+  currentMessageChannel,
+  fromMessageChannel,
+} from "../messaging/channel-context";
 import { PinGateService } from "./pin-gate.service";
 import { EmailNotificationsService } from "../email/email-notifications.service";
 import {
@@ -206,6 +211,7 @@ export class TransferConfirmationService {
         purposeLabel,
         purposeNote: params.purposeNote?.trim().slice(0, 200) || undefined,
         idempotencyKey,
+        originChannel: currentMessageChannel(),
       },
     });
 
@@ -739,6 +745,12 @@ export class TransferConfirmationService {
       where: { id: transactionId },
       include: { user: true, recipient: true },
     });
+    // A result that arrives later (webhook, reconciliation) goes back to the
+    // channel the transfer was quoted on.
+    const result: SendOptions = {
+      delivery: "transactional",
+      origin: fromMessageChannel(transaction.originChannel),
+    };
 
     if (newStatus === TransactionStatus.EXECUTED) {
       if (transaction.type !== TransactionType.NORMAL) {
@@ -800,19 +812,22 @@ export class TransferConfirmationService {
         transaction.user.onboardingStage === OnboardingStage.FUNDED;
 
       if (isFirstTransactionOfOnboarding) {
-        await this.completeOnboardingAfterFirstTransaction(transaction.user);
+        await this.completeOnboardingAfterFirstTransaction(
+          transaction.user,
+          result,
+        );
       } else {
         await this.messenger.sendText(
           transaction.user,
           `Done, ₦${Number(transaction.amount).toLocaleString("en-NG")} sent to ${transaction.recipient.accountName ?? transaction.recipient.accountNumber}.`,
-          { delivery: "transactional" },
+          result,
         );
       }
     } else {
       await this.messenger.sendText(
         transaction.user,
         "That transfer failed on Rubies' end, nothing was deducted from today's allowance.",
-        { delivery: "transactional" },
+        result,
       );
     }
   }
@@ -826,6 +841,7 @@ export class TransferConfirmationService {
    */
   private async completeOnboardingAfterFirstTransaction(
     user: MessageRecipient,
+    result: SendOptions,
   ): Promise<void> {
     const userId = user.id;
     const allowance = await this.allowance.getOrCreateTodayAllowance(userId);
@@ -860,7 +876,7 @@ export class TransferConfirmationService {
       `remaining this week: ₦${remainingWeek.toLocaleString("en-NG")}`,
       "keep going.",
     ].join("\n\n");
-    await this.messenger.sendText(user, text, { delivery: "transactional" });
+    await this.messenger.sendText(user, text, result);
   }
 
   /**
