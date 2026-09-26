@@ -20,7 +20,9 @@ import {
   ConversationPersona,
   ConversationSessionStatus,
   OnboardingStage,
+  PaymentSurface,
   Prisma,
+  Recipient,
   RecipientLabel,
   Transaction,
   TransactionStatus,
@@ -88,6 +90,76 @@ export function formatSpendFeeLine(
   return label;
 }
 
+export interface TransferQuoteParams {
+  userId: string;
+  accountNumber: string;
+  bankCode: string;
+  amount: number;
+  // Set by the interactive send-money wizard (account-actions.service.ts),
+  // which already ran name-enquiry and — for a new recipient — asked the
+  // user to pick a label via a list message. When set, skip the internal
+  // name-enquiry call (avoid double-hitting Rubies) and use the given
+  // label instead of defaulting to OTHER. Unset for the legacy
+  // "send <amount> to <account> <bank>" text-command shortcut, which
+  // preserves its original auto-tag-OTHER behavior exactly.
+  resolvedName?: string;
+  label?: RecipientLabel;
+  /** Spend purpose for this send (from spend-check / orchestrator), not recipient tag. */
+  purposeLabel?: RecipientLabel;
+  /** Free-text purpose when the category is OTHER. */
+  purposeNote?: string;
+  /** Nickname to persist when this send succeeds (from beneficiary_name hint). */
+  beneficiaryNickname?: string;
+  /** Where the quote is made; CHAT unless the app's native screens ask. */
+  surface?: PaymentSurface;
+  /** The app's Idempotency-Key, for a native quote. */
+  clientRequestKey?: string;
+}
+
+export type SpendEvaluation = Awaited<
+  ReturnType<AllowanceService["evaluateSpend"]>
+>;
+
+export type TransferQuoteResult =
+  | { ok: false; reason: "no_account" | "recipient_unverified"; user: User }
+  | {
+      ok: true;
+      user: User;
+      transaction: Transaction;
+      recipient: Recipient;
+      isNewRecipient: boolean;
+      evaluation: SpendEvaluation;
+      /** Null when Rubies did not answer; the quote stands without it. */
+      balance: number | null;
+    };
+
+export type PendingTransfer = Transaction & {
+  user: User;
+  recipient: Recipient;
+};
+
+/** What a Confirm tap decided. See evaluateConfirm for the state each makes. */
+export type ConfirmDecision =
+  | { kind: "not_found" }
+  | { kind: "not_pending"; transaction: PendingTransfer }
+  | { kind: "balance_unavailable"; transaction: PendingTransfer }
+  | {
+      kind: "insufficient_funds";
+      transaction: PendingTransfer;
+      needed: number;
+      balance: number;
+    }
+  | {
+      kind: "requoted";
+      transaction: PendingTransfer;
+      reason: "stale" | "terms_changed";
+      evaluation: SpendEvaluation;
+      balance: number;
+    }
+  | { kind: "pin_setup_required"; transaction: PendingTransfer }
+  | { kind: "locked"; transaction: PendingTransfer }
+  | { kind: "pin_required"; transaction: PendingTransfer };
+
 /**
  * The confirm-before-transfer flow (PRD §5's pre-transfer confirmation, §4a):
  * evaluateSpend -> tag/confirm recipient -> confirm buttons -> initiateTransfer
@@ -119,37 +191,27 @@ export class TransferConfirmationService {
     private readonly emailNotifications: EmailNotificationsService,
   ) {}
 
-  async initiateTransfer(params: {
-    userId: string;
-    accountNumber: string;
-    bankCode: string;
-    amount: number;
-    // Set by the interactive send-money wizard (account-actions.service.ts),
-    // which already ran name-enquiry and — for a new recipient — asked the
-    // user to pick a label via a list message. When set, skip the internal
-    // name-enquiry call (avoid double-hitting Rubies) and use the given
-    // label instead of defaulting to OTHER. Unset for the legacy
-    // "send <amount> to <account> <bank>" text-command shortcut, which
-    // preserves its original auto-tag-OTHER behavior exactly.
-    resolvedName?: string;
-    label?: RecipientLabel;
-    /** Spend purpose for this send (from spend-check / orchestrator), not recipient tag. */
-    purposeLabel?: RecipientLabel;
-    /** Free-text purpose when the category is OTHER. */
-    purposeNote?: string;
-    /** Nickname to persist when this send succeeds (from beneficiary_name hint). */
-    beneficiaryNickname?: string;
-  }): Promise<void> {
+  /**
+   * Quote a transfer and show it on the conversation: createQuote, then the
+   * WhatsApp-shaped card. The app's native screens call createQuote alone.
+   */
+  async initiateTransfer(params: TransferQuoteParams): Promise<void> {
+    const result = await this.createQuote(params);
+    await this.renderQuote(result, params);
+  }
+
+  /**
+   * Everything a quote decides, and nothing it says: the PENDING_CONFIRMATION
+   * row, the recipient (resolved and tagged if new), the spend classification
+   * and the live balance.
+   */
+  async createQuote(params: TransferQuoteParams): Promise<TransferQuoteResult> {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: params.userId },
     });
 
     if (!user.rubiesAccountNumber || !user.rubiesAccountName) {
-      await this.messenger.sendText(
-        user,
-        "you don't have a udara account set up yet, so there's nothing to send from.",
-      );
-      return;
+      return { ok: false, reason: "no_account", user };
     }
 
     // The classification itself (NORMAL/EARLY_ACCESS/BORROWED) and its fee stay
@@ -177,11 +239,7 @@ export class TransferConfirmationService {
           .then((r) => r.accountName)
           .catch(() => null));
       if (!resolvedName) {
-        await this.messenger.sendText(
-          user,
-          `Couldn't verify account ${params.accountNumber} at that bank, double-check the account number and bank code.`,
-        );
-        return;
+        return { ok: false, reason: "recipient_unverified", user };
       }
       recipient = await this.tagging.tagRecipient({
         userId: params.userId,
@@ -212,9 +270,44 @@ export class TransferConfirmationService {
         purposeNote: params.purposeNote?.trim().slice(0, 200) || undefined,
         idempotencyKey,
         originChannel: currentMessageChannel(),
+        originSurface: params.surface ?? PaymentSurface.CHAT,
+        clientRequestKey: params.clientRequestKey,
       },
     });
 
+    // Live wallet balance — separate from daily allowance so the confirm
+    // screen matches what users expect (₦1000 balance − ₦800 = ₦200 left).
+    const balance = await this.rubies
+      .getBalance(user.rubiesAccountNumber)
+      .catch(() => null);
+
+    return {
+      ok: true,
+      user,
+      transaction,
+      recipient,
+      isNewRecipient,
+      evaluation,
+      balance,
+    };
+  }
+
+  /** The conversation's rendering of a quote, unchanged since before P7. */
+  private async renderQuote(
+    result: TransferQuoteResult,
+    params: TransferQuoteParams,
+  ): Promise<void> {
+    if (!result.ok) {
+      await this.messenger.sendText(
+        result.user,
+        result.reason === "no_account"
+          ? "you don't have a udara account set up yet, so there's nothing to send from."
+          : `Couldn't verify account ${params.accountNumber} at that bank, double-check the account number and bank code.`,
+      );
+      return;
+    }
+
+    const { user, transaction, recipient, isNewRecipient, evaluation } = result;
     const bodyLines = [
       isNewRecipient
         ? `New recipient: ${recipient.accountName ?? recipient.accountNumber} (tagged "${recipient.label.toLowerCase()}").`
@@ -230,18 +323,12 @@ export class TransferConfirmationService {
       bodyLines.push(feeLine);
     }
 
-    // Live wallet balance — separate from daily allowance so the confirm
-    // screen matches what users expect (₦1000 balance − ₦800 = ₦200 left).
-    if (user.rubiesAccountNumber) {
-      const balance = await this.rubies
-        .getBalance(user.rubiesAccountNumber)
-        .catch(() => null);
-      if (balance !== null) {
-        const afterBalance = balance - params.amount - evaluation.feeAmount;
-        bodyLines.push(
-          `Account balance after this: ₦${Math.max(0, afterBalance).toLocaleString("en-NG")}`,
-        );
-      }
+    if (result.balance !== null) {
+      const afterBalance =
+        result.balance - params.amount - evaluation.feeAmount;
+      bodyLines.push(
+        `Account balance after this: ₦${Math.max(0, afterBalance).toLocaleString("en-NG")}`,
+      );
     }
 
     bodyLines.push(
@@ -259,20 +346,39 @@ export class TransferConfirmationService {
    * and a button payload is only unforgeable while WhatsApp is the sole client.
    * Anything that lets a caller name the id (the mobile app does) could
    * otherwise confirm someone else's transfer. Another user's id reads as
-   * "no such transaction".
+   * "no such transaction". So does a native quote: the chat never confirms one.
    */
   async confirmTransfer(userId: string, transactionId: string): Promise<void> {
+    const decision = await this.evaluateConfirm(
+      userId,
+      transactionId,
+      PaymentSurface.CHAT,
+    );
+    await this.renderConfirmDecision(decision);
+  }
+
+  /**
+   * The Confirm tap, decided: every pre-flight guard, in the order they have
+   * always run, and the state change each outcome makes. Money never moves
+   * here; the best outcome is PENDING_PIN. What to show is the caller's job
+   * (renderConfirmDecision for the conversation, the native route for the app).
+   */
+  async evaluateConfirm(
+    userId: string,
+    transactionId: string,
+    surface: PaymentSurface,
+  ): Promise<ConfirmDecision> {
     const transaction = await this.prisma.transaction.findUnique({
       where: { id: transactionId, userId },
       include: { recipient: true, user: true },
     });
-    if (!transaction) {
+    if (!transaction || transaction.originSurface !== surface) {
       this.logger.warn(`confirmTransfer: no such transaction ${transactionId}`);
-      return;
+      return { kind: "not_found" };
     }
     if (transaction.status !== TransactionStatus.PENDING_CONFIRMATION) {
       // Already actioned (double-tap, or a redelivered button webhook) — no-op.
-      return;
+      return { kind: "not_pending", transaction };
     }
 
     // Only `user` here: the recipient is needed when the transfer actually
@@ -298,11 +404,7 @@ export class TransferConfirmationService {
         return null;
       });
     if (balance === null) {
-      await this.messenger.sendText(
-        user,
-        "i couldn't check your balance just now. tap confirm again in a moment.",
-      );
-      return;
+      return { kind: "balance_unavailable", transaction };
     }
     const totalCost =
       Number(transaction.amount) + Number(transaction.feeAmount);
@@ -312,12 +414,13 @@ export class TransferConfirmationService {
         TransactionStatus.PENDING_CONFIRMATION,
         { status: TransactionStatus.FAILED },
       );
-      if (!failed) return;
-      await this.messenger.sendText(
-        user,
-        `That transfer needs ₦${totalCost.toLocaleString("en-NG")} but your Udara account only has ₦${balance.toLocaleString("en-NG")}. Cancelled.`,
-      );
-      return;
+      if (!failed) return { kind: "not_pending", transaction };
+      return {
+        kind: "insufficient_funds",
+        transaction,
+        needed: totalCost,
+        balance,
+      };
     }
 
     // The spend type and fee were frozen when the transfer was proposed and were
@@ -351,26 +454,25 @@ export class TransferConfirmationService {
           feeAmount: fresh.feeAmount,
         },
       });
-      await this.sendConfirmationRequest(
-        { ...transaction, type: fresh.type as unknown as TransactionType },
-        user,
-        fresh,
+      // Stays PENDING_CONFIRMATION — the user re-authorises what they can see.
+      return {
+        kind: "requoted",
+        transaction: {
+          ...transaction,
+          type: fresh.type as unknown as TransactionType,
+          feeAmount: new Prisma.Decimal(fresh.feeAmount),
+        },
+        reason: termsChanged ? "terms_changed" : "stale",
+        evaluation: fresh,
         balance,
-        termsChanged,
-      );
-      return; // stays PENDING_CONFIRMATION — the user re-authorises what they can see
+      };
     }
 
     // First transfer ever, no PIN on file: set one before anything moves.
     // The transaction stays PENDING_CONFIRMATION so the user can tap Confirm
     // again once their PIN exists, rather than silently losing the transfer.
     if (!user.pinHash) {
-      await this.messenger.sendText(
-        user,
-        "before your first transfer, you need to set a 4-digit pin. you'll use it to approve every transfer from here on.",
-      );
-      await this.pinGate.requestPinSetup(user);
-      return;
+      return { kind: "pin_setup_required", transaction };
     }
 
     // Locked out from earlier wrong attempts: refuse now rather than opening
@@ -381,9 +483,8 @@ export class TransferConfirmationService {
         TransactionStatus.PENDING_CONFIRMATION,
         { status: TransactionStatus.CANCELLED },
       );
-      if (!cancelled) return;
-      await this.pinGate.notifyLocked(user);
-      return;
+      if (!cancelled) return { kind: "not_pending", transaction };
+      return { kind: "locked", transaction };
     }
 
     // All pre-flight guards have passed, but money does NOT move here. The
@@ -397,8 +498,82 @@ export class TransferConfirmationService {
       TransactionStatus.PENDING_CONFIRMATION,
       { status: TransactionStatus.PENDING_PIN },
     );
-    if (!claimed) return;
-    await this.pinGate.requestTransferPin(user, transaction.id);
+    if (!claimed) return { kind: "not_pending", transaction };
+    return { kind: "pin_required", transaction };
+  }
+
+  /** The conversation's rendering of a confirm decision, unchanged since before P7. */
+  private async renderConfirmDecision(
+    decision: ConfirmDecision,
+  ): Promise<void> {
+    switch (decision.kind) {
+      case "not_found":
+      case "not_pending":
+        return;
+      case "balance_unavailable":
+        await this.messenger.sendText(
+          decision.transaction.user,
+          "i couldn't check your balance just now. tap confirm again in a moment.",
+        );
+        return;
+      case "insufficient_funds":
+        await this.messenger.sendText(
+          decision.transaction.user,
+          `That transfer needs ₦${decision.needed.toLocaleString("en-NG")} but your Udara account only has ₦${decision.balance.toLocaleString("en-NG")}. Cancelled.`,
+        );
+        return;
+      case "requoted":
+        await this.sendConfirmationRequest(
+          decision.transaction,
+          decision.transaction.user,
+          decision.evaluation,
+          decision.balance,
+          decision.reason === "terms_changed",
+        );
+        return;
+      case "pin_setup_required":
+        await this.messenger.sendText(
+          decision.transaction.user,
+          "before your first transfer, you need to set a 4-digit pin. you'll use it to approve every transfer from here on.",
+        );
+        await this.pinGate.requestPinSetup(decision.transaction.user);
+        return;
+      case "locked":
+        await this.pinGate.notifyLocked(decision.transaction.user);
+        return;
+      case "pin_required":
+        await this.pinGate.requestTransferPin(
+          decision.transaction.user,
+          decision.transaction.id,
+        );
+        return;
+    }
+  }
+
+  /**
+   * The app's Cancel on a native quote, including one waiting on its PIN (the
+   * more dangerous state to leave behind: it has a live challenge). Sends
+   * nothing; the caller shows the result. True if this call cancelled it.
+   */
+  async withdraw(userId: string, transactionId: string): Promise<boolean> {
+    const transaction = await this.prisma.transaction.findFirst({
+      where: {
+        id: transactionId,
+        userId,
+        originSurface: PaymentSurface.NATIVE,
+      },
+      select: { status: true },
+    });
+    if (
+      !transaction ||
+      (transaction.status !== TransactionStatus.PENDING_CONFIRMATION &&
+        transaction.status !== TransactionStatus.PENDING_PIN)
+    ) {
+      return false;
+    }
+    return this.claimStatus(transactionId, transaction.status, {
+      status: TransactionStatus.CANCELLED,
+    });
   }
 
   /**
@@ -485,6 +660,7 @@ export class TransferConfirmationService {
     const pending = await this.prisma.transaction.findFirst({
       where: {
         userId,
+        originSurface: PaymentSurface.CHAT,
         status: {
           in: [
             TransactionStatus.PENDING_CONFIRMATION,
@@ -517,6 +693,7 @@ export class TransferConfirmationService {
     const pending = await this.prisma.transaction.findFirst({
       where: {
         userId: user.id,
+        originSurface: PaymentSurface.CHAT,
         status: {
           in: [
             TransactionStatus.PENDING_CONFIRMATION,
@@ -616,7 +793,7 @@ export class TransferConfirmationService {
     );
   }
 
-  /** Scoped to `userId` for the same reason as confirmTransfer. */
+  /** Scoped to `userId`, and to chat quotes, for the same reasons as confirmTransfer. */
   async cancelTransfer(userId: string, transactionId: string): Promise<void> {
     const transaction = await this.prisma.transaction.findUnique({
       where: { id: transactionId, userId },
@@ -624,6 +801,7 @@ export class TransferConfirmationService {
     });
     if (
       !transaction ||
+      transaction.originSurface !== PaymentSurface.CHAT ||
       transaction.status !== TransactionStatus.PENDING_CONFIRMATION
     )
       return;
@@ -642,6 +820,8 @@ export class TransferConfirmationService {
 
   /**
    * Cancels a user's un-executed transfers (orchestrator cancel_surface).
+   * Chat quotes only: "cancel" typed in the conversation is about the
+   * conversation, not a send the app's screens have open.
    *
    * Covers PENDING_PIN as well as PENDING_CONFIRMATION. The PIN-awaiting state is
    * the more dangerous one to leave lying around, because it carries a live PIN
@@ -657,7 +837,11 @@ export class TransferConfirmationService {
       TransactionStatus.PENDING_PIN,
     ];
     const pending = await this.prisma.transaction.findMany({
-      where: { userId, status: { in: cancellable } },
+      where: {
+        userId,
+        originSurface: PaymentSurface.CHAT,
+        status: { in: cancellable },
+      },
       include: { user: true },
     });
     for (const transaction of pending) {

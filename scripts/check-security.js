@@ -489,6 +489,8 @@ const NEEDS_TESTS = [
   'src/app-api/chat/forms.controller.ts',
   'src/app-api/history/transaction-history.service.ts',
   'src/app-api/banks/name-enquiry.service.ts',
+  'src/app-api/transfers/native-transfer.service.ts',
+  'src/app-api/transfers/transfers.controller.ts',
   'src/app-auth/new-device-cap.service.ts',
   'src/app-auth/secret-hash.util.ts',
   'src/app-auth/otp.service.ts',
@@ -645,6 +647,43 @@ if (
     'S16',
     'src/app-auth/secret-hash.util.ts must keep keyed code digests and constant-time comparison',
   );
+}
+
+// ---------------------------------------------------------------------------
+// S17: money executes only from PinOutcomeService, the one door from a
+// verified PIN (and the new-device cap) to Rubies. A native route that
+// creates a payment requires an Idempotency-Key, so a retried request cannot
+// become a second payment.
+// ---------------------------------------------------------------------------
+
+const EXECUTE_ALLOWED = new Set(['src/whatsapp/pin-outcome.service.ts']);
+for (const full of ALL_FILES) {
+  const file = rel(full);
+  if (!file.startsWith('src/') || !file.endsWith('.ts') || file.endsWith('.spec.ts')) {
+    continue;
+  }
+  const lines = fs.readFileSync(full, 'utf8').split(/\r?\n/);
+  lines.forEach((line, index) => {
+    if (isWaived(lines, index)) return;
+    if (/\.executeVerified(Transfer|BillPayment)\(/.test(line) && !EXECUTE_ALLOWED.has(file)) {
+      fail(
+        'S17',
+        `${file}:${index + 1}: money executes only from src/whatsapp/pin-outcome.service.ts`,
+      );
+    }
+  });
+}
+
+const NATIVE_PAYMENT_CONTROLLERS = ['src/app-api/transfers/transfers.controller.ts'];
+for (const file of NATIVE_PAYMENT_CONTROLLERS) {
+  const source = readIfExists(file);
+  if (
+    source === null ||
+    !/@Headers\(\s*(['"`])idempotency-key\1\s*\)/i.test(source) ||
+    !/IDEMPOTENCY_KEY\.test\(/.test(source)
+  ) {
+    fail('S17', `${file} must require an Idempotency-Key on the route that creates a payment`);
+  }
 }
 
 // ---------------------------------------------------------------------------

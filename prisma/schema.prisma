@@ -62,6 +62,14 @@ enum TransactionType {
   BORROWED // against future allowance
 }
 
+// Where a payment was quoted: the conversation (WhatsApp or the app chat), or
+// the app's own send-money screens (P7). The chat never resumes, confirms or
+// cancels a NATIVE quote, and the native routes never act on a CHAT one.
+enum PaymentSurface {
+  CHAT
+  NATIVE
+}
+
 enum TransactionStatus {
   PENDING_CONFIRMATION
   // Confirm button tapped and all pre-flight guards passed, now waiting on
@@ -475,16 +483,20 @@ model Transaction {
   recipientId String
   recipient   Recipient @relation(fields: [recipientId], references: [id])
 
-  amount        Decimal           @db.Decimal(14, 2)
-  type          TransactionType   @default(NORMAL)
-  status        TransactionStatus @default(PENDING_CONFIRMATION)
+  amount           Decimal           @db.Decimal(14, 2)
+  type             TransactionType   @default(NORMAL)
+  status           TransactionStatus @default(PENDING_CONFIRMATION)
   // Where the quote was made. Decides where the result is sent when it arrives
   // later, from the Rubies webhook or reconciliation (P5 delivery rules).
-  originChannel MessageChannel    @default(WHATSAPP)
+  originChannel    MessageChannel    @default(WHATSAPP)
+  originSurface    PaymentSurface    @default(CHAT)
+  // The app's Idempotency-Key for a native quote. Never the Rubies
+  // idempotencyKey, which the server generates, so a client cannot pick it.
+  clientRequestKey String?
   // This send's stated purpose (spend-check / orchestrator label_hint) — may
   // differ from Recipient.label when the person was tagged on an earlier send.
-  purposeLabel  RecipientLabel?
-  purposeNote   String?
+  purposeLabel     RecipientLabel?
+  purposeNote      String?
 
   feeAmount         Decimal   @default(0) @db.Decimal(14, 2)
   // Set once the feeAmount (if any) has actually been moved to
@@ -522,6 +534,7 @@ model Transaction {
   // but its primary key and idempotencyKey. Every orchestrator turn scans it
   // twice (pending confirms, last completed send) and the reconciler scans it
   // once a minute.
+  @@unique([userId, clientRequestKey])
   @@index([userId, status, createdAt])
   @@index([status, confirmedAt])
   @@index([status, appliedToAllowanceAt])

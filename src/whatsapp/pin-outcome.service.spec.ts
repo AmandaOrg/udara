@@ -245,4 +245,47 @@ describe("PinOutcomeService", () => {
       expect(newDeviceCap.check).not.toHaveBeenCalled();
     });
   });
+
+  describe("reporting what happened", () => {
+    it("reports done after executing", async () => {
+      await expect(
+        service.apply(
+          { action: "execute_transfer", transactionId: "txn-1" },
+          "user-1",
+        ),
+      ).resolves.toEqual({ kind: "done" });
+    });
+
+    it("reports a cap refusal with its figures, and a quiet caller sends nothing", async () => {
+      const liftsAt = new Date("2026-09-27T09:00:00Z");
+      newDeviceCap.check.mockResolvedValue({
+        ok: false,
+        cap: 20_000,
+        remaining: 5_000,
+        liftsAt,
+      });
+
+      const result = await inApp(() =>
+        service.apply(
+          { action: "execute_transfer", transactionId: "txn-1" },
+          "user-1",
+          { quiet: true },
+        ),
+      );
+
+      expect(result).toEqual({
+        kind: "capped",
+        cap: 20_000,
+        remaining: 5_000,
+        liftsAt,
+      });
+      expect(messenger.sendText).not.toHaveBeenCalled();
+      expect(
+        transferConfirmation.executeVerifiedTransfer,
+      ).not.toHaveBeenCalled();
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: "CANCELLED" } }),
+      );
+    });
+  });
 });

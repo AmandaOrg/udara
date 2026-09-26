@@ -33,7 +33,7 @@ src/
   messaging/       ChannelMessenger (the only way to send), channel context, WhatsApp and app adapters, app message store
   conversation/    ConversationRouterService (what a message does, either channel), TurnService (one turn per user)
   app-auth/        App sign-in: SMS codes, sessions, new-device step-up and cap (always loaded)
-  app-api/         Mobile app HTTP API under /v1 (loaded only when APP_API_ENABLED=true): auth, me, chat, forms, devices, and the read-only screens (balance, limits, account, history, recipients, banks, name enquiry, spend summary, bill catalog, app config)
+  app-api/         Mobile app HTTP API under /v1 (loaded only when APP_API_ENABLED=true): auth, me, chat, forms, devices, the read-only screens (balance, limits, account, history, recipients, banks, name enquiry, spend summary, bill catalog, app config), and native transfers
   whatsapp/        Webhook, WhatsApp router, wizards, PIN gate, ActionExecutor; transport module
   pin/             PIN challenge/verify
   cli/             Dry-run CLI (no WhatsApp/Rubies)
@@ -72,7 +72,9 @@ flowchart TD
 
 ### Deterministic money path
 
-Confirm / cancel buttons and the transfer wizard never wait on the LLM. Confirm and cancel look the row up scoped to the sender's `userId`, never by id alone. After a PIN is verified, `PinOutcomeService` is the single place that turns the outcome into execution. `ActionExecutorService` lives in `WhatsappModule` because it needs the messenger and account services. `OrchestratorModule` must stay free of outbound send dependencies.
+Confirm / cancel buttons and the transfer wizard never wait on the LLM. Confirm and cancel look the row up scoped to the sender's `userId`, never by id alone. After a PIN is verified, `PinOutcomeService` is the single place that turns the outcome into execution (S17).
+
+The decisions and their rendering are separate. `TransferConfirmationService.createQuote` and `evaluateConfirm` return what was decided, and `initiateTransfer` and `confirmTransfer` render it as the chat's cards and messages. The app's send screens (`app-api/transfers/`, `NativeTransferService`) call the same two and return the decision as JSON; the PIN goes through `PinGateService.authorizeTransfer`, the same check as the chat's PIN form. A payment records where it was quoted (`originSurface`): the chat never confirms, resumes or cancels a native quote, and the native routes never act on a chat one. `ActionExecutorService` lives in `WhatsappModule` because it needs the messenger and account services. `OrchestratorModule` must stay free of outbound send dependencies.
 
 ### Sending
 
@@ -111,7 +113,7 @@ Prisma models (see [`prisma/schema.prisma`](../prisma/schema.prisma)): `User`, `
 
 A `User` is identified by `phoneNumber` (international digits, no "+"; see `common/phone.util.ts`). `whatsappNumber` is set only once that number has messaged on WhatsApp, and `findOrCreateUser` links a first WhatsApp message to an existing account with the same phone number.
 
-`AppMessage` is the in-app chat, both directions, ordered by `seq`. `UserTurnLease` is the per-user turn lock and last channel. App sign-in has `AuthOtp`, `Device`, `AppSession` and `LoginChallenge`. `NameEnquiryLog` counts the app's account-name lookups per user, and deliberately holds no account number.
+`AppMessage` is the in-app chat, both directions, ordered by `seq`. `UserTurnLease` is the per-user turn lock and last channel. App sign-in has `AuthOtp`, `Device`, `AppSession` and `LoginChallenge`. `NameEnquiryLog` counts the app's account-name lookups per user, and deliberately holds no account number. `Transaction.originSurface` (`CHAT` or `NATIVE`) says which surface quoted a transfer, and `clientRequestKey` holds the app's `Idempotency-Key`, unique per user.
 
 `TransferDraft` is the interactive send-money wizard. `ConversationSession` is chat history for the Udara (`KEDU`) and manager personas. Do not merge them.
 

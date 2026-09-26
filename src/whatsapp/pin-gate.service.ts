@@ -20,6 +20,20 @@ export type PinFlowOutcome =
   | { action: "pin_setup_complete" };
 
 /**
+ * A transfer PIN checked for a caller that shows the answer itself (the app's
+ * native send screen), instead of as chat messages. `verified` carries the
+ * same outcome the chat path produces, for PinOutcomeService to act on.
+ */
+export type TransferPinCheck =
+  | { kind: "verified"; outcome: PinFlowOutcome }
+  | { kind: "wrong_pin"; message: string; retryToken: string }
+  | { kind: "locked"; message: string; lockedUntil: Date | null }
+  | { kind: "expired" };
+
+type PinVerdict =
+  { ok: true } | { ok: false; reason: string; lockedUntil: Date | null };
+
+/**
  * The WhatsApp-facing half of PIN authentication: sending the entry/setup
  * Flows and handling what comes back.
  *
@@ -51,19 +65,31 @@ export class PinGateService {
    * the reply cannot be replayed against a different transfer.
    */
   async requestTransferPin(user: User, transactionId: string): Promise<void> {
+    const flowToken = await this.issueTransferPinToken(user, transactionId);
+
+    await this.sendPinFlow(user, {
+      kind: "PIN_ENTRY",
+      flowToken,
+      headerText: "Enter your PIN",
+      bodyText: "Enter your 4-digit PIN to authorize this transfer.",
+      ctaText: "Enter PIN",
+    });
+  }
+
+  /**
+   * The challenge alone, for a caller that shows its own PIN screen (the
+   * app's native send). Bound to this transaction like the Flow's.
+   */
+  async issueTransferPinToken(
+    user: User,
+    transactionId: string,
+  ): Promise<string> {
     const challenge = await this.pin.createChallenge({
       userId: user.id,
       purpose: PinChallengePurpose.TRANSFER_AUTH,
       transactionId,
     });
-
-    await this.sendPinFlow(user, {
-      kind: "PIN_ENTRY",
-      flowToken: challenge.flowToken,
-      headerText: "Enter your PIN",
-      bodyText: "Enter your 4-digit PIN to authorize this transfer.",
-      ctaText: "Enter PIN",
-    });
+    return challenge.flowToken;
   }
 
   /** PIN-entry Flow for a bill/airtime purchase that passed confirm. */
@@ -88,19 +114,25 @@ export class PinGateService {
 
   /** Sends the first-time PIN setup Flow (enter + confirm). */
   async requestPinSetup(user: User): Promise<void> {
-    const challenge = await this.pin.createChallenge({
-      userId: user.id,
-      purpose: PinChallengePurpose.SETUP,
-    });
+    const flowToken = await this.issuePinSetupToken(user);
 
     await this.sendPinFlow(user, {
       kind: "PIN_SETUP",
-      flowToken: challenge.flowToken,
+      flowToken,
       headerText: "Set your transfer PIN",
       bodyText:
         "Choose a 4-digit PIN. You'll enter it to approve every transfer, so pick something you'll remember but others can't guess.",
       ctaText: "Set PIN",
     });
+  }
+
+  /** A setup challenge alone, for the app to open its own PIN setup screen. */
+  async issuePinSetupToken(user: User): Promise<string> {
+    const challenge = await this.pin.createChallenge({
+      userId: user.id,
+      purpose: PinChallengePurpose.SETUP,
+    });
+    return challenge.flowToken;
   }
 
   /**
@@ -369,24 +401,93 @@ export class PinGateService {
       return { action: "none" };
     }
 
-    const result = await this.pin.verifyPin(user.id, sensitive.pin ?? "");
-    if (!result.ok) {
-      await this.messenger.sendText(user, result.reason);
-
-      if (result.lockedUntil) {
-        // Locked: abandon the transfer outright rather than leaving it
-        // sitting in PENDING_PIN where a later unlock could silently resume
-        // a transfer the user has long since moved on from.
-        await this.cancelPendingTransfer(transactionId);
-        return { action: "none" };
-      }
-
+    const verdict = await this.checkTransferPin(
+      user,
+      transactionId,
+      sensitive.pin ?? "",
+    );
+    if (!verdict.ok) {
+      await this.messenger.sendText(user, verdict.reason);
       // Wrong but not locked — offer another attempt with a fresh challenge.
-      await this.requestTransferPin(user, transactionId);
+      if (!verdict.lockedUntil) {
+        await this.requestTransferPin(user, transactionId);
+      }
       return { action: "none" };
     }
 
     return { action: "execute_transfer", transactionId };
+  }
+
+  /**
+   * The app's native PIN step for a transfer: the same checks as the chat's
+   * PIN form, answered as data instead of messages.
+   *
+   * The token must be a transfer challenge for this very transaction. The
+   * route names the transaction too, and a token minted for one transfer must
+   * not authorize another, even the same user's.
+   */
+  async authorizeTransfer(
+    user: User,
+    flowToken: string,
+    transactionId: string,
+    pin: string,
+  ): Promise<TransferPinCheck> {
+    const challenge = await this.pin.consumeChallenge(flowToken, user.id);
+    if (
+      !challenge ||
+      challenge.purpose !== PinChallengePurpose.TRANSFER_AUTH ||
+      challenge.transactionId !== transactionId
+    ) {
+      if (challenge) {
+        this.logger.warn(
+          `PIN token for user ${user.id} was not for transaction ${transactionId} — refusing`,
+        );
+      }
+      return { kind: "expired" };
+    }
+
+    const verdict = await this.checkTransferPin(user, transactionId, pin);
+    if (!verdict.ok) {
+      if (verdict.lockedUntil) {
+        return {
+          kind: "locked",
+          message: verdict.reason,
+          lockedUntil: verdict.lockedUntil,
+        };
+      }
+      return {
+        kind: "wrong_pin",
+        message: verdict.reason,
+        retryToken: await this.issueTransferPinToken(user, transactionId),
+      };
+    }
+    return {
+      kind: "verified",
+      outcome: { action: "execute_transfer", transactionId },
+    };
+  }
+
+  /**
+   * The one transfer PIN check both channels use. A lockout abandons the
+   * transfer outright rather than leaving it in PENDING_PIN, where a later
+   * unlock could silently resume a send the user has long since moved on
+   * from.
+   */
+  private async checkTransferPin(
+    user: User,
+    transactionId: string,
+    pin: string,
+  ): Promise<PinVerdict> {
+    const result = await this.pin.verifyPin(user.id, pin);
+    if (result.ok) return { ok: true };
+    if (result.lockedUntil) {
+      await this.cancelPendingTransfer(transactionId);
+    }
+    return {
+      ok: false,
+      reason: result.reason,
+      lockedUntil: result.lockedUntil ?? null,
+    };
   }
 
   private async handleBillPaymentSubmission(

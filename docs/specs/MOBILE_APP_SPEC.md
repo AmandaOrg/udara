@@ -90,6 +90,27 @@ The app can show, without going through the chat:
 
 Before the account is opened, balance, limits and account details answer "no account yet", and the lists are empty. Nobody can see another person's data: the user always comes from the session, never from the request.
 
+### P7 (sending money from the app's own screens)
+
+The app can send money without the chat, with the same steps and the same protections:
+1. **Quote.** The user picks the recipient and amount and sees what the chat's card shows: the recipient's name (a new recipient is checked with their bank first), the amount, any window or borrowing fee, the balance after, and what is left of today's allowance.
+2. **Confirm.** The same checks as the chat's Confirm button, in the same order.
+   - Not enough money: the send is cancelled and the app says how much is needed.
+   - The figures moved while it waited (the window closed, or more than 10 minutes passed): the app shows the new figures, and the user confirms again.
+   - No PIN yet: the app asks the user to set one first.
+   - PIN locked: the send is cancelled and the app says so.
+3. **PIN**, on a native screen.
+   - A wrong PIN says how many tries are left and asks again.
+   - A lockout cancels the send.
+   - On a phone signed in less than 24 hours ago, the new-phone limit (₦20,000 by default) applies exactly as it does to a PIN entered in the chat.
+4. **Result:** sent, still processing, or failed. A result that arrives later reaches the app with a push.
+
+Also:
+- **Nothing is sent twice.** If the connection drops and the app asks again for the same send, it gets the same transfer back, not a second one. The same retry id reused for a different send is refused.
+- **The chat and the send screens stay out of each other's way.** A send started on the screens never shows a card or PIN form in the chat, and typing "cancel" in the chat does not cancel it. Its result is still added to the chat, like any payment's.
+- **A send can be cancelled** from the screen until the PIN is accepted.
+- **WhatsApp users see no change.** Every card, message and button is word for word the same.
+
 ### Later phases (outline)
 
 - **Sign-up and login.**
@@ -126,3 +147,4 @@ Before the account is opened, balance, limits and account details answer "no acc
 | --- | --- |
 | 2026-09-25 | Initial: P0 behavior in full, later phases outlined |
 | 2026-09-26 | P6: read-only screens |
+| 2026-09-26 | P7: sending money from the app's screens |

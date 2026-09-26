@@ -28,7 +28,7 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 | `src/messaging` | `ChannelMessenger`: the only way to send; channel context; WhatsApp and app adapters; `AppMessage` store; delivery policy; Expo push |
 | `src/conversation` | `ConversationRouterService` (routing for both channels), `TurnService` (per-user turn lease, channel-switch expiry) |
 | `src/app-auth` | App sign-in: SMS codes (Termii), sessions, new-device step-up, new-device transfer cap |
-| `src/app-api` | Mobile app `/v1` API (auth, me, chat, forms, devices, read-only screens), deny-by-default guard; only with `APP_API_ENABLED=true`; OpenAPI at `/docs` with `APP_API_DOCS=true` |
+| `src/app-api` | Mobile app `/v1` API (auth, me, chat, forms, devices, read-only screens, native transfers), deny-by-default guard; only with `APP_API_ENABLED=true`; OpenAPI at `/docs` with `APP_API_DOCS=true` |
 | `src/whatsapp` | Webhook, router, transfer wizard, bill-pay wizard, PIN gate, ActionExecutor; `WhatsappTransportModule` (Cloud API) |
 | `src/pin` | PIN challenge/verify |
 | `src/cli` | Dry-run golden/fixture runner |
@@ -44,7 +44,7 @@ Surfaces: `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `
 
 ## 5. Data (Prisma)
 
-User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel), BillPaymentDraft, BillPayment, OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WeeklyReview, WhatsappMessage, AppMessage, UserTurnLease, AuthOtp, Device, AppSession, LoginChallenge, NameEnquiryLog, PIN challenge, Rubies webhook log, LLM call log, nudges.
+User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel, originChannel, originSurface, clientRequestKey), BillPaymentDraft, BillPayment, OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WeeklyReview, WhatsappMessage, AppMessage, UserTurnLease, AuthOtp, Device, AppSession, LoginChallenge, NameEnquiryLog, PIN challenge, Rubies webhook log, LLM call log, nudges.
 
 Identity is `User.phoneNumber`; `whatsappNumber` is nullable (set on first WhatsApp contact). `TransferDraft` ≠ `ConversationSession`. Persona enum still `KEDU` | `MANAGER`. Session `contextData.spendCheck` holds pending send hints during the pre-wizard spend check.
 

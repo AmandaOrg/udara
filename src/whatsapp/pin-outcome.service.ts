@@ -9,6 +9,13 @@ import { NewDeviceCapService } from "../app-auth/new-device-cap.service";
 import { ChannelMessenger } from "../messaging/channel-messenger";
 import { currentChannelContext } from "../messaging/channel-context";
 
+/** What applying a PIN outcome did, for a caller that reports it itself. */
+export type PinApplyResult =
+  | { kind: "done" }
+  | { kind: "capped"; cap: number; remaining: number; liftsAt: Date };
+
+type CapCheck = { kind: "ok" } | Extract<PinApplyResult, { kind: "capped" }>;
+
 /**
  * Acts on what PinGateService decided about a PIN submission. This is the only
  * place a verified PIN turns into money moving.
@@ -31,17 +38,29 @@ export class PinOutcomeService {
     private readonly messenger: ChannelMessenger,
   ) {}
 
-  async apply(outcome: PinFlowOutcome, userId: string): Promise<void> {
+  /**
+   * `quiet` skips the chat message when the new-device cap refuses the
+   * payment, for the native route that returns the refusal instead.
+   */
+  async apply(
+    outcome: PinFlowOutcome,
+    userId: string,
+    options: { quiet?: boolean } = {},
+  ): Promise<PinApplyResult> {
     switch (outcome.action) {
       case "execute_transfer": {
-        const allowed = await this.withinNewDeviceCap(userId, async () => {
-          const row = await this.prisma.transaction.findFirst({
-            where: { id: outcome.transactionId, userId },
-            select: { amount: true },
-          });
-          return row ? Number(row.amount) : null;
-        });
-        if (!allowed) {
+        const check = await this.withinNewDeviceCap(
+          userId,
+          options,
+          async () => {
+            const row = await this.prisma.transaction.findFirst({
+              where: { id: outcome.transactionId, userId },
+              select: { amount: true },
+            });
+            return row ? Number(row.amount) : null;
+          },
+        );
+        if (check.kind === "capped") {
           await this.prisma.transaction.updateMany({
             where: {
               id: outcome.transactionId,
@@ -50,22 +69,26 @@ export class PinOutcomeService {
             },
             data: { status: TransactionStatus.CANCELLED },
           });
-          return;
+          return check;
         }
         await this.transferConfirmation.executeVerifiedTransfer(
           outcome.transactionId,
         );
-        return;
+        return DONE;
       }
       case "execute_bill_payment": {
-        const allowed = await this.withinNewDeviceCap(userId, async () => {
-          const row = await this.prisma.billPayment.findFirst({
-            where: { id: outcome.billPaymentId, userId },
-            select: { amount: true },
-          });
-          return row ? Number(row.amount) : null;
-        });
-        if (!allowed) {
+        const check = await this.withinNewDeviceCap(
+          userId,
+          options,
+          async () => {
+            const row = await this.prisma.billPayment.findFirst({
+              where: { id: outcome.billPaymentId, userId },
+              select: { amount: true },
+            });
+            return row ? Number(row.amount) : null;
+          },
+        );
+        if (check.kind === "capped") {
           await this.prisma.billPayment.updateMany({
             where: {
               id: outcome.billPaymentId,
@@ -74,54 +97,67 @@ export class PinOutcomeService {
             },
             data: { status: BillPaymentStatus.CANCELLED },
           });
-          return;
+          return check;
         }
         await this.billPaymentConfirmation.executeVerifiedBillPayment(
           outcome.billPaymentId,
         );
-        return;
+        return DONE;
       }
       case "pin_setup_complete":
         // Whichever was waiting on the new PIN picks up where it left off.
         await this.transferConfirmation.resumeAfterPinSetup(userId);
         await this.billPaymentConfirmation.resumeAfterPinSetup(userId);
         await this.onboarding.resumeAfterPinSetup(userId);
-        return;
+        return DONE;
       case "none":
-        return;
+        return DONE;
     }
   }
 
   /**
    * Only a PIN entered in the app is capped: the device is what is new, and
    * only the app channel carries one, so WhatsApp skips this without even
-   * reading the amount. False after telling the user why.
+   * reading the amount. A refusal is reported, and told to the user unless
+   * the caller is quiet.
    */
   private async withinNewDeviceCap(
     userId: string,
+    options: { quiet?: boolean },
     amountOf: () => Promise<number | null>,
-  ): Promise<boolean> {
+  ): Promise<CapCheck> {
     const context = currentChannelContext();
-    if (context?.channel !== "app") return true;
+    if (context?.channel !== "app") return { kind: "ok" };
 
     const amount = await amountOf();
     // Not this user's payment. The PIN challenge makes that unreachable, but
     // an unexplained id is not something to send money on.
-    if (amount === null) return false;
+    if (amount === null) {
+      return { kind: "capped", cap: 0, remaining: 0, liftsAt: new Date() };
+    }
 
     const verdict = context.deviceId
       ? await this.newDeviceCap.check(userId, context.deviceId, amount)
       : // An app event with no device is a wiring bug; refuse rather than guess.
         ({ ok: false, cap: 0, remaining: 0, liftsAt: new Date() } as const);
-    if (verdict.ok) return true;
+    if (verdict.ok) return { kind: "ok" };
 
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-    });
-    await this.messenger.sendText(user, capMessage(verdict));
-    return false;
+    if (!options.quiet) {
+      const user = await this.prisma.user.findUniqueOrThrow({
+        where: { id: userId },
+      });
+      await this.messenger.sendText(user, capMessage(verdict));
+    }
+    return {
+      kind: "capped",
+      cap: verdict.cap,
+      remaining: verdict.remaining,
+      liftsAt: verdict.liftsAt,
+    };
   }
 }
+
+const DONE: PinApplyResult = { kind: "done" };
 
 function capMessage(verdict: {
   cap: number;

@@ -24,6 +24,8 @@ import { BankDirectoryService } from "./banks/bank-directory.service";
 import { NameEnquiryService } from "./banks/name-enquiry.service";
 import { BillsController } from "./bills/bills.controller";
 import { AppConfigController } from "./app-config/app-config.controller";
+import { TransfersController } from "./transfers/transfers.controller";
+import { NativeTransferService } from "./transfers/native-transfer.service";
 
 /**
  * The mobile app's HTTP API under /v1. Loaded only when APP_API_ENABLED=true
@@ -56,6 +58,7 @@ import { AppConfigController } from "./app-config/app-config.controller";
     BanksController,
     BillsController,
     AppConfigController,
+    TransfersController,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AppAuthGuard },
@@ -64,6 +67,7 @@ import { AppConfigController } from "./app-config/app-config.controller";
     TransactionHistoryService,
     BankDirectoryService,
     NameEnquiryService,
+    NativeTransferService,
   ],
 })
 export class AppApiModule {}

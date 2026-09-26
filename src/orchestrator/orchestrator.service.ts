@@ -48,6 +48,7 @@ import {
   ConversationSession,
   ConversationSessionStatus,
   LlmCallPurpose,
+  PaymentSurface,
   Prisma,
   TransactionStatus,
   TransferDraftStatus,
@@ -508,6 +509,9 @@ export class OrchestratorService {
       this.prisma.transaction.findFirst({
         where: {
           userId: user.id,
+          // A quote open on the app's send screen is not the conversation's to
+          // remind about; the chat cannot confirm it.
+          originSurface: PaymentSurface.CHAT,
           status: {
             in: [
               TransactionStatus.PENDING_CONFIRMATION,

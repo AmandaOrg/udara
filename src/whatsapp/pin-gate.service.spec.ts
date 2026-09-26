@@ -491,4 +491,127 @@ describe("PinGateService", () => {
       });
     });
   });
+
+  /** The app's native send screen: the same checks, answered as data. */
+  describe("authorizeTransfer", () => {
+    const challenge = {
+      id: "c1",
+      purpose: PinChallengePurpose.TRANSFER_AUTH,
+      transactionId: "txn-1",
+      billPaymentId: null,
+    };
+
+    it("verifies a PIN for the transaction the token was issued for, and says nothing in the chat", async () => {
+      pin.consumeChallenge.mockResolvedValue(challenge);
+      pin.verifyPin.mockResolvedValue({ ok: true });
+
+      await expect(
+        service.authorizeTransfer(user, "tok-1", "txn-1", "1234"),
+      ).resolves.toEqual({
+        kind: "verified",
+        outcome: { action: "execute_transfer", transactionId: "txn-1" },
+      });
+      expect(pin.consumeChallenge).toHaveBeenCalledWith("tok-1", "user-1");
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+      expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["another transaction", { ...challenge, transactionId: "txn-2" }],
+      [
+        "a bill payment",
+        { ...challenge, transactionId: null, billPaymentId: "bill-1" },
+      ],
+      [
+        "PIN setup",
+        {
+          ...challenge,
+          purpose: PinChallengePurpose.SETUP,
+          transactionId: null,
+        },
+      ],
+      ["nothing (unknown, used or expired)", null],
+    ])(
+      "refuses a token issued for %s without checking the PIN",
+      async (_label, found) => {
+        pin.consumeChallenge.mockResolvedValue(found);
+
+        await expect(
+          service.authorizeTransfer(user, "tok-1", "txn-1", "1234"),
+        ).resolves.toEqual({ kind: "expired" });
+        expect(pin.verifyPin).not.toHaveBeenCalled();
+      },
+    );
+
+    it("answers a wrong PIN with the reason and a fresh token for the same transfer", async () => {
+      pin.consumeChallenge.mockResolvedValue(challenge);
+      pin.verifyPin.mockResolvedValue({
+        ok: false,
+        reason: "that pin isn't right. 2 tries left.",
+      });
+      pin.createChallenge.mockResolvedValue({ id: "c2", flowToken: "tok-2" });
+
+      await expect(
+        service.authorizeTransfer(user, "tok-1", "txn-1", "0000"),
+      ).resolves.toEqual({
+        kind: "wrong_pin",
+        message: "that pin isn't right. 2 tries left.",
+        retryToken: "tok-2",
+      });
+      expect(pin.createChallenge).toHaveBeenCalledWith(
+        expect.objectContaining({
+          purpose: PinChallengePurpose.TRANSFER_AUTH,
+          transactionId: "txn-1",
+        }),
+      );
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+      expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+    });
+
+    it("cancels the transfer when the PIN locks, and issues no new token", async () => {
+      const until = new Date("2026-09-26T12:30:00Z");
+      pin.consumeChallenge.mockResolvedValue(challenge);
+      pin.verifyPin.mockResolvedValue({
+        ok: false,
+        reason: "too many wrong attempts.",
+        lockedUntil: until,
+      });
+
+      await expect(
+        service.authorizeTransfer(user, "tok-1", "txn-1", "0000"),
+      ).resolves.toEqual({
+        kind: "locked",
+        message: "too many wrong attempts.",
+        lockedUntil: until,
+      });
+      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
+        where: { id: "txn-1", status: "PENDING_PIN" },
+        data: { status: "CANCELLED" },
+      });
+      expect(pin.createChallenge).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("issuing tokens without a form", () => {
+    it("binds a transfer token to its transaction and sends nothing", async () => {
+      await expect(service.issueTransferPinToken(user, "txn-1")).resolves.toBe(
+        "tok-1",
+      );
+      expect(pin.createChallenge).toHaveBeenCalledWith({
+        userId: "user-1",
+        purpose: PinChallengePurpose.TRANSFER_AUTH,
+        transactionId: "txn-1",
+      });
+      expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+    });
+
+    it("issues a setup token and sends nothing", async () => {
+      await expect(service.issuePinSetupToken(user)).resolves.toBe("tok-1");
+      expect(pin.createChallenge).toHaveBeenCalledWith({
+        userId: "user-1",
+        purpose: PinChallengePurpose.SETUP,
+      });
+      expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+    });
+  });
 });

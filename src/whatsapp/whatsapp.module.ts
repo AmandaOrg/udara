@@ -83,6 +83,10 @@ import { TurnService } from "../conversation/turn.service";
     ConversationRouterService,
     TurnService,
     InboundRateLimitService,
+    // The app's native send screens (P7) use the same PIN check and the same
+    // single door from a verified PIN to money moving.
+    PinGateService,
+    PinOutcomeService,
   ],
 })
 export class WhatsappModule {}

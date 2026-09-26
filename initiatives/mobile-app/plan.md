@@ -340,26 +340,52 @@ Every route is signed-in only and reads only the caller's own rows, except `app-
 
 ## Phase 7 — Native transfers
 
-**Status:** not started
-**Started:**
-**Completed:**
-**Owner:**
+**Status:** completed
+**Started:** 2026-09-26
+**Completed:** 2026-09-26
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] Tests that pin the exact WhatsApp messages first. Then `createQuote` and `evaluateConfirm` return data, with a WhatsApp renderer on top. `/v1/transfers` with `Idempotency-Key`. `clientRequestKey`, `originSurface`, S17.
+- [x] First, tests that pin today's exact WhatsApp output (text, buttons and order) for every quote, confirm and cancel branch, run green against the code before the refactor
+- [x] `TransferConfirmationService` split so decisions return data:
+  - `createQuote` returns the quote (or no account, or recipient not verified);
+  - `evaluateConfirm` returns a decision: balance unavailable, not enough money, re-quoted, PIN setup needed, locked, or ready for the PIN;
+  - `initiateTransfer` and `confirmTransfer` are those plus the unchanged WhatsApp rendering;
+  - `executeVerifiedTransfer` and `applyTransferResult` are not touched.
+- [x] `PinGateService`: a PIN token can be issued without sending a form, and a transfer PIN can be checked with a structured answer (verified, wrong with a fresh token, locked, expired) instead of chat messages. The WhatsApp handling is the same code path with its messages on top.
+- [x] `PinOutcomeService.apply` reports when the new-device cap refused a payment, and can skip the chat message for a caller that shows it itself
+- [x] `Transaction.originSurface` (`CHAT` or `NATIVE`) and `clientRequestKey`, unique per user. Native quotes are invisible to the chat: resuming, cancelling, the orchestrator's "pending confirm" context, and the chat's own confirm and cancel buttons skip them.
+- [x] Routes, all signed-in and scoped to the caller:
+  - `POST /v1/transfers` with a required `Idempotency-Key` header: the quote. A replayed key returns the same transfer; the same key with a different request is refused.
+  - `POST /v1/transfers/:id/confirm`: the decision. When the answer is the PIN, it carries a PIN token. Asking again while the PIN is awaited issues a fresh token, so a dropped response is recoverable.
+  - `POST /v1/transfers/:id/authorize {pinToken, pin}`: the PIN, answered synchronously: sent, processing, failed, wrong PIN (with a fresh token), locked, over the new-device limit, or expired.
+  - `GET /v1/transfers/:id` and `POST /v1/transfers/:id/cancel`
+- [x] Native transfers write no quote card and no PIN form into the chat. Their results are delivered like any payment's: into the app chat, with a push when the result comes later from Rubies.
+- [x] S17: `executeVerifiedTransfer` and `executeVerifiedBillPayment` are called only from `pin-outcome.service.ts`, and a native route that creates a payment reads an `Idempotency-Key`
 
 ### Acceptance tests
 
-- [ ] Quote, then confirm, then PIN, then `EXECUTED` in dry run; a replayed idempotency key returns the original
+- [x] The pinned WhatsApp-output tests pass unchanged after the refactor, as does the rest of the transfer, PIN gate and PIN outcome suites
+- [x] Unit: every confirm decision; a native quote is ignored by every chat path; a PIN token for one transfer cannot authorize another; a wrong PIN answers with a fresh token and a locked PIN cancels the transfer
+- [x] E2E: quote, confirm, PIN, then `EXECUTED` in dry run, with the result in the app chat and no quote card or PIN form there; a replayed key returns the original transfer and creates nothing; a different request under the same key is refused; another user's transfer id is a 404 on every route; a wrong PIN then the right one with the fresh token succeeds
+- [x] `check-security` fails on an execute call outside `pin-outcome.service.ts`, and on the create route losing its idempotency key
+- [x] Full suite: 90 suites, 1183 tests. E2E: 23 pass, 3 skipped by design, and the same two stale failures.
+- [x] Server log: no PIN, PIN token, idempotency key, account number or recipient name
 
 ### Progress log
 
--
+- 2026-09-26: Designed. The open question from P4, whether to cap WhatsApp PINs too, is left as it is: capping WhatsApp "after a new app sign-in" would not catch a SIM swap, which re-registers WhatsApp without any app sign-in. It still needs a re-registration signal Meta does not give, and stays in Deferred.
+- 2026-09-26: The pinned WhatsApp-output tests (16) pass against the code before the refactor.
+- 2026-09-26: Built and verified. The 16 pinned tests pass unchanged after it; the older transfer tests needed only `originSurface: "CHAT"` added to their fixtures, no assertion changes.
+- 2026-09-26: One ordering change inside the PIN gate: on a lockout, the transfer is now cancelled just before the "locked" message is sent rather than just after. Nothing the user sees changes.
+- 2026-09-26: `PinGateService` and `PinOutcomeService` are now exported from `WhatsappModule` for the native routes. Planted violations (an execute call in the native service; the create route reading a different header) both fail `check-security` under S17.
+- 2026-09-26: Not built: showing the new-phone limit at quote time. It is enforced after the PIN, as for the chat; telling the user before they confirm would be kinder, and is a small follow-up.
 
 ### Risk
 
-- This refactors the file S7 guards. A reordered guard is the failure to fear.
+- This refactors the file S7 guards. A reordered guard is the failure to fear, which is what the pinned-output tests and the unchanged guard order in `evaluateConfirm` are for.
+- A native quote left waiting is not cancelled by anything in the chat. It cannot move money without a confirm and a PIN, and a confirm more than 10 minutes later is re-quoted.
 
 ## Phase 8 — Native bills
 
@@ -418,7 +444,7 @@ Every route is signed-in only and reads only the caller's own rows, except `app-
 | 4 | In-app conversation | completed |
 | 5 | Push and delivery rules | completed |
 | 6 | Native read-only API | completed |
-| 7 | Native transfers | not started |
+| 7 | Native transfers | completed |
 | 8 | Native bills | not started |
 | 9 | Account and compliance | not started |
 
@@ -432,9 +458,10 @@ Allowed status: `not started` · `in progress` · `blocked` · `completed` · `d
   - `inbound.media.unsupported-image` expects the pre-vision "can't do anything with that" reply. Images now go to download plus the orchestrator, and media download is not dry-run, so it fails locally.
   - `transfer.wizard.amount-then-account` expects "transfer" to open the wizard directly. Free text now goes through the orchestrator, which falls back to the menu under `AI_PROVIDER=stub`.
 - Local development safety: `.env` points at the hosted database, and the e2e runner inherits it. Point `.env` at the docker Postgres, or give the e2e runner its own `E2E_DATABASE_URL` by default.
-- The new-device cap covers PINs entered in the app only. A SIM swap can also re-register WhatsApp, and WhatsApp PINs are not capped. Detecting a WhatsApp re-registration (Meta does not report one) or capping WhatsApp after any new app device is a decision for P7.
+- The new-device cap covers PINs entered in the app only. A SIM swap can also re-register WhatsApp, and WhatsApp PINs are not capped. Capping WhatsApp after a new app device was considered in P7 and not done: a SIM swap re-registers WhatsApp without any app sign-in, so it would not catch the case it is for. This needs a re-registration signal, which Meta does not report.
 - `AppMessage.seq` comes from a Postgres sequence, assigned at insert rather than at commit, so two concurrent inserts for one user could become visible out of order and a poll could step past one. Turns are serialized per user, so only a proactive send racing a turn could do this. Revisit with P5's delivery policy.
 - Expo push receipts: fetch them after a send to catch tokens that fail after acceptance
+- Show the new-phone limit on a native quote, before the user confirms (it is enforced after the PIN)
 - A WhatsApp template for transactional messages (money in and out), so WhatsApp-only users outside the 24-hour window are reached. Needs a Meta-approved template.
 - Voice notes and images from the app
 - Prompt and golden changes to drop "WhatsApp bubble" wording

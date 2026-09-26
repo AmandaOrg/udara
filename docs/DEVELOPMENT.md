@@ -107,7 +107,7 @@ A repo-wide `npx eslint` still reports roughly 800 `prettier/prettier` findings.
 Security and documentation gates:
 
 ```bash
-npm run security:check   # S1-S12 invariants, secret scan, redaction sync
+npm run security:check   # S1-S17 invariants, secret scan, redaction sync
 npm run docs:check       # docs structure and links
 ```
 

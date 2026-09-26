@@ -40,7 +40,8 @@ P0, below, is the part built so far. It changes no module wiring beyond one new 
 - `AppMessage` and `UserTurnLease` (P4)
 - `originChannel` on `Transaction` and `BillPayment` (P5)
 - `NameEnquiryLog` and two history indexes (P6)
-- `clientRequestKey` and `originSurface` (P7, P8)
+- `Transaction.originSurface` and `clientRequestKey` (P7)
+- the same two on `BillPayment` (P8)
 - `User.emailVerifiedAt` and `SettingsChangeType.ACCOUNT_DELETION` (P9)
 
 ## Control flow
@@ -379,6 +380,68 @@ Then two adjustments:
 
 **Throttles:** the global 300 a minute per session covers the reads. Name enquiry has its own database limit, because the in-memory throttler resets on every token refresh and restart.
 
+### P7: native transfers
+
+**Data** (migration `20260926190000_native_transfers`):
+- `enum PaymentSurface { CHAT, NATIVE }`; `Transaction.originSurface PaymentSurface @default(CHAT)`. Every existing row came from the chat.
+- `Transaction.clientRequestKey String?`, `@@unique([userId, clientRequestKey])`: the app's `Idempotency-Key`. It is never reused as the Rubies `idempotencyKey`, which stays a server-generated UUID, so a client cannot choose the key Rubies deduplicates on.
+
+**The split (`TransferConfirmationService`):**
+- `createQuote(params)` does what `initiateTransfer` did before its sends, and returns:
+  - `{ ok: false, reason: "no_account" }`;
+  - `{ ok: false, reason: "recipient_unverified" }`;
+  - `{ ok: true, transaction, recipient, isNewRecipient, evaluation, balance }`, where `balance` is null when Rubies did not answer.
+
+  It takes `surface` and `clientRequestKey` for native calls.
+- `initiateTransfer(params)` is `createQuote` plus `renderQuote`, which sends exactly what was sent before.
+- `evaluateConfirm(userId, id, surface)` runs the old guards in the old order and returns one decision:
+
+  | Decision | State change |
+  | --- | --- |
+  | `not_found` (not the caller's, or another surface) | none |
+  | `not_pending` (already actioned, or a claim lost) | none |
+  | `balance_unavailable` | none |
+  | `insufficient_funds { needed, balance }` | claimed to `FAILED` |
+  | `requoted { reason: stale or terms_changed, evaluation, balance }` | type and fee updated; still `PENDING_CONFIRMATION` |
+  | `pin_setup_required` | none |
+  | `locked { lockedUntil }` | claimed to `CANCELLED` |
+  | `pin_required` | claimed to `PENDING_PIN` |
+
+- `confirmTransfer(userId, id)` is `evaluateConfirm(…, CHAT)` plus a renderer holding the old sends: the retry text, the "only has" text, the re-quote card, the setup text and form, `notifyLocked`, and `requestTransferPin`.
+- `withdraw(userId, id)`: native cancel. Claims `PENDING_CONFIRMATION` or `PENDING_PIN` to `CANCELLED`, and sends nothing.
+- The chat paths only ever see `originSurface: CHAT` rows: `confirmTransfer`, `cancelTransfer`, `resumeAfterPinSetup`, `resumePendingTransferUi`, `cancelPendingForUser`, and the orchestrator's pending-confirm context. Otherwise a native quote could be confirmed by a chat button, resumed as a chat PIN form, or cancelled by "cancel" typed in the chat.
+
+**PIN (`PinGateService`):**
+- `issueTransferPinToken(user, id)` and `issuePinSetupToken(user)` create the challenge without sending a form. `requestTransferPin` and `requestPinSetup` are those plus the form, as before.
+- `authorizeTransfer(user, token, transactionId, pin)`:
+  1. Consume the challenge for this user.
+  2. It must be a `TRANSFER_AUTH` challenge for this same transaction, or the answer is `expired`. A token for one transfer cannot authorize another.
+  3. `verifyPin`. On failure, locked cancels the `PENDING_PIN` row and answers `locked`; otherwise `wrong_pin` with the reason text and a fresh token.
+  4. `verified`, carrying the same `execute_transfer` outcome the chat produces.
+
+  The chat's `handleTransferSubmission` uses the same check and adds its messages, so there is one PIN path.
+
+**`PinOutcomeService.apply(outcome, userId, { quiet })`** returns `{ kind: "done" }` or `{ kind: "capped", cap, remaining, liftsAt }`. `quiet` skips the cap's chat message, for the native route that returns it instead. Execution is unchanged: `executeVerifiedTransfer` is still only called here (S17).
+
+**Routes (`src/app-api/transfers/`, `NativeTransferService`):** every handler runs in `runInChannel({ channel: "app", deviceId })`, so `originChannel` is `APP`, the new-device cap applies, and synchronous results land in the app chat without a push. The routes do not take the turn lease: they touch no conversation state, and every money transition is already a claim.
+
+| Route | Returns | Errors |
+| --- | --- | --- |
+| `POST /v1/transfers`, header `Idempotency-Key` (8–64 of `A-Za-z0-9_-`), body `{ accountNumber, bankCode, amount, purpose?, note?, nickname? }` | 201 `{ transfer, isNewRecipient, balanceAfter, allowanceLeftToday }`; a replay is 200 with the same transfer and fresh figures | 400 `idempotency_key_required`; 409 `no_account`; 422 `recipient_unverified`; 422 `idempotency_key_reused` |
+| `GET /v1/transfers/:id` | `TransferView` (either surface) | 404 |
+| `POST /v1/transfers/:id/confirm` | `{ decision, transfer, pinToken?, setupToken?, requote?, needed?, balance?, lockedUntil? }` | 404; 409 `not_awaiting_confirmation`; 503 `balance_unavailable` |
+| `POST /v1/transfers/:id/authorize` `{ pinToken, pin }`, 10 a minute | `{ result, transfer, message?, retryToken?, cap? }` | 404 |
+| `POST /v1/transfers/:id/cancel` | `TransferView` | 404; 409 `not_cancellable` |
+
+- `TransferView` is `{ id, status, amount, fee, spendType, feeNote, purpose, recipient, surface, createdAt, confirmedAt, executedAt }`. `status` is one of `awaiting_confirmation`, `awaiting_pin`, `processing`, `successful`, `failed` or `cancelled`.
+- `feeNote` is the same line the WhatsApp card shows (`formatSpendFeeLine`).
+- **Confirm while the PIN is awaited:** a fresh token and `pin_required` again, so the app can recover a lost response. Several live tokens for one transfer were already possible (every wrong PIN mints one); the `PENDING_PIN` to `CONFIRMED` claim in `executeVerifiedTransfer` is what makes only one execute.
+- **`pin_setup_required`** carries a setup token. The app sets the PIN through `/v1/forms/pin` (P4) and confirms again; setup's resume step skips native rows, so nothing is sent to the chat for this transfer.
+- **Authorize result** after `verified`: `capped` gives `cap_exceeded` with the figures. Otherwise it is the row's status after `executeVerifiedTransfer`: `EXECUTED` is `successful`, `FAILED` is `failed`, and `CONFIRMED` is `processing` (Rubies answered PENDING; the webhook or reconciliation finishes it, and the result is delivered to the app with a push).
+- **Idempotency:**
+  - Look up `(userId, clientRequestKey)` first. A hit with the same account number, bank and amount is a replay; any difference is `idempotency_key_reused`.
+  - Two concurrent first requests both miss the lookup. The loser's `create` hits the unique index (P2002) and is answered as a replay.
+
 ## Invariants
 
 Code must still enforce:
@@ -391,6 +454,8 @@ Code must still enforce:
 - A chat choice from the app acts only if the named message offered it to the same user.
 - One conversational turn per user at a time, on either channel.
 - A PIN entered on an app device in its first 24 hours cannot move more than the new-device cap.
+- Money executes only from `PinOutcomeService`, after a consumed challenge for that same payment (S17).
+- A native quote is never confirmed, resumed or cancelled by the chat, and the reverse.
 
 ## Tests
 
@@ -400,6 +465,7 @@ Code must still enforce:
   - P2: `npx jest src/common/phone src/whatsapp/whatsapp-router src/messaging src/onboarding`
   - P3: `npx jest src/app-auth src/app-api src/common src/config src/whatsapp/whatsapp-router`
   - P5: `npx jest src/messaging src/app-auth/device src/app-api/devices src/allowance/allowance.scheduler src/whatsapp/transfer-confirmation src/whatsapp/bill-payment-confirmation src/app-auth/login`
+  - P7: `npx jest src/whatsapp/transfer-confirmation src/whatsapp/pin-gate src/whatsapp/pin-outcome src/app-api/transfers src/orchestrator`
   - P6: `npx jest src/app-api src/allowance/limits-status src/whatsapp/account-actions`
   - P4: `npx jest src/conversation src/messaging src/app-api src/app-auth/new-device-cap src/whatsapp/pin-outcome src/whatsapp/whatsapp-router src/whatsapp/inbound-rate-limit src/onboarding`
   - then the full `npm test`
@@ -423,3 +489,4 @@ Code must still enforce:
 | 2026-09-26 | P4: in-app conversation as built |
 | 2026-09-26 | P5: delivery rules and push as built |
 | 2026-09-26 | P6: read-only API as built |
+| 2026-09-26 | P7: native transfers as built |
