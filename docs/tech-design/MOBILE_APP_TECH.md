@@ -372,6 +372,8 @@ Then two adjustments:
 2. Delete the user's rows older than an hour, so the table stays small.
 3. `RubiesService.nameEnquiry`. A throw is 422 `not_resolved`: Rubies does not say whether the account is missing or the service is down.
 
+The budget is `claimLookup`, and every route that reveals whose an account or meter is spends from it: the native transfer quote to a new recipient (P7) and the native electricity quote's meter check (P8).
+
 **Banks (`BankDirectoryService`):** in-memory, 6 hours. Concurrent misses share one in-flight call. `RubiesService.listBanks` already returns `[]` instead of throwing; an empty list is never cached. After one, the next minute answers from what is held (the last good list, or nothing) without asking Rubies again, so an outage does not make every history page wait on Rubies' 30-second timeout.
 
 **App config:** `APP_MIN_SUPPORTED_VERSION` (optional, `x.y.z`, validated at boot). The app compares its own version and blocks with an update screen when older. It is `@Public()`, so S14's allow-list gains `src/app-api/app-config/app-config.controller.ts`.
@@ -427,7 +429,7 @@ Then two adjustments:
 
 | Route | Returns | Errors |
 | --- | --- | --- |
-| `POST /v1/transfers`, header `Idempotency-Key` (8–64 of `A-Za-z0-9_-`), body `{ accountNumber, bankCode, amount, purpose?, note?, nickname? }` | 201 `{ transfer, isNewRecipient, balanceAfter, allowanceLeftToday }`; a replay is 200 with the same transfer and fresh figures | 400 `idempotency_key_required`; 409 `no_account`; 422 `recipient_unverified`; 422 `idempotency_key_reused` |
+| `POST /v1/transfers`, header `Idempotency-Key` (8–64 of `A-Za-z0-9_-`), body `{ accountNumber, bankCode, amount, purpose?, note?, nickname? }`, 20 a minute | 201 `{ transfer, isNewRecipient, balanceAfter, allowanceLeftToday }`; a replay is 200 with the same transfer and fresh figures | 400 `idempotency_key_required`; 409 `no_account`; 422 `recipient_unverified`; 422 `idempotency_key_reused`; 429 `too_many_lookups` |
 | `GET /v1/transfers/:id` | `TransferView` (either surface) | 404 |
 | `POST /v1/transfers/:id/confirm` | `{ decision, transfer, pinToken?, setupToken?, requote?, needed?, balance?, lockedUntil? }` | 404; 409 `not_awaiting_confirmation`; 503 `balance_unavailable` |
 | `POST /v1/transfers/:id/authorize` `{ pinToken, pin }`, 10 a minute | `{ result, transfer, message?, retryToken?, cap? }` | 404 |
@@ -438,6 +440,7 @@ Then two adjustments:
 - **Confirm while the PIN is awaited:** a fresh token and `pin_required` again, so the app can recover a lost response. Several live tokens for one transfer were already possible (every wrong PIN mints one); the `PENDING_PIN` to `CONFIRMED` claim in `executeVerifiedTransfer` is what makes only one execute.
 - **`pin_setup_required`** carries a setup token. The app sets the PIN through `/v1/forms/pin` (P4) and confirms again; setup's resume step skips native rows, so nothing is sent to the chat for this transfer.
 - **Authorize result** after `verified`: `capped` gives `cap_exceeded` with the figures. Otherwise it is the row's status after `executeVerifiedTransfer`: `EXECUTED` is `successful`, `FAILED` is `failed`, and `CONFIRMED` is `processing` (Rubies answered PENDING; the webhook or reconciliation finishes it, and the result is delivered to the app with a push).
+- **Lookup budget:** a quote to a recipient not yet saved returns the name the bank holds, as `POST /v1/name-enquiry` does, so it spends one lookup from the same hourly budget (`NameEnquiryService.claimLookup`) before `createQuote` runs. A replay and a saved recipient spend nothing. The account check comes first, so a user with no account is refused without spending. (Added 2026-10-09; the first P7 build did not spend, which made the quote route an unbudgeted lookup.)
 - **Idempotency:**
   - Look up `(userId, clientRequestKey)` first. A hit with the same account number, bank and amount is a replay; any difference is `idempotency_key_reused`.
   - Two concurrent first requests both miss the lookup. The loser's `create` hits the unique index (P2002) and is answered as a replay.

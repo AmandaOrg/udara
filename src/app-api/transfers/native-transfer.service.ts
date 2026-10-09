@@ -24,8 +24,10 @@ import { PinGateService } from "../../whatsapp/pin-gate.service";
 import { PinOutcomeService } from "../../whatsapp/pin-outcome.service";
 import { AllowanceService } from "../../allowance/allowance.service";
 import { RubiesService } from "../../rubies/rubies.service";
+import { TaggingService } from "../../tagging/tagging.service";
 import { TransactionType as LocalTransactionType } from "../../common/enums/transaction-type.enum";
 import { BankDirectoryService } from "../banks/bank-directory.service";
+import { NameEnquiryService } from "../banks/name-enquiry.service";
 import type { AuthorizeTransferDto, CreateTransferDto } from "./transfers.dto";
 import type {
   AuthorizeView,
@@ -73,6 +75,8 @@ export class NativeTransferService {
     private readonly allowance: AllowanceService,
     private readonly rubies: RubiesService,
     private readonly banks: BankDirectoryService,
+    private readonly tagging: TaggingService,
+    private readonly lookups: NameEnquiryService,
   ) {}
 
   /**
@@ -89,6 +93,23 @@ export class NativeTransferService {
       if (existing) {
         return { replayed: true, view: await this.replay(existing, dto) };
       }
+
+      // A quote to someone not yet saved asks the bank for their name and
+      // shows it, which is what POST /v1/name-enquiry does. It spends from
+      // the same hourly budget, or this route would be a way around it.
+      const account = await this.prisma.user.findUniqueOrThrow({
+        where: { id: principal.userId },
+        select: { rubiesAccountNumber: true },
+      });
+      if (!account.rubiesAccountNumber) {
+        throw new ConflictException({ error: "no_account" });
+      }
+      const saved = await this.tagging.findRecipient(
+        principal.userId,
+        dto.accountNumber,
+        dto.bankCode,
+      );
+      if (!saved) await this.lookups.claimLookup(principal.userId);
 
       let result;
       try {

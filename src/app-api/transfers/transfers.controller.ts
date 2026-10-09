@@ -31,6 +31,8 @@ import {
 
 /** A person types a PIN; ten a minute is generous. The lockout is the real bound. */
 const AUTHORIZE_THROTTLE = { default: { limit: 10, ttl: 60_000 } };
+/** Each quote is a row and, for a new recipient, a bank lookup. */
+const QUOTE_THROTTLE = { default: { limit: 20, ttl: 60_000 } };
 
 /**
  * Sending money from the app's own screens: quote, confirm, PIN, result.
@@ -45,6 +47,7 @@ export class TransfersController {
    * The quote. Idempotency-Key is required (S17): a retry after a dropped
    * connection returns the same transfer (200) instead of a second one.
    */
+  @Throttle(QUOTE_THROTTLE)
   @Post()
   @ApiHeader({ name: "Idempotency-Key", required: true })
   async create(

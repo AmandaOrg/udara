@@ -380,6 +380,7 @@ Every route is signed-in only and reads only the caller's own rows, except `app-
 - 2026-09-26: Built and verified. The 16 pinned tests pass unchanged after it; the older transfer tests needed only `originSurface: "CHAT"` added to their fixtures, no assertion changes.
 - 2026-09-26: One ordering change inside the PIN gate: on a lockout, the transfer is now cancelled just before the "locked" message is sent rather than just after. Nothing the user sees changes.
 - 2026-09-26: `PinGateService` and `PinOutcomeService` are now exported from `WhatsappModule` for the native routes. Planted violations (an execute call in the native service; the create route reading a different header) both fail `check-security` under S17.
+- 2026-10-09: Fixed after the phase, found while designing P8. A native quote to a recipient not yet saved asks the bank for their name and returns it, which is exactly what P6's name enquiry does, but it did not spend from P6's 20-an-hour lookup budget. The quote route was therefore a lookup with only the general 300-a-minute throttle on it. It now spends one lookup first (refused with 429 `too_many_lookups` once the budget is gone), checks for an account before spending, and the quote route has its own limit of 20 a minute. E2E: after 20 name enquiries, a quote to a new recipient is refused and creates nothing.
 - 2026-09-26: Not built: showing the new-phone limit at quote time. It is enforced after the PIN, as for the chat; telling the user before they confirm would be kinder, and is a small follow-up.
 
 ### Risk

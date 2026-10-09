@@ -203,5 +203,32 @@ export default defineScenario({
       409,
     );
     ctx.log("a quote can be cancelled; nothing past the PIN can");
+
+    // --- The lookup budget ---------------------------------------------------
+    // A quote to a new recipient shows the name the bank holds, so it spends
+    // from the same hourly budget as POST /v1/name-enquiry.
+    const prober = await signInNewNumber();
+    await readyToSend(prober.userId, prober.phoneNumber);
+    const probe = bearer(prober.accessToken);
+    for (let i = 0; i < 20; i++) {
+      expectStatus(
+        await request(
+          "POST",
+          "/v1/name-enquiry",
+          { accountNumber: "0000000001", bankCode: "000005" },
+          probe,
+        ),
+        200,
+      );
+    }
+    const overBudget = await quote(prober.accessToken, key());
+    expectStatus(overBudget, 429);
+    expect(overBudget.body.error).toBe("too_many_lookups");
+    expect(
+      await prisma().transaction.count({ where: { userId: prober.userId } }),
+    ).toBe(0);
+    ctx.log(
+      "a quote to a new recipient is refused once the lookup budget is spent",
+    );
   },
 });

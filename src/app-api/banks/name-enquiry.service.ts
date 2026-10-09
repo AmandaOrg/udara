@@ -40,7 +40,7 @@ export class NameEnquiryService {
       throw new ConflictException({ error: "no_account" });
     }
 
-    await this.claim(userId, now);
+    await this.claimLookup(userId, now);
 
     try {
       const result = await this.rubies.nameEnquiry({ accountNumber, bankCode });
@@ -52,11 +52,16 @@ export class NameEnquiryService {
   }
 
   /**
+   * Spends one lookup from the user's hourly budget, or refuses with 429.
+   * Public because anything else in the app API that reveals whose an account
+   * is must spend from the same budget: a native transfer quote to a new
+   * recipient returns the name the bank holds, exactly as this route does.
+   *
    * Record the lookup, then count. Recording first means concurrent calls
    * each count themselves, so a burst cannot all see the count below the
    * limit. A refused lookup takes its row back out, so waiting works.
    */
-  private async claim(userId: string, now: Date): Promise<void> {
+  async claimLookup(userId: string, now: Date = new Date()): Promise<void> {
     const since = new Date(now.getTime() - HOUR_MS);
     const row = await this.prisma.nameEnquiryLog.create({
       data: { userId, createdAt: now },

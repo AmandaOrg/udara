@@ -85,6 +85,9 @@ function build() {
   const banks = {
     names: jest.fn().mockResolvedValue(new Map([["000005", "Access Bank"]])),
   };
+  // A recipient not yet saved, by default: the quote will look them up.
+  const tagging = { findRecipient: jest.fn().mockResolvedValue(null) };
+  const lookups = { claimLookup: jest.fn().mockResolvedValue(undefined) };
   const service = new NativeTransferService(
     prisma as any,
     transfers as any,
@@ -93,8 +96,19 @@ function build() {
     allowance as any,
     rubies as any,
     banks as any,
+    tagging as any,
+    lookups as any,
   );
-  return { prisma, transfers, pinGate, pinOutcome, contexts, service };
+  return {
+    prisma,
+    transfers,
+    pinGate,
+    pinOutcome,
+    tagging,
+    lookups,
+    contexts,
+    service,
+  };
 }
 
 async function status(p: Promise<unknown>): Promise<number> {
@@ -193,6 +207,64 @@ describe("NativeTransferService", () => {
 
       const { replayed } = await service.quote(principal, "key-12345678", dto);
       expect(replayed).toBe(true);
+    });
+
+    /**
+     * A quote to a new recipient returns the name the bank holds, which is
+     * what POST /v1/name-enquiry does; it spends from the same budget.
+     */
+    it("spends a lookup from the hourly budget for a recipient not yet saved", async () => {
+      const { service, lookups, tagging, transfers } = build();
+
+      await service.quote(principal, "key-12345678", dto);
+
+      expect(tagging.findRecipient).toHaveBeenCalledWith(
+        "me",
+        "0000000001",
+        "000005",
+      );
+      expect(lookups.claimLookup).toHaveBeenCalledWith("me");
+      expect(lookups.claimLookup.mock.invocationCallOrder[0]).toBeLessThan(
+        transfers.createQuote.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("spends nothing for a saved recipient, or on a replay", async () => {
+      const saved = build();
+      saved.tagging.findRecipient.mockResolvedValue({ id: "r1" });
+      await saved.service.quote(principal, "key-12345678", dto);
+      expect(saved.lookups.claimLookup).not.toHaveBeenCalled();
+
+      const replay = build();
+      replay.prisma.transaction.findUnique.mockResolvedValue(txRow());
+      await replay.service.quote(principal, "key-12345678", dto);
+      expect(replay.lookups.claimLookup).not.toHaveBeenCalled();
+    });
+
+    it("quotes nothing once the lookup budget is spent", async () => {
+      const { service, lookups, transfers } = build();
+      lookups.claimLookup.mockRejectedValue(
+        new HttpException({ error: "too_many_lookups" }, 429),
+      );
+
+      expect(await status(service.quote(principal, "key-12345678", dto))).toBe(
+        429,
+      );
+      expect(transfers.createQuote).not.toHaveBeenCalled();
+    });
+
+    it("refuses a user with no account before spending a lookup", async () => {
+      const { service, prisma, lookups, transfers } = build();
+      prisma.user.findUniqueOrThrow.mockResolvedValue({
+        ...user,
+        rubiesAccountNumber: null,
+      });
+
+      expect(await status(service.quote(principal, "key-12345678", dto))).toBe(
+        409,
+      );
+      expect(lookups.claimLookup).not.toHaveBeenCalled();
+      expect(transfers.createQuote).not.toHaveBeenCalled();
     });
 
     it("maps no account to 409 and an unverifiable recipient to 422", async () => {
