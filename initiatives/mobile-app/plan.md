@@ -390,26 +390,49 @@ Every route is signed-in only and reads only the caller's own rows, except `app-
 
 ## Phase 8 — Native bills
 
-**Status:** not started
-**Started:**
-**Completed:**
-**Owner:**
+**Status:** completed
+**Started:** 2026-10-09
+**Completed:** 2026-10-09
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] The P7 pattern applied to `bill-payment-confirmation.service.ts`
+- [x] First, tests that pin today's exact WhatsApp output for every bill quote, confirm and cancel branch, for airtime, data and electricity, run green against the code before the refactor
+- [x] `BillPaymentConfirmationService` split the way P7 split transfers:
+  - `createQuote` and `evaluateConfirm` return what was decided;
+  - `initiateBillPayment` and `confirmBillPayment` render it as before;
+  - `executeVerifiedBillPayment` and `applyBillPaymentResult` are not touched.
+- [x] `PinGateService`: a bill PIN token can be issued without a form and checked as data, sharing one check with the chat's bill PIN form and with P7's transfer check
+- [x] `BillPayment.originSurface` and `clientRequestKey`, unique per user. Native purchases are invisible to the chat's confirm and cancel buttons, its resume and cancel paths, and the orchestrator's "pending confirm" context.
+- [x] Routes under `/v1/bills`, all signed-in and scoped to the caller, next to P6's catalog:
+  - `POST /v1/bills` with a required `Idempotency-Key`: the quote, for airtime, a data bundle or prepaid electricity. The server takes the network, bundle, electricity company and amount bounds from the catalog, never from the request. A data bundle's price is the catalog's, and an `amount` sent with one is refused. A replayed key returns the same purchase; the same key with a different request is refused.
+  - Electricity: the server checks the meter with Rubies at quote time and puts the name it returns on the quote. The check spends one lookup from the same hourly budget as account-name lookups.
+  - `POST /v1/bills/:id/confirm`, `/authorize`, `/cancel` and `GET /v1/bills/:id`, as for transfers. A successful electricity purchase carries its token.
+- [x] Native purchases write no quote card or PIN form into the chat; their results arrive there like any payment's
+- [x] S17 covers the bills route: it must read an `Idempotency-Key`
 
 ### Acceptance tests
 
-- [ ] Same as P7, for airtime, data and electricity
+- [x] The pinned WhatsApp-output tests pass unchanged after the refactor, as does the rest of the bill, PIN gate and PIN outcome suites
+- [x] Unit: every confirm decision for bills; a native purchase is ignored by every chat path; a PIN token for one purchase cannot authorize another, or a transfer; the catalog is the only source of codes, labels, bundle prices and bounds; the meter check spends a lookup and a failed one is a 422
+- [x] E2E: airtime, data and electricity quoted natively; electricity confirmed, PIN entered, `EXECUTED` in dry run with its token, the result in the app chat and no card or PIN form there; replay and key reuse as for transfers; another user's purchase id is a 404 on every route; `GET /v1/bills/catalog` still answers
+- [x] `check-security` fails when the bills create route stops reading its idempotency key
+- [x] Full suite: 91 suites, 1282 tests. E2E: 24 pass, 3 skipped by design, and the same two stale failures.
+- [x] Server log: no PIN, PIN token, electricity token, idempotency key, meter number, phone number or meter holder's name
 
 ### Progress log
 
--
+- 2026-10-09: Designed. Before starting, fixed a P7 gap the meter check would have repeated: a native transfer quote to a new recipient did not spend from the lookup budget (commit `9d173b4`).
+- 2026-10-09: The pinned WhatsApp-output tests (19) passed against the code before the refactor, and pass unchanged after it.
+- 2026-10-09: Built and verified. The older bill tests needed `originSurface: "CHAT"` on their fixtures, and one assertion changed on purpose: `cancelPendingForUser`'s exact query now also filters to chat purchases.
+- 2026-10-09: `PinGateService` now has one PIN check (`checkPaymentPin`) for all four paths: the chat's transfer and bill forms and both native routes. `TransferPinCheck` is renamed `PaymentPinCheck`. As for transfers in P7, a bill PIN lockout now cancels the purchase just before the "locked" message rather than just after.
+- 2026-10-09: The status, decision and result vocabulary, the re-quote and cap shapes, and the small helpers (`naira`, the channel-context wrapper, the fee note, the unique-violation check) moved to `app-api/payment.view.ts` and `app-api/payments.util.ts`; P7's files use them with no change in behaviour (all 47 transfer tests pass).
+- 2026-10-09: A planted violation (the bills create route reading a different header) fails `check-security` under S17.
 
 ### Risk
 
-- Same as P7.
+- Same as P7: this refactors the file whose guards stop a purchase without a PIN. The pinned-output tests and the unchanged guard order are the defence.
+- A meter check reveals the name on a meter. It spends from the same budget as account-name lookups, and needs an opened account.
 
 ## Phase 9 — Account and compliance
 
@@ -446,7 +469,7 @@ Every route is signed-in only and reads only the caller's own rows, except `app-
 | 5 | Push and delivery rules | completed |
 | 6 | Native read-only API | completed |
 | 7 | Native transfers | completed |
-| 8 | Native bills | not started |
+| 8 | Native bills | completed |
 | 9 | Account and compliance | not started |
 
 Allowed status: `not started` · `in progress` · `blocked` · `completed` · `deleted`

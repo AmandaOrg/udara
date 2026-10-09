@@ -441,7 +441,12 @@ model BillPayment {
   user   User   @relation(fields: [userId], references: [id])
 
   // Where the quote was made; see Transaction.originChannel.
-  originChannel MessageChannel @default(WHATSAPP)
+  originChannel    MessageChannel @default(WHATSAPP)
+  // Conversation or the app's own screens; see Transaction.originSurface.
+  originSurface    PaymentSurface @default(CHAT)
+  // The app's Idempotency-Key for a native purchase. Never requestReference
+  // or idempotencyKey, which the server generates for Rubies.
+  clientRequestKey String?
 
   category     BillPaymentCategory @default(AIRTIME)
   billerCode   String
@@ -471,6 +476,7 @@ model BillPayment {
 
   pinChallenges PinChallenge[]
 
+  @@unique([userId, clientRequestKey])
   @@index([userId, status])
   // The app's history reads a user's purchases newest first.
   @@index([userId, createdAt])

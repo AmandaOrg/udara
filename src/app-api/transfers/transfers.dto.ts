@@ -11,9 +11,6 @@ import {
   Min,
 } from "class-validator";
 
-/** The `Idempotency-Key` header: the app's own id for one send attempt. */
-export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,64}$/;
-
 export class CreateTransferDto {
   /** A NUBAN: ten digits. */
   @Matches(/^\d{10}$/)

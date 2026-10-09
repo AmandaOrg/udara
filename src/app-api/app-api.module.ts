@@ -26,6 +26,7 @@ import { BillsController } from "./bills/bills.controller";
 import { AppConfigController } from "./app-config/app-config.controller";
 import { TransfersController } from "./transfers/transfers.controller";
 import { NativeTransferService } from "./transfers/native-transfer.service";
+import { NativeBillService } from "./bills/native-bill.service";
 
 /**
  * The mobile app's HTTP API under /v1. Loaded only when APP_API_ENABLED=true
@@ -68,6 +69,7 @@ import { NativeTransferService } from "./transfers/native-transfer.service";
     BankDirectoryService,
     NameEnquiryService,
     NativeTransferService,
+    NativeBillService,
   ],
 })
 export class AppApiModule {}

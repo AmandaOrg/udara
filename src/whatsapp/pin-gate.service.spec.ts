@@ -614,4 +614,119 @@ describe("PinGateService", () => {
       expect(whatsapp.sendFlow).not.toHaveBeenCalled();
     });
   });
+
+  /** The app's native bill screen (P8): the same check, bound to the purchase. */
+  describe("authorizeBillPayment", () => {
+    const challenge = {
+      id: "c1",
+      purpose: PinChallengePurpose.TRANSFER_AUTH,
+      transactionId: null,
+      billPaymentId: "bill-1",
+    };
+
+    it("verifies a PIN for the purchase the token was issued for, and says nothing in the chat", async () => {
+      pin.consumeChallenge.mockResolvedValue(challenge);
+      pin.verifyPin.mockResolvedValue({ ok: true });
+
+      await expect(
+        service.authorizeBillPayment(user, "tok-1", "bill-1", "1234"),
+      ).resolves.toEqual({
+        kind: "verified",
+        outcome: { action: "execute_bill_payment", billPaymentId: "bill-1" },
+      });
+      expect(whatsapp.sendText).not.toHaveBeenCalled();
+      expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["another purchase", { ...challenge, billPaymentId: "bill-2" }],
+      [
+        "a transfer",
+        { ...challenge, billPaymentId: null, transactionId: "txn-1" },
+      ],
+      [
+        "PIN setup",
+        {
+          ...challenge,
+          purpose: PinChallengePurpose.SETUP,
+          billPaymentId: null,
+        },
+      ],
+    ])(
+      "refuses a token issued for %s without checking the PIN",
+      async (_label, found) => {
+        pin.consumeChallenge.mockResolvedValue(found);
+
+        await expect(
+          service.authorizeBillPayment(user, "tok-1", "bill-1", "1234"),
+        ).resolves.toEqual({ kind: "expired" });
+        expect(pin.verifyPin).not.toHaveBeenCalled();
+      },
+    );
+
+    it("answers a wrong PIN with a fresh token bound to the same purchase", async () => {
+      pin.consumeChallenge.mockResolvedValue(challenge);
+      pin.verifyPin.mockResolvedValue({ ok: false, reason: "wrong." });
+      pin.createChallenge.mockResolvedValue({ id: "c2", flowToken: "tok-2" });
+
+      await expect(
+        service.authorizeBillPayment(user, "tok-1", "bill-1", "0000"),
+      ).resolves.toEqual({
+        kind: "wrong_pin",
+        message: "wrong.",
+        retryToken: "tok-2",
+      });
+      expect(pin.createChallenge).toHaveBeenCalledWith({
+        userId: "user-1",
+        purpose: PinChallengePurpose.TRANSFER_AUTH,
+        billPaymentId: "bill-1",
+      });
+    });
+
+    it("cancels the purchase, not a transfer, when the PIN locks", async () => {
+      (prisma as any).billPayment = {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      };
+      pin.consumeChallenge.mockResolvedValue(challenge);
+      pin.verifyPin.mockResolvedValue({
+        ok: false,
+        reason: "locked.",
+        lockedUntil: new Date("2026-10-09T12:30:00Z"),
+      });
+
+      const check = await service.authorizeBillPayment(
+        user,
+        "tok-1",
+        "bill-1",
+        "0000",
+      );
+
+      expect(check.kind).toBe("locked");
+      expect((prisma as any).billPayment.updateMany).toHaveBeenCalledWith({
+        where: { id: "bill-1", status: "PENDING_PIN" },
+        data: { status: "CANCELLED" },
+      });
+      expect(prisma.transaction.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("a transfer's token cannot approve a purchase, nor a purchase's token a transfer", async () => {
+      pin.consumeChallenge.mockResolvedValue(challenge);
+      await expect(
+        service.authorizeTransfer(user, "tok-1", "bill-1", "1234"),
+      ).resolves.toEqual({ kind: "expired" });
+      expect(pin.verifyPin).not.toHaveBeenCalled();
+    });
+  });
+
+  it("issues a bill PIN token bound to its purchase and sends nothing", async () => {
+    await expect(
+      service.issueBillPaymentPinToken(user, "bill-1"),
+    ).resolves.toBe("tok-1");
+    expect(pin.createChallenge).toHaveBeenCalledWith({
+      userId: "user-1",
+      purpose: PinChallengePurpose.TRANSFER_AUTH,
+      billPaymentId: "bill-1",
+    });
+    expect(whatsapp.sendFlow).not.toHaveBeenCalled();
+  });
 });

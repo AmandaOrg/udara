@@ -17,11 +17,8 @@ import type { Response } from "express";
 import type { AppPrincipal } from "../../app-auth/session.service";
 import { CurrentPrincipal } from "../current-principal.decorator";
 import { NativeTransferService } from "./native-transfer.service";
-import {
-  AuthorizeTransferDto,
-  CreateTransferDto,
-  IDEMPOTENCY_KEY,
-} from "./transfers.dto";
+import { IDEMPOTENCY_KEY } from "../payments.util";
+import { AuthorizeTransferDto, CreateTransferDto } from "./transfers.dto";
 import {
   AuthorizeView,
   ConfirmView,

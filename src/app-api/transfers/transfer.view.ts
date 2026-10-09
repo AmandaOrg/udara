@@ -1,35 +1,15 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { RecipientLabel, TransactionType } from "@prisma/client";
-
-const TRANSFER_STATUSES = [
-  "awaiting_confirmation",
-  "awaiting_pin",
-  "processing",
-  "successful",
-  "failed",
-  "cancelled",
-] as const;
-export type TransferStatus = (typeof TRANSFER_STATUSES)[number];
-
-const CONFIRM_DECISIONS = [
-  "pin_required",
-  "requoted",
-  "pin_setup_required",
-  "insufficient_funds",
-  "locked",
-] as const;
-export type ConfirmDecisionKind = (typeof CONFIRM_DECISIONS)[number];
-
-const AUTHORIZE_RESULTS = [
-  "successful",
-  "processing",
-  "failed",
-  "wrong_pin",
-  "locked",
-  "cap_exceeded",
-  "expired",
-] as const;
-export type AuthorizeResult = (typeof AUTHORIZE_RESULTS)[number];
+import {
+  AUTHORIZE_RESULTS,
+  AuthorizeResult,
+  CapView,
+  CONFIRM_DECISIONS,
+  ConfirmDecisionKind,
+  PAYMENT_STATUSES,
+  PaymentStatus,
+  RequoteView,
+} from "../payment.view";
 
 export class TransferRecipientView {
   accountName!: string | null;
@@ -42,8 +22,8 @@ export class TransferRecipientView {
 
 export class TransferView {
   id!: string;
-  @ApiProperty({ enum: TRANSFER_STATUSES })
-  status!: TransferStatus;
+  @ApiProperty({ enum: PAYMENT_STATUSES })
+  status!: PaymentStatus;
   /** Naira. */
   amount!: number;
   /** Naira, on top of the amount. */
@@ -79,13 +59,6 @@ export class QuoteView {
   allowanceLeftToday!: number | null;
 }
 
-export class RequoteView {
-  @ApiProperty({ enum: ["stale", "terms_changed"] })
-  reason!: "stale" | "terms_changed";
-  balanceAfter!: number;
-  allowanceLeftToday!: number;
-}
-
 export class ConfirmView {
   @ApiProperty({ enum: CONFIRM_DECISIONS })
   decision!: ConfirmDecisionKind;
@@ -101,12 +74,6 @@ export class ConfirmView {
   balance?: number;
   /** With `locked`: when PIN entry opens again. */
   lockedUntil?: string | null;
-}
-
-export class CapView {
-  cap!: number;
-  remaining!: number;
-  liftsAt!: string;
 }
 
 export class AuthorizeView {

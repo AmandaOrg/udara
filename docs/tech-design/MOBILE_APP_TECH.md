@@ -41,7 +41,7 @@ P0, below, is the part built so far. It changes no module wiring beyond one new 
 - `originChannel` on `Transaction` and `BillPayment` (P5)
 - `NameEnquiryLog` and two history indexes (P6)
 - `Transaction.originSurface` and `clientRequestKey` (P7)
-- the same two on `BillPayment` (P8)
+- `BillPayment.originSurface` and `clientRequestKey` (P8)
 - `User.emailVerifiedAt` and `SettingsChangeType.ACCOUNT_DELETION` (P9)
 
 ## Control flow
@@ -445,6 +445,43 @@ The budget is `claimLookup`, and every route that reveals whose an account or me
   - Look up `(userId, clientRequestKey)` first. A hit with the same account number, bank and amount is a replay; any difference is `idempotency_key_reused`.
   - Two concurrent first requests both miss the lookup. The loser's `create` hits the unique index (P2002) and is answered as a replay.
 
+### P8: native bills
+
+The P7 pattern, applied to `BillPaymentConfirmationService`.
+
+**Data** (migration `20261009120000_native_bills`): `BillPayment.originSurface PaymentSurface @default(CHAT)` and `BillPayment.clientRequestKey String?`, `@@unique([userId, clientRequestKey])`. `requestReference` and `idempotencyKey` stay server-generated: they are what Rubies deduplicates on.
+
+**The split (`BillPaymentConfirmationService`):**
+- `createQuote(params)` returns `{ ok: false, reason: "no_account" }` or `{ ok: true, user, payment, evaluation, balance }`. `initiateBillPayment` is that plus the unchanged card (`sendQuoteCard`).
+- `evaluateConfirm(userId, id, surface)` returns the same decisions as transfers, with the same state changes: `not_found`, `not_pending`, `balance_unavailable`, `insufficient_funds`, `requoted`, `pin_setup_required`, `locked`, `pin_required`. `confirmBillPayment` is that plus the old sends.
+- `withdraw(userId, id)` cancels a native purchase at `PENDING_CONFIRMATION` or `PENDING_PIN`, silently.
+- Chat-only, as for transfers: `confirmBillPayment`, `cancelBillPayment`, `cancelPendingForUser`, `resumeAfterPinSetup`, and the orchestrator's pending-bill context.
+
+**PIN (`PinGateService`):** `issueBillPaymentPinToken`, and `authorizeBillPayment(user, token, billPaymentId, pin)`. The token must be a `TRANSFER_AUTH` challenge bound to this bill payment and to no transaction. The answer type is shared with transfers (`PaymentPinCheck`, renamed from `TransferPinCheck`), and so is the PIN check itself: the chat's bill PIN form, the transfer path and both native routes go through one `checkPaymentPin`, which cancels the waiting payment on a lockout.
+
+**Quote request (`POST /v1/bills`, `Idempotency-Key`, 20 a minute):** `{ category, billerCode, productCode?, target, amount? }`. The server resolves everything it stores from the catalog (`bill-payment.constants.ts`, `bill-payment-catalog.ts`):
+
+| Category | From the catalog | `target` | `amount` |
+| --- | --- | --- | --- |
+| `AIRTIME` | network by `billerCode`: product code, label | phone number (`normalizeMsisdn`) | required, ₦50–₦50,000 |
+| `DATA` | network by `billerCode`, bundle by `productCode`: label, price | phone number | refused (`amount_not_allowed`): the bundle sets the price |
+| `ELECTRICITY` | company by `billerCode`: product code, label | meter number (`normalizeMeterNumber`) | required, ₦50–₦50,000, the same bounds the WhatsApp wizard uses |
+
+Order:
+1. Resolve the request against the catalog (400 `unknown_biller`, `unknown_product`, `bad_target`, `amount_required`, `amount_not_allowed`, `amount_out_of_range`).
+2. Replay: the same key with the same resolved purchase (category, biller, product, target, amount) returns that purchase; any difference is 422 `idempotency_key_reused`.
+3. Account check (409 `no_account`).
+4. Electricity only: spend a lookup (`claimLookup`, 429 `too_many_lookups`), then `RubiesService.validateVasCustomer`. No name is 422 `meter_unverified`. The name Rubies returns is the one stored and shown; the request cannot supply it.
+5. `createQuote` with `surface: NATIVE` and the key, inside the app's channel context.
+
+Response: 201 `{ payment, balanceAfter, allowanceLeftToday }`; a replay is 200.
+
+**Other routes** (`/v1/bills/:id`, `/confirm`, `/authorize`, `/cancel`): as for transfers, with `payment` in place of `transfer`. `BillPaymentView` is `{ id, status, category, provider, product, target, customerName, amount, fee, spendType, feeNote, token, surface, createdAt, confirmedAt, executedAt }`, where `token` is the electricity token once the purchase is `EXECUTED`.
+
+**Routing:** the native routes share `BillsController` with P6's `GET /v1/bills/catalog`, which is declared first. Express matches routes in registration order, so `catalog` is never read as an `:id`.
+
+**Shared with P7:** the status, decision and result vocabularies, `RequoteView` and `CapView` move to `app-api/payment.view.ts`; `naira`, the channel-context wrapper, the fee note and the unique-violation check move to `app-api/payments.util.ts`.
+
 ## Invariants
 
 Code must still enforce:
@@ -458,7 +495,9 @@ Code must still enforce:
 - One conversational turn per user at a time, on either channel.
 - A PIN entered on an app device in its first 24 hours cannot move more than the new-device cap.
 - Money executes only from `PinOutcomeService`, after a consumed challenge for that same payment (S17).
-- A native quote is never confirmed, resumed or cancelled by the chat, and the reverse.
+- A native quote or purchase is never confirmed, resumed or cancelled by the chat, and the reverse.
+- A native bill purchase stores only codes, labels, prices and bounds from the catalog, and only the meter name Rubies returns.
+- Every route that reveals an account or meter holder's name spends from the per-user lookup budget.
 
 ## Tests
 
@@ -468,6 +507,7 @@ Code must still enforce:
   - P2: `npx jest src/common/phone src/whatsapp/whatsapp-router src/messaging src/onboarding`
   - P3: `npx jest src/app-auth src/app-api src/common src/config src/whatsapp/whatsapp-router`
   - P5: `npx jest src/messaging src/app-auth/device src/app-api/devices src/allowance/allowance.scheduler src/whatsapp/transfer-confirmation src/whatsapp/bill-payment-confirmation src/app-auth/login`
+  - P8: `npx jest src/whatsapp/bill-payment-confirmation src/whatsapp/pin-gate src/whatsapp/pin-outcome src/app-api/bills src/app-api/transfers src/orchestrator`
   - P7: `npx jest src/whatsapp/transfer-confirmation src/whatsapp/pin-gate src/whatsapp/pin-outcome src/app-api/transfers src/orchestrator`
   - P6: `npx jest src/app-api src/allowance/limits-status src/whatsapp/account-actions`
   - P4: `npx jest src/conversation src/messaging src/app-api src/app-auth/new-device-cap src/whatsapp/pin-outcome src/whatsapp/whatsapp-router src/whatsapp/inbound-rate-limit src/onboarding`
@@ -493,3 +533,5 @@ Code must still enforce:
 | 2026-09-26 | P5: delivery rules and push as built |
 | 2026-09-26 | P6: read-only API as built |
 | 2026-09-26 | P7: native transfers as built |
+| 2026-10-09 | P7 fix: native quotes spend from the lookup budget |
+| 2026-10-09 | P8: native bills as built |

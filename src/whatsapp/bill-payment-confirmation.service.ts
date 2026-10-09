@@ -9,7 +9,13 @@ import {
   fromMessageChannel,
 } from "../messaging/channel-context";
 import { PinGateService } from "./pin-gate.service";
-import { BillPayment, TransactionType, User } from "@prisma/client";
+import {
+  BillPayment,
+  PaymentSurface,
+  Prisma,
+  TransactionType,
+  User,
+} from "@prisma/client";
 import {
   BillPaymentCategory,
   BillPaymentStatus,
@@ -21,8 +27,60 @@ import {
 import {
   CONFIRM_RE_QUOTE_AFTER_MS,
   formatSpendFeeLine,
+  SpendEvaluation,
 } from "./transfer-confirmation.service";
 import { TransactionType as LocalTransactionType } from "../common/enums/transaction-type.enum";
+
+export interface BillQuoteParams {
+  userId: string;
+  category: BillPaymentCategory;
+  billerCode: string;
+  productCode: string;
+  telcoLabel: string;
+  msisdn: string;
+  amount: number;
+  productLabel?: string;
+  customerName?: string;
+  /** Where the quote is made; CHAT unless the app's native screens ask. */
+  surface?: PaymentSurface;
+  /** The app's Idempotency-Key, for a native purchase. */
+  clientRequestKey?: string;
+}
+
+export type BillQuoteResult =
+  | { ok: false; reason: "no_account"; user: User }
+  | {
+      ok: true;
+      user: User;
+      payment: BillPayment;
+      evaluation: SpendEvaluation;
+      /** Null when Rubies did not answer; the quote stands without it. */
+      balance: number | null;
+    };
+
+export type PendingBillPayment = BillPayment & { user: User };
+
+/** What a Confirm tap decided; the same vocabulary as transfers. */
+export type BillConfirmDecision =
+  | { kind: "not_found" }
+  | { kind: "not_pending"; payment: PendingBillPayment }
+  | { kind: "balance_unavailable"; payment: PendingBillPayment }
+  | {
+      kind: "insufficient_funds";
+      payment: PendingBillPayment;
+      needed: number;
+      balance: number;
+    }
+  | {
+      kind: "requoted";
+      payment: PendingBillPayment;
+      reason: "stale" | "terms_changed";
+      evaluation: SpendEvaluation;
+      balance: number;
+    }
+  | { kind: "pin_setup_required"; payment: PendingBillPayment }
+  | { kind: "locked"; payment: PendingBillPayment }
+  | { kind: "pin_required"; payment: PendingBillPayment };
 
 @Injectable()
 export class BillPaymentConfirmationService {
@@ -36,27 +94,40 @@ export class BillPaymentConfirmationService {
     private readonly pinGate: PinGateService,
   ) {}
 
-  async initiateBillPayment(params: {
-    userId: string;
-    category: BillPaymentCategory;
-    billerCode: string;
-    productCode: string;
-    telcoLabel: string;
-    msisdn: string;
-    amount: number;
-    productLabel?: string;
-    customerName?: string;
-  }): Promise<void> {
+  /**
+   * Quote a purchase and show it on the conversation: createQuote, then the
+   * WhatsApp-shaped card. The app's native screens call createQuote alone.
+   */
+  async initiateBillPayment(params: BillQuoteParams): Promise<void> {
+    const result = await this.createQuote(params);
+    if (!result.ok) {
+      await this.messenger.sendText(
+        result.user,
+        "you don't have a udara account set up yet.",
+      );
+      return;
+    }
+    await this.sendQuoteCard(
+      result.user,
+      result.payment.id,
+      params,
+      result.evaluation,
+      result.balance,
+    );
+  }
+
+  /**
+   * Everything a quote decides, and nothing it says: the PENDING_CONFIRMATION
+   * row, the spend classification and the live balance. The caller has
+   * already resolved what is being bought.
+   */
+  async createQuote(params: BillQuoteParams): Promise<BillQuoteResult> {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: params.userId },
     });
 
     if (!user.rubiesAccountNumber) {
-      await this.messenger.sendText(
-        user,
-        "you don't have a udara account set up yet.",
-      );
-      return;
+      return { ok: false, reason: "no_account", user };
     }
 
     const evaluation = await this.allowance.evaluateSpend(
@@ -82,13 +153,15 @@ export class BillPaymentConfirmationService {
         requestReference,
         idempotencyKey: requestReference,
         originChannel: currentMessageChannel(),
+        originSurface: params.surface ?? PaymentSurface.CHAT,
+        clientRequestKey: params.clientRequestKey,
       },
     });
 
     const balance = await this.rubies
       .getBalance(user.rubiesAccountNumber)
       .catch(() => null);
-    await this.sendQuoteCard(user, payment.id, params, evaluation, balance);
+    return { ok: true, user, payment, evaluation, balance };
   }
 
   /**
@@ -148,18 +221,40 @@ export class BillPaymentConfirmationService {
   /**
    * Scoped to `userId`: the id comes from a button payload, which stops being
    * unforgeable once a client other than WhatsApp can name it. See
-   * TransferConfirmationService.confirmTransfer.
+   * TransferConfirmationService.confirmTransfer. A native purchase reads as
+   * missing: the chat never confirms one.
    */
   async confirmBillPayment(
     userId: string,
     billPaymentId: string,
   ): Promise<void> {
+    const decision = await this.evaluateConfirm(
+      userId,
+      billPaymentId,
+      PaymentSurface.CHAT,
+    );
+    await this.renderConfirmDecision(decision);
+  }
+
+  /**
+   * The Confirm tap, decided: every pre-flight guard in the order they have
+   * always run, and the state change each outcome makes. Nothing is bought
+   * here; the best outcome is PENDING_PIN.
+   */
+  async evaluateConfirm(
+    userId: string,
+    billPaymentId: string,
+    surface: PaymentSurface,
+  ): Promise<BillConfirmDecision> {
     const payment = await this.prisma.billPayment.findUnique({
       where: { id: billPaymentId, userId },
       include: { user: true },
     });
-    if (!payment || payment.status !== BillPaymentStatus.PENDING_CONFIRMATION) {
-      return;
+    if (!payment || payment.originSurface !== surface) {
+      return { kind: "not_found" };
+    }
+    if (payment.status !== BillPaymentStatus.PENDING_CONFIRMATION) {
+      return { kind: "not_pending", payment };
     }
 
     const { user } = payment;
@@ -178,11 +273,7 @@ export class BillPaymentConfirmationService {
         return null;
       });
     if (balance === null) {
-      await this.messenger.sendText(
-        user,
-        "i couldn't check your balance just now. tap confirm again in a moment.",
-      );
-      return;
+      return { kind: "balance_unavailable", payment };
     }
     const totalCost = Number(payment.amount) + Number(payment.feeAmount);
     if (balance < totalCost) {
@@ -191,12 +282,13 @@ export class BillPaymentConfirmationService {
         BillPaymentStatus.PENDING_CONFIRMATION,
         { status: BillPaymentStatus.FAILED },
       );
-      if (!failed) return;
-      await this.messenger.sendText(
-        user,
-        `That needs ₦${totalCost.toLocaleString("en-NG")} but your account only has ₦${balance.toLocaleString("en-NG")}. Cancelled.`,
-      );
-      return;
+      if (!failed) return { kind: "not_pending", payment };
+      return {
+        kind: "insufficient_funds",
+        payment,
+        needed: totalCost,
+        balance,
+      };
     }
 
     // Same rule as transfers: fee and spend type were frozen at quote time, so
@@ -223,26 +315,21 @@ export class BillPaymentConfirmationService {
           feeAmount: fresh.feeAmount,
         },
       });
-      await this.sendQuoteCard(
-        user,
-        payment.id,
-        purchaseFromRow(payment),
-        fresh,
+      return {
+        kind: "requoted",
+        payment: {
+          ...payment,
+          type: fresh.type as unknown as TransactionType,
+          feeAmount: new Prisma.Decimal(fresh.feeAmount),
+        },
+        reason: termsChanged ? "terms_changed" : "stale",
+        evaluation: fresh,
         balance,
-        termsChanged
-          ? "the terms on this one moved while it was waiting, so here it is again:"
-          : "this has been waiting a while, so let's confirm it again:",
-      );
-      return;
+      };
     }
 
     if (!user.pinHash) {
-      await this.messenger.sendText(
-        user,
-        "before your first purchase, you need to set a 4-digit pin.",
-      );
-      await this.pinGate.requestPinSetup(user);
-      return;
+      return { kind: "pin_setup_required", payment };
     }
 
     if (this.pinGate.isLocked(user)) {
@@ -251,9 +338,8 @@ export class BillPaymentConfirmationService {
         BillPaymentStatus.PENDING_CONFIRMATION,
         { status: BillPaymentStatus.CANCELLED },
       );
-      if (!cancelled) return;
-      await this.pinGate.notifyLocked(user);
-      return;
+      if (!cancelled) return { kind: "not_pending", payment };
+      return { kind: "locked", payment };
     }
 
     // Claimed, not blind-updated — see TransferConfirmationService.claimStatus
@@ -263,8 +349,88 @@ export class BillPaymentConfirmationService {
       BillPaymentStatus.PENDING_CONFIRMATION,
       { status: BillPaymentStatus.PENDING_PIN },
     );
-    if (!claimed) return;
-    await this.pinGate.requestBillPaymentPin(user, payment.id);
+    if (!claimed) return { kind: "not_pending", payment };
+    return { kind: "pin_required", payment };
+  }
+
+  /** The conversation's rendering of a confirm decision, unchanged since before P8. */
+  private async renderConfirmDecision(
+    decision: BillConfirmDecision,
+  ): Promise<void> {
+    switch (decision.kind) {
+      case "not_found":
+      case "not_pending":
+        return;
+      case "balance_unavailable":
+        await this.messenger.sendText(
+          decision.payment.user,
+          "i couldn't check your balance just now. tap confirm again in a moment.",
+        );
+        return;
+      case "insufficient_funds":
+        await this.messenger.sendText(
+          decision.payment.user,
+          `That needs ₦${decision.needed.toLocaleString("en-NG")} but your account only has ₦${decision.balance.toLocaleString("en-NG")}. Cancelled.`,
+        );
+        return;
+      case "requoted":
+        await this.sendQuoteCard(
+          decision.payment.user,
+          decision.payment.id,
+          purchaseFromRow(decision.payment),
+          decision.evaluation,
+          decision.balance,
+          decision.reason === "terms_changed"
+            ? "the terms on this one moved while it was waiting, so here it is again:"
+            : "this has been waiting a while, so let's confirm it again:",
+        );
+        return;
+      case "pin_setup_required":
+        await this.messenger.sendText(
+          decision.payment.user,
+          "before your first purchase, you need to set a 4-digit pin.",
+        );
+        await this.pinGate.requestPinSetup(decision.payment.user);
+        return;
+      case "locked":
+        await this.pinGate.notifyLocked(decision.payment.user);
+        return;
+      case "pin_required":
+        await this.pinGate.requestBillPaymentPin(
+          decision.payment.user,
+          decision.payment.id,
+        );
+        return;
+    }
+  }
+
+  /**
+   * The app's Cancel on a native purchase, including one waiting on its PIN.
+   * Sends nothing; the caller shows the result. True if this call cancelled it.
+   */
+  async withdraw(userId: string, billPaymentId: string): Promise<boolean> {
+    const payment = await this.prisma.billPayment.findFirst({
+      where: {
+        id: billPaymentId,
+        userId,
+        originSurface: PaymentSurface.NATIVE,
+      },
+      select: { status: true },
+    });
+    if (
+      !payment ||
+      (payment.status !== BillPaymentStatus.PENDING_CONFIRMATION &&
+        payment.status !== BillPaymentStatus.PENDING_PIN)
+    ) {
+      return false;
+    }
+    return this.claimStatus(
+      billPaymentId,
+      payment.status as BillPaymentStatus,
+      {
+        status: BillPaymentStatus.CANCELLED,
+      },
+    );
   }
 
   /**
@@ -294,7 +460,7 @@ export class BillPaymentConfirmationService {
     return true;
   }
 
-  /** Scoped to `userId` for the same reason as confirmBillPayment. */
+  /** Scoped to `userId`, and to chat purchases, for the same reasons as confirmBillPayment. */
   async cancelBillPayment(
     userId: string,
     billPaymentId: string,
@@ -303,7 +469,11 @@ export class BillPaymentConfirmationService {
       where: { id: billPaymentId, userId },
       include: { user: true },
     });
-    if (!payment || payment.status !== BillPaymentStatus.PENDING_CONFIRMATION) {
+    if (
+      !payment ||
+      payment.originSurface !== PaymentSurface.CHAT ||
+      payment.status !== BillPaymentStatus.PENDING_CONFIRMATION
+    ) {
       return;
     }
 
@@ -326,7 +496,7 @@ export class BillPaymentConfirmationService {
    * Covers PENDING_PIN as well as PENDING_CONFIRMATION, matching
    * TransferConfirmationService.cancelPendingForUser. A PIN-awaiting purchase
    * carries a live challenge that could still be answered later and buy
-   * something the user believes they abandoned.
+   * something the user believes they abandoned. Chat purchases only, as there.
    */
   async cancelPendingForUser(
     userId: string,
@@ -335,6 +505,7 @@ export class BillPaymentConfirmationService {
     const pending = await this.prisma.billPayment.findMany({
       where: {
         userId,
+        originSurface: PaymentSurface.CHAT,
         status: {
           in: [
             BillPaymentStatus.PENDING_CONFIRMATION,
@@ -505,6 +676,7 @@ export class BillPaymentConfirmationService {
     const pendingBill = await this.prisma.billPayment.findFirst({
       where: {
         userId,
+        originSurface: PaymentSurface.CHAT,
         status: {
           in: [
             BillPaymentStatus.PENDING_CONFIRMATION,

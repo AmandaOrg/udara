@@ -7,25 +7,18 @@ import {
 } from "@nestjs/common";
 import {
   PaymentSurface,
-  Prisma,
   Recipient,
   Transaction,
   TransactionStatus,
-  TransactionType,
 } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { AppPrincipal } from "../../app-auth/session.service";
-import { runInChannel } from "../../messaging/channel-context";
-import {
-  formatSpendFeeLine,
-  TransferConfirmationService,
-} from "../../whatsapp/transfer-confirmation.service";
+import { TransferConfirmationService } from "../../whatsapp/transfer-confirmation.service";
 import { PinGateService } from "../../whatsapp/pin-gate.service";
 import { PinOutcomeService } from "../../whatsapp/pin-outcome.service";
 import { AllowanceService } from "../../allowance/allowance.service";
 import { RubiesService } from "../../rubies/rubies.service";
 import { TaggingService } from "../../tagging/tagging.service";
-import { TransactionType as LocalTransactionType } from "../../common/enums/transaction-type.enum";
 import { BankDirectoryService } from "../banks/bank-directory.service";
 import { NameEnquiryService } from "../banks/name-enquiry.service";
 import type { AuthorizeTransferDto, CreateTransferDto } from "./transfers.dto";
@@ -33,24 +26,18 @@ import type {
   AuthorizeView,
   ConfirmView,
   QuoteView,
-  TransferStatus,
   TransferView,
 } from "./transfer.view";
+import {
+  feeNote,
+  inApp,
+  isUniqueViolation,
+  naira,
+  paymentStatus,
+  surfaceOf,
+} from "../payments.util";
 
 type TransferRow = Transaction & { recipient: Recipient };
-
-const STATUS: Record<TransactionStatus, TransferStatus> = {
-  PENDING_CONFIRMATION: "awaiting_confirmation",
-  PENDING_PIN: "awaiting_pin",
-  CONFIRMED: "processing",
-  EXECUTED: "successful",
-  FAILED: "failed",
-  CANCELLED: "cancelled",
-};
-
-function naira(amount: number): number {
-  return Math.max(0, Math.round(amount * 100) / 100);
-}
 
 /**
  * The app's send-money screens: quote, confirm, PIN, result. The same
@@ -88,7 +75,7 @@ export class NativeTransferService {
     key: string,
     dto: CreateTransferDto,
   ): Promise<{ replayed: boolean; view: QuoteView }> {
-    return this.inApp(principal, async () => {
+    return inApp(principal, async () => {
       const existing = await this.findByKey(principal.userId, key);
       if (existing) {
         return { replayed: true, view: await this.replay(existing, dto) };
@@ -128,10 +115,7 @@ export class NativeTransferService {
       } catch (err) {
         // Two first requests under one key: the loser's insert hits the
         // unique index, and is answered as the replay it is.
-        if (
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === "P2002"
-        ) {
+        if (isUniqueViolation(err)) {
           const winner = await this.findByKey(principal.userId, key);
           if (winner) {
             return { replayed: true, view: await this.replay(winner, dto) };
@@ -168,7 +152,7 @@ export class NativeTransferService {
   }
 
   confirm(principal: AppPrincipal, id: string): Promise<ConfirmView> {
-    return this.inApp(principal, async () => {
+    return inApp(principal, async () => {
       const decision = await this.transfers.evaluateConfirm(
         principal.userId,
         id,
@@ -193,7 +177,9 @@ export class NativeTransferService {
           }
           throw new ConflictException({
             error: "not_awaiting_confirmation",
-            status: STATUS[(await this.row(principal.userId, id))!.status],
+            status: paymentStatus(
+              (await this.row(principal.userId, id))!.status,
+            ),
           });
         }
         case "balance_unavailable":
@@ -260,13 +246,13 @@ export class NativeTransferService {
     id: string,
     dto: AuthorizeTransferDto,
   ): Promise<AuthorizeView> {
-    return this.inApp(principal, async () => {
+    return inApp(principal, async () => {
       const row = await this.row(principal.userId, id, PaymentSurface.NATIVE);
       if (!row) throw new NotFoundException({ error: "not_found" });
       if (row.status !== TransactionStatus.PENDING_PIN) {
         throw new ConflictException({
           error: "not_awaiting_pin",
-          status: STATUS[row.status],
+          status: paymentStatus(row.status),
         });
       }
 
@@ -337,14 +323,10 @@ export class NativeTransferService {
     if (!cancelled) {
       throw new ConflictException({
         error: "not_cancellable",
-        status: STATUS[row.status],
+        status: paymentStatus(row.status),
       });
     }
     return this.view(row);
-  }
-
-  private inApp<T>(principal: AppPrincipal, fn: () => Promise<T>): Promise<T> {
-    return runInChannel({ channel: "app", deviceId: principal.deviceId }, fn);
   }
 
   private findByKey(
@@ -426,17 +408,11 @@ export class NativeTransferService {
     const names = await this.banks.names();
     return {
       id: row.id,
-      status: STATUS[row.status],
+      status: paymentStatus(row.status),
       amount: Number(row.amount),
       fee,
       spendType: row.type,
-      // The quote's waiver is not stored; a spend that is not NORMAL and
-      // carries no fee is exactly a waived one.
-      feeNote: formatSpendFeeLine(
-        row.type as unknown as LocalTransactionType,
-        fee,
-        row.type !== TransactionType.NORMAL && fee === 0,
-      ),
+      feeNote: feeNote(row.type, fee),
       purpose: row.purposeLabel,
       recipient: {
         accountName: row.recipient.accountName,
@@ -445,7 +421,7 @@ export class NativeTransferService {
         bankCode: row.recipient.bankCode,
         bankName: names.get(row.recipient.bankCode) ?? null,
       },
-      surface: row.originSurface === PaymentSurface.NATIVE ? "native" : "chat",
+      surface: surfaceOf(row.originSurface),
       createdAt: row.createdAt.toISOString(),
       confirmedAt: row.confirmedAt?.toISOString() ?? null,
       executedAt: row.executedAt?.toISOString() ?? null,

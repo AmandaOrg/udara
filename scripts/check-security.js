@@ -491,6 +491,8 @@ const NEEDS_TESTS = [
   'src/app-api/banks/name-enquiry.service.ts',
   'src/app-api/transfers/native-transfer.service.ts',
   'src/app-api/transfers/transfers.controller.ts',
+  'src/app-api/bills/native-bill.service.ts',
+  'src/app-api/bills/bills.controller.ts',
   'src/app-auth/new-device-cap.service.ts',
   'src/app-auth/secret-hash.util.ts',
   'src/app-auth/otp.service.ts',
@@ -674,7 +676,10 @@ for (const full of ALL_FILES) {
   });
 }
 
-const NATIVE_PAYMENT_CONTROLLERS = ['src/app-api/transfers/transfers.controller.ts'];
+const NATIVE_PAYMENT_CONTROLLERS = [
+  'src/app-api/transfers/transfers.controller.ts',
+  'src/app-api/bills/bills.controller.ts',
+];
 for (const file of NATIVE_PAYMENT_CONTROLLERS) {
   const source = readIfExists(file);
   if (

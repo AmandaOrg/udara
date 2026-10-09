@@ -20,15 +20,18 @@ export type PinFlowOutcome =
   | { action: "pin_setup_complete" };
 
 /**
- * A transfer PIN checked for a caller that shows the answer itself (the app's
- * native send screen), instead of as chat messages. `verified` carries the
- * same outcome the chat path produces, for PinOutcomeService to act on.
+ * A payment PIN checked for a caller that shows the answer itself (the app's
+ * native send and bill screens), instead of as chat messages. `verified`
+ * carries the same outcome the chat path produces, for PinOutcomeService.
  */
-export type TransferPinCheck =
+export type PaymentPinCheck =
   | { kind: "verified"; outcome: PinFlowOutcome }
   | { kind: "wrong_pin"; message: string; retryToken: string }
   | { kind: "locked"; message: string; lockedUntil: Date | null }
   | { kind: "expired" };
+
+/** The one payment a TRANSFER_AUTH challenge is bound to. */
+type PaymentRef = { transactionId: string } | { billPaymentId: string };
 
 type PinVerdict =
   { ok: true } | { ok: false; reason: string; lockedUntil: Date | null };
@@ -97,19 +100,28 @@ export class PinGateService {
     user: User,
     billPaymentId: string,
   ): Promise<void> {
+    const flowToken = await this.issueBillPaymentPinToken(user, billPaymentId);
+
+    await this.sendPinFlow(user, {
+      kind: "PIN_ENTRY",
+      flowToken,
+      headerText: "Enter your PIN",
+      bodyText: "Enter your 4-digit PIN to authorize this airtime purchase.",
+      ctaText: "Enter PIN",
+    });
+  }
+
+  /** The challenge alone, for the app's native bill screen. */
+  async issueBillPaymentPinToken(
+    user: User,
+    billPaymentId: string,
+  ): Promise<string> {
     const challenge = await this.pin.createChallenge({
       userId: user.id,
       purpose: PinChallengePurpose.TRANSFER_AUTH,
       billPaymentId,
     });
-
-    await this.sendPinFlow(user, {
-      kind: "PIN_ENTRY",
-      flowToken: challenge.flowToken,
-      headerText: "Enter your PIN",
-      bodyText: "Enter your 4-digit PIN to authorize this airtime purchase.",
-      ctaText: "Enter PIN",
-    });
+    return challenge.flowToken;
   }
 
   /** Sends the first-time PIN setup Flow (enter + confirm). */
@@ -401,9 +413,9 @@ export class PinGateService {
       return { action: "none" };
     }
 
-    const verdict = await this.checkTransferPin(
+    const verdict = await this.checkPaymentPin(
       user,
-      transactionId,
+      { transactionId },
       sensitive.pin ?? "",
     );
     if (!verdict.ok) {
@@ -431,22 +443,45 @@ export class PinGateService {
     flowToken: string,
     transactionId: string,
     pin: string,
-  ): Promise<TransferPinCheck> {
+  ): Promise<PaymentPinCheck> {
+    return this.authorizePayment(user, flowToken, { transactionId }, pin);
+  }
+
+  /** The same, for a bill payment: the token must be bound to this purchase. */
+  async authorizeBillPayment(
+    user: User,
+    flowToken: string,
+    billPaymentId: string,
+    pin: string,
+  ): Promise<PaymentPinCheck> {
+    return this.authorizePayment(user, flowToken, { billPaymentId }, pin);
+  }
+
+  private async authorizePayment(
+    user: User,
+    flowToken: string,
+    ref: PaymentRef,
+    pin: string,
+  ): Promise<PaymentPinCheck> {
     const challenge = await this.pin.consumeChallenge(flowToken, user.id);
-    if (
-      !challenge ||
-      challenge.purpose !== PinChallengePurpose.TRANSFER_AUTH ||
-      challenge.transactionId !== transactionId
-    ) {
+    const bound =
+      !!challenge &&
+      challenge.purpose === PinChallengePurpose.TRANSFER_AUTH &&
+      ("transactionId" in ref
+        ? challenge.transactionId === ref.transactionId &&
+          !challenge.billPaymentId
+        : challenge.billPaymentId === ref.billPaymentId &&
+          !challenge.transactionId);
+    if (!bound) {
       if (challenge) {
         this.logger.warn(
-          `PIN token for user ${user.id} was not for transaction ${transactionId} — refusing`,
+          `PIN token for user ${user.id} was not for ${describe(ref)} — refusing`,
         );
       }
       return { kind: "expired" };
     }
 
-    const verdict = await this.checkTransferPin(user, transactionId, pin);
+    const verdict = await this.checkPaymentPin(user, ref, pin);
     if (!verdict.ok) {
       if (verdict.lockedUntil) {
         return {
@@ -458,30 +493,43 @@ export class PinGateService {
       return {
         kind: "wrong_pin",
         message: verdict.reason,
-        retryToken: await this.issueTransferPinToken(user, transactionId),
+        retryToken:
+          "transactionId" in ref
+            ? await this.issueTransferPinToken(user, ref.transactionId)
+            : await this.issueBillPaymentPinToken(user, ref.billPaymentId),
       };
     }
     return {
       kind: "verified",
-      outcome: { action: "execute_transfer", transactionId },
+      outcome:
+        "transactionId" in ref
+          ? { action: "execute_transfer", transactionId: ref.transactionId }
+          : {
+              action: "execute_bill_payment",
+              billPaymentId: ref.billPaymentId,
+            },
     };
   }
 
   /**
-   * The one transfer PIN check both channels use. A lockout abandons the
-   * transfer outright rather than leaving it in PENDING_PIN, where a later
-   * unlock could silently resume a send the user has long since moved on
-   * from.
+   * The one payment PIN check every path uses: the chat's transfer and bill
+   * PIN forms and the app's native screens. A lockout abandons the payment
+   * outright rather than leaving it in PENDING_PIN, where a later unlock could
+   * silently resume a purchase the user has long since moved on from.
    */
-  private async checkTransferPin(
+  private async checkPaymentPin(
     user: User,
-    transactionId: string,
+    ref: PaymentRef,
     pin: string,
   ): Promise<PinVerdict> {
     const result = await this.pin.verifyPin(user.id, pin);
     if (result.ok) return { ok: true };
     if (result.lockedUntil) {
-      await this.cancelPendingTransfer(transactionId);
+      if ("transactionId" in ref) {
+        await this.cancelPendingTransfer(ref.transactionId);
+      } else {
+        await this.cancelPendingBillPayment(ref.billPaymentId);
+      }
     }
     return {
       ok: false,
@@ -495,16 +543,16 @@ export class PinGateService {
     billPaymentId: string,
     sensitive: SensitiveFields,
   ): Promise<PinFlowOutcome> {
-    const result = await this.pin.verifyPin(user.id, sensitive.pin ?? "");
-    if (!result.ok) {
-      await this.messenger.sendText(user, result.reason);
-
-      if (result.lockedUntil) {
-        await this.cancelPendingBillPayment(billPaymentId);
-        return { action: "none" };
+    const verdict = await this.checkPaymentPin(
+      user,
+      { billPaymentId },
+      sensitive.pin ?? "",
+    );
+    if (!verdict.ok) {
+      await this.messenger.sendText(user, verdict.reason);
+      if (!verdict.lockedUntil) {
+        await this.requestBillPaymentPin(user, billPaymentId);
       }
-
-      await this.requestBillPaymentPin(user, billPaymentId);
       return { action: "none" };
     }
 
@@ -545,6 +593,12 @@ export class PinGateService {
       `your pin is locked after too many wrong attempts. try again in about ${minutes} minute${minutes === 1 ? "" : "s"}.`,
     );
   }
+}
+
+function describe(ref: PaymentRef): string {
+  return "transactionId" in ref
+    ? `transaction ${ref.transactionId}`
+    : `bill payment ${ref.billPaymentId}`;
 }
 
 /**

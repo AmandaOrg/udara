@@ -111,6 +111,15 @@ Also:
 - **A send can be cancelled** from the screen until the PIN is accepted.
 - **WhatsApp users see no change.** Every card, message and button is word for word the same.
 
+### P8 (buying airtime, data and electricity from the app's own screens)
+
+The app can buy airtime, a data bundle or prepaid electricity without the chat, in the same four steps as sending money: quote, Confirm, PIN, result. The checks, the fees, the 10-minute re-quote, the PIN lockout and the new-phone limit are the same as in the chat.
+- **What can be bought comes from Udara's catalog.** The app sends the network, bundle or electricity company it shows from the catalog, and the server takes every code, name, price and amount limit from the catalog itself. A data bundle costs what the catalog says; the app cannot send a different price. Airtime and electricity are ₦50 to ₦50,000, as on WhatsApp.
+- **An electricity quote shows the name on the meter,** as the electricity company holds it, so the user can check it is the right meter before confirming. Each check counts towards the same 20-an-hour limit as checking an account's name.
+- **A successful electricity purchase returns its token** on the result screen, and the token is also added to the chat.
+- **Nothing is bought twice, and the chat and the screens stay out of each other's way,** exactly as for sending money.
+- **WhatsApp users see no change.** Every card, message and button is word for word the same.
+
 ### Later phases (outline)
 
 - **Sign-up and login.**
@@ -148,3 +157,4 @@ Also:
 | 2026-09-25 | Initial: P0 behavior in full, later phases outlined |
 | 2026-09-26 | P6: read-only screens |
 | 2026-09-26 | P7: sending money from the app's screens |
+| 2026-10-09 | P8: buying airtime, data and electricity from the app's screens |

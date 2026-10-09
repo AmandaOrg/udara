@@ -467,6 +467,7 @@ export class OrchestratorService {
         findFirst: (args: {
           where: {
             userId: string;
+            originSurface?: PaymentSurface;
             status: BillPaymentStatus | { in: BillPaymentStatus[] };
           };
           orderBy: { createdAt: "desc" } | { executedAt: "desc" };
@@ -524,6 +525,9 @@ export class OrchestratorService {
       bills.billPayment.findFirst({
         where: {
           userId: user.id,
+          // As for transfers: a purchase open on the app's bill screen is not
+          // the conversation's to remind about.
+          originSurface: PaymentSurface.CHAT,
           status: {
             in: [
               BillPaymentStatus.PENDING_CONFIRMATION,
