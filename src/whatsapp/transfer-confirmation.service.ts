@@ -45,13 +45,16 @@ export const CONFIRM_RE_QUOTE_AFTER_MS = 10 * 60 * 1000;
 
 /** How long a sweep attempt holds the row before another caller may retry it. */
 const FEE_SWEEP_LEASE_MS = 5 * 60 * 1000;
-/** After this many tries the fee is an ops problem, not a retry problem. */
-const FEE_SWEEP_MAX_ATTEMPTS = 5;
+/**
+ * After this many tries the fee is an ops problem, not a retry problem.
+ * Exported so account closure can tell a sweep that may still run.
+ */
+export const FEE_SWEEP_MAX_ATTEMPTS = 5;
 /**
  * Stop retrying after a day. The fee comes out of the customer's own wallet, so
  * a late sweep is a surprise debit against money they have already spent.
  */
-const FEE_SWEEP_GIVE_UP_MS = 24 * 60 * 60 * 1000;
+export const FEE_SWEEP_GIVE_UP_MS = 24 * 60 * 60 * 1000;
 
 /** User-facing label for spend classification on confirm buttons. */
 export function formatSpendTypeLabel(

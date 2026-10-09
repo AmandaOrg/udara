@@ -6,6 +6,7 @@ import { BillPaymentConfirmationService } from "../whatsapp/bill-payment-confirm
 import { AllowanceService } from "../allowance/allowance.service";
 import { EmailNotificationsService } from "../email/email-notifications.service";
 import { displayFirstNameOrThere } from "../common/display-name.util";
+import { Sentry } from "../common/sentry";
 import {
   RubiesSignatureGuard,
   SignatureCheckedRequest,
@@ -152,6 +153,16 @@ export class RubiesWebhookController {
         creditedAt: new Date(),
       },
     });
+
+    // A closed account (ADR-0003): the credit is a money record, so it is kept
+    // above, but nobody is messaged. Ops must get the money back to the sender
+    // through Rubies, so this pages rather than just logging.
+    if (user.closedAt) {
+      const alert = `Credit to closed account of user ${user.id}, reference=${payload.paymentReference}: ask Rubies to return it`;
+      this.logger.error(alert);
+      Sentry.captureMessage(alert, "error");
+      return;
+    }
 
     // Best-effort, keyed on the Rubies reference so a redelivered webhook
     // can't double-send. Never awaited for its result beyond completion:

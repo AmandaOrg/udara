@@ -14,6 +14,7 @@ import { ManagerModule } from "./manager/manager.module";
 import { validate } from "./config/env.validation";
 import { AppThrottlerGuard } from "./common/app-throttler.guard";
 import { AppApiModule } from "./app-api/app-api.module";
+import { AccountClosureModule } from "./account-closure/account-closure.module";
 
 @Module({
   imports: [
@@ -41,6 +42,9 @@ import { AppApiModule } from "./app-api/app-api.module";
     OnboardingModule,
     ManagerModule,
     WhatsappModule, // depends on the modules above — keep last
+    // Account closure (ADR-0003), here rather than only in AppApiModule so the
+    // ops CLI reaches it with the app API switched off.
+    AccountClosureModule,
     // The mobile app's /v1 API only exists when switched on, so deploying it
     // changes nothing until APP_API_ENABLED is set (and its secrets with it,
     // which env validation then requires). Read after ConfigModule.forRoot

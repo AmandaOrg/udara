@@ -7,6 +7,7 @@ Companion to [`initiatives/mobile-app/plan.md`](../../initiatives/mobile-app/pla
 - Spec: [MOBILE_APP_SPEC.md](../specs/MOBILE_APP_SPEC.md)
 - Plan: [initiatives/mobile-app/plan.md](../../initiatives/mobile-app/plan.md)
 - ADR: [0002-app-channel-and-auth.md](../decisions/0002-app-channel-and-auth.md)
+- ADR: [0003-account-closure-and-retention.md](../decisions/0003-account-closure-and-retention.md)
 
 ## Approach
 
@@ -42,7 +43,7 @@ P0, below, is the part built so far. It changes no module wiring beyond one new 
 - `NameEnquiryLog` and two history indexes (P6)
 - `Transaction.originSurface` and `clientRequestKey` (P7)
 - `BillPayment.originSurface` and `clientRequestKey` (P8)
-- `User.emailVerifiedAt` and `SettingsChangeType.ACCOUNT_DELETION` (P9)
+- `User.emailVerifiedAt`, `closedAt` and `closedPhoneNumber`; `EmailVerification`; `SettingsChangeType.ACCOUNT_DELETION` and `SettingsChangeStatus.WITHDRAWN` (P9)
 
 ## Control flow
 
@@ -482,6 +483,153 @@ Response: 201 `{ payment, balanceAfter, allowanceLeftToday }`; a replay is 200.
 
 **Shared with P7:** the status, decision and result vocabularies, `RequoteView` and `CapView` move to `app-api/payment.view.ts`; `naira`, the channel-context wrapper, the fee note and the unique-violation check move to `app-api/payments.util.ts`.
 
+### P9: account and compliance
+
+Follows [ADR-0003](../decisions/0003-account-closure-and-retention.md) for closure and retention.
+
+**Data** (migration `20261009150000_account_compliance`):
+- `User`:
+  - `emailVerifiedAt DateTime?`;
+  - `closedAt DateTime?`;
+  - `closedPhoneNumber String?`: the phone number kept for the records once `phoneNumber` is released.
+- `SettingsChangeType` gains `ACCOUNT_DELETION`.
+- `SettingsChangeStatus` gains `WITHDRAWN`.
+- `EmailType` gains `EMAIL_VERIFICATION`, `ACCOUNT_CLOSURE_REQUESTED` and `ACCOUNT_CLOSED`.
+- `EmailVerification { id, userId, email, codeHmac, attempts, expiresAt, consumedAt, createdAt }`, indexed on `(userId, createdAt)`.
+
+**Devices** (`DeviceService`, `/v1/devices`):
+- **Signed in** means:
+  - `trustedAt` is set;
+  - `revokedAt` is not;
+  - there is a session that is neither revoked nor past its refresh expiry.
+
+  A phone that signed out is not listed.
+- `GET /v1/devices` returns `{ devices: [{ id, platform, name, signedInAt, lastSeenAt, current }] }`, newest first.
+- `DELETE /v1/devices/:id` (ParseUUIDPipe) acts only on a device of the caller's that is still signed in, else 404 `not_found`. In one transaction it:
+  1. sets the device's `revokedAt`;
+  2. clears its push token;
+  3. revokes its sessions.
+
+  `SessionService.authenticate` already refuses a revoked device, so the access token dies on the next request. Revoking the caller's own phone is allowed: it is a sign-out.
+- The `push-token` routes stay declared first, so `DELETE /v1/devices/push-token` is never read as an `:id`.
+
+**Settings requests** (`/v1/settings-requests`, run inside `inApp` so the managers' acknowledgement lands in the app chat):
+- `GET` returns the caller's requests, newest first, at most 50.
+- `POST { type, requestedChange, reason? }`:
+  - `type` is one of `window_hours`, `override_fees`, `exit_restrictions` or `other`. Closure has its own route.
+  - Text is 2 to 500 characters; the reason is at most 500.
+  - An open request of the same type is 409 `request_open`.
+  - Otherwise it calls `ManagerConversationService.fileChangeRequest`, unchanged: the same `eligibleAt` and the same delayed managers' reply. Returns 201.
+  - Limited to 5 an hour.
+- `POST /:id/withdraw` calls `ManagerService.withdrawRequest(userId, id)`, which claims the row from `PENDING` or `ELIGIBLE_FOR_REVIEW` to `WITHDRAWN`:
+  - another user's id is 404;
+  - a decided request is 409 `already_decided`.
+- `ManagerService.reviewRequest` refuses `ACCOUNT_DELETION`: only `AccountClosureService` decides those. So `settings:decide` cannot mark one approved without closing anything.
+- `SettingsRequestView` is `{ id, type, status, requestedChange, reason, requestedAt, eligibleAt, resolvedAt, managerNotes }`, with lower-case `type` and `status`.
+
+**Email verification** (`EmailVerificationService` in `app-auth`, `/v1/email/verify`):
+- **Start:**
+  - Refused with 409 `no_email` when there is no address, and 409 `already_verified` when it is verified.
+  - At most one code a minute (429 `too_soon` with `retryAfter`) and 5 an hour (429 `too_many_codes`).
+  - Earlier codes are consumed, then a new 6-digit code is stored as `codeDigest(OTP_PEPPER, "email:<userId>:<address>", code)` and emailed (`EMAIL_VERIFICATION`, keyed on the row).
+  - If the email is not sent, the row is consumed and the answer is 503 `email_unavailable`.
+  - Returns `{ sentTo, expiresAt, resendAfter }`, where `sentTo` is masked.
+- **Confirm `{ code }`:**
+  - Takes the newest unconsumed row. None is 422 `no_code`; past its expiry it is `expired`.
+  - A row for a different address than the current one is `no_code`.
+  - The attempt is claimed atomically below 5 (`exhausted` after that).
+  - The HMAC is compared in constant time. A wrong code is 422 `invalid_code` with `attemptsLeft`.
+  - A match consumes the row and sets `emailVerifiedAt`, conditional on the address still being the one the code went to.
+- **PIN reset:**
+  - `PinGateService.handleResetSubmission` marks the address verified after a successful reset. The emailed reset code proves the same thing.
+  - The reset is not refused for an unverified address: the plan's outline asked for that, and this replaces it. Refusing would strand WhatsApp users, who have no other way to verify.
+
+**Terms** (`/v1/terms`):
+- `needsTermsConsent(user)` is true only for someone who accepted before (`termsAcceptedAt` set) under a version that is not `TERMS_VERSION`. Consent during onboarding stays in the conversation.
+- `GET` returns `{ version, summary, consentQuestion, accepted: { version, at } | null, needsConsent }`.
+- `POST /accept { version }`:
+  - 409 `terms_changed` (with the current version) when the app showed an older one;
+  - 409 `not_onboarded` when there is no earlier consent;
+  - otherwise stamps `termsAcceptedAt` and `termsVersion`.
+- `GET /v1/me` adds `emailVerified` and `needsTermsConsent`.
+- No route refuses anything until re-consent: no terms change exists yet. Enforcement, and WhatsApp re-consent, come with the first real change.
+
+**Closure: asking** (`GET` and `POST /v1/account/deletion`, `AccountClosureService.request`):
+- **`GET` returns** `{ request, completeBy, canRequest, blockers, balance, pinRequired, hasAccount }`.
+- **Blockers**, checked in this order:
+  1. `request_open`;
+  2. `payment_in_progress`;
+  3. `balance_unavailable`;
+  4. `balance_not_zero`.
+- **`payment_in_progress`** means any of:
+  - a transfer or bill payment at `CONFIRMED`;
+  - an executed transfer whose fee is not yet swept and is still within the sweep's retry window (`FEE_SWEEP_MAX_ATTEMPTS` and `FEE_SWEEP_GIVE_UP_MS`, now exported).
+- **The balance** is read live from Rubies, and only for someone with an account.
+- **`POST { pin?, reason? }`**, limited to 10 a minute:
+  1. The blockers are checked again, as 409s with the same codes; `balance_unavailable` is 503.
+  2. If a PIN is set, it is required:
+     - none sent is 400 `pin_required`;
+     - `PinService.verifyPin` applies the shared lockout: wrong is 422 `wrong_pin` with the message, locked is 423 `pin_locked` with `lockedUntil`.
+  3. `ManagerService.fileChangeRequest` files `ACCOUNT_DELETION` with a fixed `requestedChange` ("close my account"). Not `ManagerConversationService`: no managers' reply is scheduled for a closure.
+  4. A confirmation goes to the chat (the app's, inside `inApp`), and to the email address if there is one.
+  5. Returns 201 `{ request, completeBy }`, where `completeBy` is the request time plus 30 days.
+- **Withdrawing** is `POST /v1/settings-requests/:id/withdraw`.
+
+**Closure: closing** (`AccountClosureService.close(requestId, { residualHandled, notes })`, from the CLI only):
+1. **Checks.** The request is `ACCOUNT_DELETION` and undecided; `eligibleAt` has passed; the user is not already closed.
+2. **The turn lease.** The rest runs in `TurnService.run`, so a message in progress finishes first and none starts.
+3. **Preconditions.** Nothing in flight. A zero balance, checked live, unless `--residual-handled`.
+4. **The confirmation**, while there are still channels to send it on. Through the messenger (`transactional`) and by email (`ACCOUNT_CLOSED`, keyed on the request). The wording depends on whether records are kept.
+5. **One transaction.** It first claims the request (`PENDING` or `ELIGIBLE_FOR_REVIEW` to `APPROVED`, with notes); a lost claim rolls everything back. Any other request the user still has open is then withdrawn. Then it applies the table below.
+6. **The result** carries the Rubies customer id and account number, for ops to ask Rubies to close the account.
+
+An **account holder** has a Rubies account number or customer id. Anyone else **never opened** an account.
+
+| Data | Account holder | Never opened |
+| --- | --- | --- |
+| `User`: legal names, date of birth, email and `emailVerifiedAt`, Rubies ids and account, terms consent, `onboardingCompletedAt` | kept | cleared |
+| `User.phoneNumber` | copied to `closedPhoneNumber`, then replaced with `closed:<id>` | replaced with `closed:<id>` |
+| `User.whatsappNumber` | cleared | cleared |
+| `User`: the profile and plan<sup>1</sup> | cleared, or reset to the schema default | cleared, or reset to the schema default |
+| `User`: the PIN and its lockout | cleared | cleared |
+| `Transaction`, `BillPayment`, `IncomingCredit`, `OverrideHistory` | kept; quotes awaiting Confirm or the PIN are cancelled | none exist |
+| `Recipient` | paid ones kept, with the nickname and `lastUsedAt` cleared and the label reset to `OTHER`; others deleted | deleted |
+| `WhatsappMessage`, `AppMessage` | kept | deleted, including WhatsApp rows from the number that were never attached |
+| `SettingsChangeRequest` | kept | kept, with the user's words and the notes cleared |
+| Working data<sup>2</sup> | deleted | deleted |
+
+1. The profile and plan: `name`, `occupation`, `city`, income, posture, budget, strictness, goal, window hours, `disciplineExitedAt`, the weekly override, `bvn`, `nin`, and the two last-active stamps.
+2. Working data: `AppSession`, `LoginChallenge`, `Device`, `PinChallenge`, `UserTurnLease`, `TransferDraft`, `BillPaymentDraft`, `ConversationSession`, `OnboardingSession`, `LlmCallLog`, `EmailLog`, `EmailVerification`, `NudgeLog`, `WeeklyReview`, `DailyAllowance` (payments' links to it become null by the foreign key), `NameEnquiryLog`, and `AuthOtp` rows for the number.
+
+The released numbers mean:
+- a later WhatsApp message or app sign-up from that number creates a new user;
+- deleting the sessions signs the app out everywhere.
+
+**Closure: declining and withdrawing:**
+- `decline(requestId, notes)` claims the request to `REJECTED` and tells the user in plain words, without the managers' persona.
+- `withdraw` for ops is `ManagerService.withdrawRequest`, the same as the route.
+
+**A closed account is never messaged:**
+- **Delivery policy.** `DeliveryPolicyService.plan` returns null for a closed user, and `ChannelMessenger` drops the send (`requestForm` answers false). Replies with a channel context cannot reach a closed user: its sessions are gone, and its numbers no longer resolve to it.
+- **Schedulers.** `closedAt: null` is added to their user queries: the allowance day boundary, window-open nudge and habit follow-up, the weekly review, the summary emails, and the monthly-summary resend CLI. The spend repair and its daily report skip a closed account's payments, whose allowance ledger is gone. The managers' reply has nothing to answer, because closing withdraws any request still open.
+- **Credits.** `RubiesWebhookController` still records a credit to a closed account's number as an `IncomingCredit`, a money record. It sends no message or email, and alerts ops through Sentry with the payment reference.
+
+**Ops CLI** (`src/cli/account-closure-cli.ts`, boots `AppModule` with the schedulers off, like `settings:decide`):
+- `account:request -- --user <id> [--reason "..."]`: files for someone who asked by chat or email, after ops has confirmed it is them.
+- `account:close -- --id <requestId> [--confirm] [--residual-handled] [--notes "..."]`:
+  - Without `--confirm` it is a dry run: it prints what stands in the way, and how many rows will be kept and erased.
+  - With it, it closes, then prints the Rubies details and the next step.
+- `account:decline -- --id <requestId> --notes "..."` and `account:withdraw -- --id <requestId>`.
+- `settings:list` shows the date each closure is due.
+
+**S18** (`scripts/check-security.js`):
+- No source file calls `delete` or `deleteMany` on `transaction`, `billPayment`, `incomingCredit`, `overrideHistory` or `settingsChangeRequest`. The six-year purge will be the one allow-listed file when it is built.
+- `SETTINGS_CHANGE_TYPES` in `orchestrator/transfer-hints.util.ts` must not contain `ACCOUNT_DELETION`.
+
+**Logging:**
+- `EmailService`'s "skipping … email to <address>" line masks the address.
+- Closure logs ids and counts only.
+
 ## Invariants
 
 Code must still enforce:
@@ -498,6 +646,9 @@ Code must still enforce:
 - A native quote or purchase is never confirmed, resumed or cancelled by the chat, and the reverse.
 - A native bill purchase stores only codes, labels, prices and bounds from the catalog, and only the meter name Rubies returns.
 - Every route that reveals an account or meter holder's name spends from the per-user lookup budget.
+- A closed account is never sent anything and never signed in to. Its payment records, identity and conversation are kept for six years. Nothing else about it is kept.
+- No code deletes a payment record or a settings request (S18). Only `AccountClosureService`, run by an operator, closes an account. The chat model cannot ask for a closure.
+- An email verification code exists in plaintext only in memory and in the email.
 
 ## Tests
 
@@ -511,6 +662,7 @@ Code must still enforce:
   - P7: `npx jest src/whatsapp/transfer-confirmation src/whatsapp/pin-gate src/whatsapp/pin-outcome src/app-api/transfers src/orchestrator`
   - P6: `npx jest src/app-api src/allowance/limits-status src/whatsapp/account-actions`
   - P4: `npx jest src/conversation src/messaging src/app-api src/app-auth/new-device-cap src/whatsapp/pin-outcome src/whatsapp/whatsapp-router src/whatsapp/inbound-rate-limit src/onboarding`
+  - P9: `npx jest src/account-closure src/app-api src/app-auth src/manager src/messaging src/whatsapp/pin-gate src/rubies src/allowance src/email src/orchestrator/transfer-hints`
   - then the full `npm test`
 - **Golden:** unchanged. P0 does not touch the orchestrator.
 - **E2e:** `npm run e2e` with the dry-run flags. From P3, `e2e/scenarios/app/` needs the server on `APP_API_ENABLED=true SMS_DRY_RUN=true` with `OTP_PEPPER` shared with the runner (see DEVELOPMENT.md). Leave `DEEPGRAM_API_KEY` blank on the server, or the audio scenario downloads media from Meta for real.
@@ -535,3 +687,5 @@ Code must still enforce:
 | 2026-09-26 | P7: native transfers as built |
 | 2026-10-09 | P7 fix: native quotes spend from the lookup budget |
 | 2026-10-09 | P8: native bills as built |
+| 2026-10-09 | P9: account and compliance designed (ADR-0003) |
+| 2026-10-09 | P9: as built |

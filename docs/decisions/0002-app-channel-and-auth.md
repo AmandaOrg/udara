@@ -56,7 +56,7 @@ Udara is being built as a standalone iOS/Android app as well as a WhatsApp agent
 - The SMS provider becomes a cost and abuse surface that needs a cap and an alert.
 - Cross-channel state (a wizard open on one channel while the user types on the other) needs explicit handling in P4.
 - Settled 2026-09-25 (Egwu David Samuel): transfers from a newly trusted device are capped for its first 24 hours (default ₦20,000, configurable). Enforced where app-originated transfers exist (P4, P7).
-- Still open, to settle before the phase that needs it: the account deletion and retention policy, checked against the Rubies agreement and the NDPA (P9).
+- Settled 2026-10-09 in [ADR-0003](0003-account-closure-and-retention.md): the account deletion and retention policy (P9).
 
 ## Follow-up
 

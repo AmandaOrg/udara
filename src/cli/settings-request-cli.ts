@@ -26,7 +26,8 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "../app.module";
 import { PrismaService } from "../prisma/prisma.service";
 import { ManagerConversationService } from "../manager/manager-conversation.service";
-import { SettingsChangeStatus } from "@prisma/client";
+import { SettingsChangeStatus, SettingsChangeType } from "@prisma/client";
+import { closureDueBy } from "../account-closure/retention-policy";
 
 type Args = {
   command: "list" | "decide";
@@ -97,6 +98,10 @@ async function main() {
               ? "ELIGIBLE NOW"
               : `eligible ${r.eligibleAt.toDateString()}`,
             `${r.user.name ?? "unnamed"} (${r.user.phoneNumber})`,
+            // ADR-0003: a closure must be carried out within 30 days.
+            r.type === SettingsChangeType.ACCOUNT_DELETION
+              ? `CLOSE BY ${closureDueBy(r.requestedAt).toDateString()} (npm run account:close)`
+              : "",
             JSON.stringify(r.requestedChange),
             r.reason ? `reason: ${JSON.stringify(r.reason)}` : "",
           ].join("  "),

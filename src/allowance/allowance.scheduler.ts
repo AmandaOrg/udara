@@ -33,10 +33,18 @@ export class AllowanceScheduler {
     private readonly emailNotifications: EmailNotificationsService,
   ) {}
 
-  /** "Active" here just means "has a Rubies account" — the only notion of an onboarded user this schema has. */
+  /**
+   * "Active" here just means "has a Rubies account" — the only notion of an
+   * onboarded user this schema has — and not closed: a closed account keeps
+   * its account number as a record but is never sent anything (ADR-0003).
+   */
   private findActiveUsers(extraWhere: Record<string, unknown> = {}) {
     return this.prisma.user.findMany({
-      where: { rubiesAccountNumber: { not: null }, ...extraWhere },
+      where: {
+        rubiesAccountNumber: { not: null },
+        closedAt: null,
+        ...extraWhere,
+      },
     });
   }
 
@@ -106,7 +114,10 @@ export class AllowanceScheduler {
     const windowEnd = new Date(now.getTime() - 10 * 60 * 60 * 1000);
 
     const dueUsers = await this.prisma.user.findMany({
-      where: { onboardingCompletedAt: { gte: windowStart, lte: windowEnd } },
+      where: {
+        onboardingCompletedAt: { gte: windowStart, lte: windowEnd },
+        closedAt: null,
+      },
     });
     if (dueUsers.length === 0) return;
 

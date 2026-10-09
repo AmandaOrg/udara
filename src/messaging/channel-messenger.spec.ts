@@ -188,6 +188,33 @@ describe("ChannelMessenger", () => {
       expect(app.sendText).not.toHaveBeenCalled();
       expect(push.notify).not.toHaveBeenCalled();
     });
+
+    // ADR-0003: the policy has no plan for a closed account.
+    it("sends nothing at all to a closed account, on any channel", async () => {
+      policy.plan.mockResolvedValue(null);
+      const form = {
+        kind: "PIN_ENTRY" as const,
+        token: "tok",
+        headerText: "h",
+        bodyText: "b",
+        ctaText: "c",
+      };
+
+      await messenger.sendText(user, "hi", { delivery: "proactive" });
+      await messenger.sendChunked(user, "a\n\nb", {
+        delivery: "transactional",
+      });
+      await expect(
+        messenger.requestForm(user, form, { delivery: "transactional" }),
+      ).resolves.toBe(false);
+
+      for (const adapter of [whatsapp, app]) {
+        for (const method of Object.values(adapter)) {
+          expect(method).not.toHaveBeenCalled();
+        }
+      }
+      expect(push.notify).not.toHaveBeenCalled();
+    });
   });
 
   it("passes every kind of message through unchanged", async () => {

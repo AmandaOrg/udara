@@ -107,11 +107,33 @@ A repo-wide `npx eslint` still reports roughly 800 `prettier/prettier` findings.
 Security and documentation gates:
 
 ```bash
-npm run security:check   # S1-S17 invariants, secret scan, redaction sync
+npm run security:check   # S1-S18 invariants, secret scan, redaction sync
 npm run docs:check       # docs structure and links
 ```
 
 Both run in CI before lint. See [SECURITY.md](SECURITY.md).
+
+## Ops CLIs
+
+The following commands act on whatever database `DATABASE_URL` names, and `.env` may point at a hosted one. Check before running anything that writes.
+
+```bash
+npm run settings:list                                        # open requests; a closure shows when it is due
+npm run settings:decide -- --id <id> --approve|--reject [--notes "..."]
+npm run account:request -- --user <userId> [--reason "..."]  # someone asked by chat or email
+npm run account:close -- --id <requestId>                    # dry run: what is in the way, what is kept and erased
+npm run account:close -- --id <requestId> --confirm [--residual-handled] [--notes "..."]
+npm run account:decline -- --id <requestId> --notes "why it cannot be closed yet"
+npm run account:withdraw -- --id <requestId>                 # the user changed their mind another way
+```
+
+Closing an account ([ADR-0003](decisions/0003-account-closure-and-retention.md)):
+1. **Requests filed for someone.** Only after checking it is them: the request came from the account's own WhatsApp number or email address.
+2. **After the request is eligible** (7 days), run the dry run. Money in the account blocks closing: ask the user to move it out. A small amount that cannot be moved is arranged with Rubies first, then the closure is run with `--residual-handled`.
+3. **Close with `--confirm`** within 30 days of the request. It cannot be undone. The user is told by chat and email before anything is erased.
+4. **Ask Rubies to close the bank account.** The CLI prints the account number and customer id.
+5. **A credit to a closed account** raises a Sentry error with the payment reference. Get the money returned to the sender through Rubies.
+6. **When a regulator or court asks for records to be held,** do not close. Decline with the reason instead (`account:decline`), and keep the records until the hold ends.
 
 ## Transactional email (Resend)
 

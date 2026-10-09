@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Security gate for Udara. Enforces the S1-S12 invariants documented in
+ * Security gate for Udara. Enforces the S1-S18 invariants documented in
  * docs/SECURITY.md. Dependency-free so it can run before install completes
  * in any environment.
  *
@@ -506,6 +506,10 @@ const NEEDS_TESTS = [
   'src/orchestrator/bill-hints.util.ts',
   'src/allowance/fee-calculator.service.ts',
   'src/allowance/window.service.ts',
+  // Account and compliance (P9, ADR-0003)
+  'src/account-closure/account-closure.service.ts',
+  'src/app-auth/email-verification.service.ts',
+  'src/app-api/account/account-deletion.controller.ts',
 ];
 
 for (const target of NEEDS_TESTS) {
@@ -689,6 +693,48 @@ for (const file of NATIVE_PAYMENT_CONTROLLERS) {
   ) {
     fail('S17', `${file} must require an Idempotency-Key on the route that creates a payment`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// S18: closing an account keeps the records the law requires, for six years
+// after closure (docs/decisions/0003-account-closure-and-retention.md). No
+// code deletes a payment record or a settings request, and the chat model can
+// never ask for a closure. The six-year purge, when it is built, will be the
+// one file allowed to delete them.
+// ---------------------------------------------------------------------------
+
+const RECORD_DELETE =
+  /\.(transaction|billPayment|incomingCredit|overrideHistory|settingsChangeRequest)\.(delete|deleteMany)\(/;
+for (const full of ALL_FILES) {
+  const file = rel(full);
+  if (!file.startsWith('src/') || !file.endsWith('.ts') || file.endsWith('.spec.ts')) {
+    continue;
+  }
+  const lines = fs.readFileSync(full, 'utf8').split(/\r?\n/);
+  lines.forEach((line, index) => {
+    if (isWaived(lines, index)) return;
+    if (RECORD_DELETE.test(line)) {
+      fail(
+        'S18',
+        `${file}:${index + 1}: payment records and settings requests are kept for six years after an account closes; nothing deletes them (ADR-0003)`,
+      );
+    }
+  });
+}
+
+const hintsSource = readIfExists('src/orchestrator/transfer-hints.util.ts');
+const modelSettingsTypes =
+  hintsSource && /SETTINGS_CHANGE_TYPES[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/.exec(hintsSource);
+if (!modelSettingsTypes) {
+  fail(
+    'S18',
+    'src/orchestrator/transfer-hints.util.ts must keep SETTINGS_CHANGE_TYPES, the closed list of settings requests the model may file',
+  );
+} else if (/ACCOUNT_DELETION/.test(modelSettingsTypes[1])) {
+  fail(
+    'S18',
+    'the chat model must never file an account closure: take ACCOUNT_DELETION out of SETTINGS_CHANGE_TYPES (ADR-0003)',
+  );
 }
 
 // ---------------------------------------------------------------------------

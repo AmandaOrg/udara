@@ -23,6 +23,7 @@ import { InboundRateLimitService } from "./inbound-rate-limit.service";
 import { OrchestratorTurnOptions } from "../orchestrator/orchestrator.types";
 import { ConversationRouterService } from "../conversation/conversation-router.service";
 import { TurnService } from "../conversation/turn.service";
+import { maskPhone } from "../app-auth/sms.service";
 
 const AUDIO_TYPE_INSTEAD =
   "I can't listen to voice notes yet, could you type that instead?";
@@ -109,8 +110,10 @@ export class WhatsappRouterService {
         return this.handleUnsupportedMedia(user);
       case WhatsappMessageType.UNKNOWN:
       default:
+        // The user id, not the number: a phone number in a log line is
+        // personal data in a sink nobody erases (ADR-0003).
         this.logger.warn(
-          `Unhandled/unrecognized message type from ${message.fromNumber}`,
+          `Unhandled/unrecognized message type ${message.type} from user ${user.id}`,
         );
         await this.messenger.sendText(
           user,
@@ -194,7 +197,7 @@ export class WhatsappRouterService {
         (await this.linkWhatsapp(whatsappNumber, now));
       if (winner) return winner;
       throw new Error(
-        `findOrCreateUser: phone number ${whatsappNumber} is taken by a user already linked to a different WhatsApp number`,
+        `findOrCreateUser: phone number ${maskPhone(whatsappNumber)} is taken by a user already linked to a different WhatsApp number`,
       );
     }
   }

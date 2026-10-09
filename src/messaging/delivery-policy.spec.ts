@@ -183,6 +183,7 @@ describe("DeliveryPolicyService", () => {
     );
 
     expect(plan).toEqual({ channel: "app", mirrorToApp: false, push: false });
+    expect(prisma.user.findUnique.mock.calls[0][0].select.closedAt).toBe(true);
     expect(prisma.device.count).toHaveBeenLastCalledWith({
       where: {
         userId: "user-1",
@@ -194,4 +195,28 @@ describe("DeliveryPolicyService", () => {
       },
     });
   });
+
+  // ADR-0003: a closed account is never sent anything again.
+  it.each(["reply", "transactional", "proactive"] as const)(
+    "has no plan for a closed account (%s)",
+    async (delivery) => {
+      const prisma = {
+        user: {
+          findUnique: jest.fn().mockResolvedValue({
+            whatsappNumber: null,
+            lastInboundMessageAt: null,
+            lastAppActiveAt: ago(HOUR),
+            closedAt: ago(24 * HOUR),
+          }),
+        },
+        device: { count: jest.fn() },
+      };
+      const service = new DeliveryPolicyService(prisma as any);
+
+      await expect(
+        service.plan({ id: "user-1" }, { delivery }, now),
+      ).resolves.toBeNull();
+      expect(prisma.device.count).not.toHaveBeenCalled();
+    },
+  );
 });

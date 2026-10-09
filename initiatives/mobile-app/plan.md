@@ -436,26 +436,86 @@ Every route is signed-in only and reads only the caller's own rows, except `app-
 
 ## Phase 9 — Account and compliance
 
-**Status:** not started
-**Started:**
-**Completed:**
-**Owner:**
+**Status:** completed
+**Started:** 2026-10-09
+**Completed:** 2026-10-09
+**Owner:** Egwu David Samuel
 
 ### Deliverables
 
-- [ ] Device list and revoke, settings requests, email verification (required for PIN reset from then on), account deletion request, terms re-consent check
+- [x] [ADR-0003](../../docs/decisions/0003-account-closure-and-retention.md): account closure and data retention. Checked against the NDPA 2023, the GAID 2025, the MLPPA 2022, the CBN's 2022 AML/CFT/CPF Regulations, and Apple's and Google's deletion rules.
+- [x] Devices:
+  - `GET /v1/devices`: the caller's signed-in phones, marking the one making the request.
+  - `DELETE /v1/devices/:id`: signs that phone out. Its sessions stop working at once and it gets no more pushes.
+- [x] Settings requests:
+  - `GET /v1/settings-requests`.
+  - `POST /v1/settings-requests`: window hours, override fees, exit, or other. Filed through `ManagerConversationService.fileChangeRequest`, with the same 7-day gate and the managers' reply. One open request per type.
+  - `POST /v1/settings-requests/:id/withdraw`: allowed until it is decided.
+- [x] Email verification:
+  - `POST /v1/email/verify/start` and `/confirm`.
+  - A 6-digit code sent to the address on file. It is stored only as an HMAC bound to the user and the address (S16), and has 10 minutes and 5 tries.
+  - Sets `User.emailVerifiedAt`. A successful PIN reset also marks the address verified, since its emailed code proves the same thing.
+- [x] Terms:
+  - `GET /v1/terms` and `POST /v1/terms/accept`.
+  - `GET /v1/me` says whether the user must accept new terms (`needsTermsConsent`), and whether the email is verified.
+- [x] Account closure, as ADR-0003 sets out:
+  - `GET /v1/account/deletion`: what stands in the way, and any open request.
+  - `POST /v1/account/deletion`: needs a zero balance (checked live), no payment or fee collection in flight, and the PIN if one is set.
+  - Withdrawn through the settings-request route.
+  - `AccountClosureService`: request, close and decline. The closure runs under the turn lease and in one transaction; it keeps the records and erases the rest, for an account holder and for someone who never opened an account.
+- [x] Ops CLI:
+  - `npm run account:request`, `account:close` (a dry run unless `--confirm`), `account:decline` and `account:withdraw`.
+  - `settings:list` shows when each closure is due.
+  - `settings:decide` refuses closure requests.
+- [x] A closed account is never messaged:
+  - the delivery policy drops it;
+  - the schedulers skip it;
+  - a credit to its old account number is recorded and alerts ops.
+- [x] S18 in `check-security`:
+  - no code deletes a transfer, bill payment, credit, override or settings request;
+  - the model's settings types never include `ACCOUNT_DELETION`.
 
 ### Acceptance tests
 
-- [ ] A PIN reset is refused until the email is verified; a deletion request needs a zero balance
+- [x] Unit, devices: listing and revoking are scoped to the caller. A revoked device's access token stops working on the next request. `DELETE /v1/devices/push-token` still reaches its own handler.
+- [x] Unit, settings requests: scoped to the caller; one open request per type; withdrawable only until decided. `reviewRequest` refuses `ACCOUNT_DELETION`.
+- [x] Unit, email codes: stored only as an HMAC. A code expires, allows 5 tries, and is bound to the address it was sent to. Resends are limited. A successful PIN reset marks the address verified.
+- [x] Unit, closure checks: refused before `eligibleAt`, with money in the account, and with a payment or fee sweep in flight.
+- [x] Unit, closure effects: erases and keeps exactly what ADR-0003 lists, for both kinds of account. It frees the phone and WhatsApp numbers. Two operators cannot both close.
+- [x] Unit: the delivery policy drops a closed account; the schedulers skip it; a credit to it alerts ops and messages no one.
+- [x] E2E, app routes:
+  - devices;
+  - settings requests, filed and withdrawn;
+  - email confirmation with a planted code;
+  - terms re-consent;
+  - a closure request refused while money is in the account, then filed and withdrawn by someone with no account.
+- [x] E2E, ops CLI: the CLI closes a never-opened account and an account holder (with `--residual-handled`, because the dry-run balance is never zero). The database then holds exactly what ADR-0003 says, and the old number signs up as a new user.
+- [x] `check-security` fails when code deletes a money record, and when `ACCOUNT_DELETION` is added to the model's settings types.
+- [x] Full suite: 98 suites, 1386 tests. E2E: 25 pass, 3 skipped by design, and the same two stale failures.
+- [x] Server log: no PIN, email code, sign-in token, phone number, email address, account number, recipient name or stated goal
 
 ### Progress log
 
--
+- 2026-10-09: Researched and wrote ADR-0003 on the owner's instruction to make the safe decision. The signed Rubies agreement is not public: its three open questions are in ADR-0003's follow-up.
+- 2026-10-09: Changed from the outline: an unverified email no longer blocks a PIN reset. The reset already emails a one-time code to the address on file, and the address cannot be changed from chat, so entering that code proves exactly what verification would. Requiring verification first would have stranded WhatsApp users, who have no other way to verify. Instead, a successful reset now counts as verification.
+- 2026-10-09: Built and verified.
+  - `AccountClosureService` keeps and erases per ADR-0003. Two schema guards in its tests fail if a `User` column, or a table with a `userId`, appears without a closure decision.
+  - Closing also withdraws the user's other open requests, so no managers' reply is generated for a closed account.
+- 2026-10-09: Things closure had to switch off:
+  - the spend-repair job and its daily report now skip a closed account's payments, which would otherwise have written a new allowance ledger;
+  - the schedulers' user queries filter `closedAt: null`;
+  - the delivery policy has no plan for a closed account.
+- 2026-10-09: Two older log lines printed a WhatsApp number. One is an unrecognised message type, which now logs the user id; the other is a failed link in `findOrCreateUser`, which now masks the number. Found by the clean-log check.
+- 2026-10-09: Booting with `APP_API_DOCS=true` failed. The Swagger plugin cannot read the literal type `verified: true`, so it is now `boolean`. The unit tests do not build the OpenAPI document, so only the e2e server showed this.
+- 2026-10-09: The e2e scenario runs the ops CLI (`e2e/helpers/ops.ts`), asynchronously, preferring the build in `dist/`. It refuses a database that is not local.
+  - The first version used `spawnSync`, which blocked the runner long enough for the next scenario's request to go out on a closed keep-alive socket. That made `app.bills.native-quote-confirm-pin` fail once, with "fetch failed".
+- 2026-10-09: A planted `deleteMany` on transactions, and `ACCOUNT_DELETION` planted in the model's settings types, each fail `check-security` under S18.
 
 ### Risk
 
-- The deletion and retention policy is still an open decision (see ADR-0002).
+- Closure erases data and cannot be undone. The 7-day withdrawal window, the PIN, the live balance check, the dry run by default and the single transaction are the defences.
+- Closure depends on an operator acting within 30 days. The CLI shows due dates; an ops console is still deferred.
+- An existing `EmailService` log line printed the address when Resend is not configured. It is masked in this phase, so the clean-log check means something.
 
 ## Tracking table
 
@@ -470,7 +530,7 @@ Every route is signed-in only and reads only the caller's own rows, except `app-
 | 6 | Native read-only API | completed |
 | 7 | Native transfers | completed |
 | 8 | Native bills | completed |
-| 9 | Account and compliance | not started |
+| 9 | Account and compliance | completed |
 
 Allowed status: `not started` · `in progress` · `blocked` · `completed` · `deleted`
 
@@ -490,11 +550,19 @@ Allowed status: `not started` · `in progress` · `blocked` · `completed` · `d
 - Voice notes and images from the app
 - Prompt and golden changes to drop "WhatsApp bubble" wording
 - An operator console for settings and deletion requests
+- From ADR-0003:
+  - check the Rubies agreement for a longer retention period, a closure procedure, or a duty to hand records over;
+  - put the retention table in the public privacy notice and the terms summary, then bump `TERMS_VERSION`;
+  - a web page where deletion can be requested without the app (Google Play);
+  - the six-month purge for people who never opened an account (GAID Art. 21(2)), owed now and deferred under DEF-1 to a change with a backup;
+  - the six-year purge, with legal holds, before October 2032.
+- Re-consent on WhatsApp: the P9 check is for the app only.
+- Signing in on a new phone with a forgotten PIN has no self-service path. It would need the SMS code and a code to a verified email.
+- Money emails go to the KYC address whether or not it is verified. Consider limiting them to verified addresses once WhatsApp users have a way to verify.
 
 ## Decisions
 
 - [ADR-0002](../../docs/decisions/0002-app-channel-and-auth.md): the app as a second channel, SMS one-time-code auth, new-device step-up, and the change to the "KYC and PIN only via WhatsApp Flows" constraint.
 - Settled 2026-09-25: a 24-hour transfer cap on newly trusted devices, enforced when app-originated transfers land (P4 chat, P7 native).
-- Still open, to settle before the phase that needs them:
-  - the account deletion and retention policy, checked against the Rubies agreement and the NDPA (P9);
-  - a Termii account, API key and an approved "dnd" sender ID, before `APP_API_ENABLED` is turned on anywhere real.
+- [ADR-0003](../../docs/decisions/0003-account-closure-and-retention.md), 2026-10-09: account closure and data retention. Records are kept for six years after closure, everything else is erased at closure, and someone who never opened an account is erased entirely.
+- Still open, to settle before the phase that needs it: a Termii account, API key and an approved "dnd" sender ID, before `APP_API_ENABLED` is turned on anywhere real.

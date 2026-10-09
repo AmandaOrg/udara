@@ -27,6 +27,13 @@ import { AppConfigController } from "./app-config/app-config.controller";
 import { TransfersController } from "./transfers/transfers.controller";
 import { NativeTransferService } from "./transfers/native-transfer.service";
 import { NativeBillService } from "./bills/native-bill.service";
+import { ManagerModule } from "../manager/manager.module";
+import { PinModule } from "../pin/pin.module";
+import { AccountClosureModule } from "../account-closure/account-closure.module";
+import { SettingsRequestsController } from "./settings-requests/settings-requests.controller";
+import { AccountDeletionController } from "./account/account-deletion.controller";
+import { EmailVerificationController } from "./email/email-verification.controller";
+import { TermsController } from "./terms/terms.controller";
 
 /**
  * The mobile app's HTTP API under /v1. Loaded only when APP_API_ENABLED=true
@@ -46,6 +53,10 @@ import { NativeBillService } from "./bills/native-bill.service";
     RubiesModule,
     AllowanceModule,
     TaggingModule,
+    // Account and compliance (P9).
+    ManagerModule,
+    PinModule,
+    AccountClosureModule,
   ],
   controllers: [
     AuthController,
@@ -60,6 +71,10 @@ import { NativeBillService } from "./bills/native-bill.service";
     BillsController,
     AppConfigController,
     TransfersController,
+    SettingsRequestsController,
+    AccountDeletionController,
+    EmailVerificationController,
+    TermsController,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AppAuthGuard },

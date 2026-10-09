@@ -8,6 +8,7 @@ Draft
 Initiative: [`initiatives/mobile-app/plan.md`](../../initiatives/mobile-app/plan.md)
 Tech design: [`docs/tech-design/MOBILE_APP_TECH.md`](../tech-design/MOBILE_APP_TECH.md)
 Decision: [ADR-0002](../decisions/0002-app-channel-and-auth.md)
+Decision: [ADR-0003](../decisions/0003-account-closure-and-retention.md) (account closure and data retention)
 
 This spec covers P0 in full. Later phases are described at the level the product owner decided; each is filled in before its code starts.
 
@@ -120,6 +121,71 @@ The app can buy airtime, a data bundle or prepaid electricity without the chat, 
 - **Nothing is bought twice, and the chat and the screens stay out of each other's way,** exactly as for sending money.
 - **WhatsApp users see no change.** Every card, message and button is word for word the same.
 
+### P9 (devices, requests, email, terms, and closing an account)
+
+**Signed-in phones.**
+- The app lists the phones signed in to the account, and marks the one in hand.
+- Signing one out from the list ends its access straight away, and its notifications stop. Signing out the phone in hand is the same as signing out.
+
+**Requests to the managers.**
+- From the app's settings, the user can ask to change their spending window, ask about the override fees, ask to lift their restrictions, or ask for something else.
+- This is the same request as asking in chat: the same 7-day wait, and the managers' reply in the chat.
+- The app lists past and open requests.
+- One open request of each kind at a time. An open request can be withdrawn until the managers decide it.
+
+**Checking the email address.**
+- The user can have a 6-digit code sent to the email address on file and enter it in the app. The address is then marked as checked.
+- A code lasts 10 minutes and allows 5 tries. At most one code a minute, and five an hour.
+- Resetting the PIN by email also marks the address as checked, since it proves the same thing.
+- A PIN reset still works for an address that has not been checked: the reset sends its own code to that address.
+
+**New terms.**
+- When Udara's terms change, someone who agreed to the old ones is asked to read and accept the new ones the next time the app opens.
+- Someone still onboarding agrees in the chat, as now.
+- Nothing is blocked while the question is open: there is no terms change yet. Whether to block, and how to ask on WhatsApp, will be decided with the first change.
+
+**Closing the account.**
+
+The rules are set by ADR-0003.
+
+*Asking:*
+- From the app's settings. The app first shows what stands in the way:
+  - money still in the account (with the amount);
+  - a payment still being processed;
+  - an open request to close.
+- With a PIN set, the user enters it. A wrong PIN counts towards the same lockout as payments.
+- People without the app ask in chat or by email, and Udara's team files the request for them once it has checked it is them.
+
+*Before asking, the app says what happens* (one of two versions):
+- **Account holder:** "we'll close your udara account and delete your plan, goals, saved recipients and settings. nigerian law requires us to keep your identity details, payment history and our messages for six years after the account closes. we keep them for that alone, then delete them. rubies microfinance bank, which holds your account, keeps its own records too."
+- **Never opened an account:** "we'll close your udara account and delete everything we hold about you."
+
+*Once asked:*
+- The chat says, and an email says where there is an address: "your request to close your udara account is in. it can be closed from {date}, and we'll have done it by {date}. until then you can withdraw it in the app, under settings. keep your balance at zero until it's done."
+- When Udara's team filed the request, the sentence about withdrawing in the app is instead: "if you change your mind before then, reply here and we'll stop it."
+- For 7 days the request can be withdrawn. After that, Udara's team closes the account within 30 days of the request.
+- The balance must still be zero, and nothing still being processed.
+- If a small amount can't be moved out, Udara's team sorts it out with Rubies first.
+
+*When the account closes, the user gets one last message* in the chat and by email:
+- **Account holder:** "your udara account is closed and you've been signed out everywhere. as nigerian law requires, we're keeping your identity details, payment history and our messages for six years, for that purpose alone; everything else has been deleted. we're asking rubies microfinance bank, which holds your account, to close it too. don't let anyone send money to your old account number."
+- **Never opened an account:** "your udara account is closed and everything we held about you has been deleted."
+
+*Then:*
+- The app is signed out on every phone. The number can sign up again, but as a new account with nothing carried over.
+- Udara sends the closed account nothing more.
+- Money sent to the old account number later is recorded, and Udara's team is alerted to sort it out with Rubies.
+
+*If Udara's team cannot close it* (a regulator or court has asked for the records to be held, for example), the user is told: "we can't close your udara account yet. {reason}. we'll be in touch."
+
+Edge cases:
+- **Money arrives during the 7 days:** the account cannot be closed until it has gone out again. Udara's team tells the user.
+- **The person filing is not the owner** (a stolen, unlocked phone):
+  - With a PIN set, the request cannot be filed without it.
+  - Without one, the owner hears by email, if there is an address, and has 7 days to withdraw.
+  - Nothing can be closed with money in the account.
+- **Someone asks in chat to close their account:** the request reaches Udara's team as an ordinary request to the managers. The chat cannot close an account by itself.
+
 ### Later phases (outline)
 
 - **Sign-up and login.**
@@ -158,3 +224,4 @@ The app can buy airtime, a data bundle or prepaid electricity without the chat, 
 | 2026-09-26 | P6: read-only screens |
 | 2026-09-26 | P7: sending money from the app's screens |
 | 2026-10-09 | P8: buying airtime, data and electricity from the app's screens |
+| 2026-10-09 | P9: devices, requests, email check, terms re-consent, and closing an account (ADR-0003) |

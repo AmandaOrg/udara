@@ -11,6 +11,7 @@ import { LoginService } from "./login.service";
 import { LoginApprovalService } from "./login-approval.service";
 import { NewDeviceCapService } from "./new-device-cap.service";
 import { DeviceService } from "./device.service";
+import { EmailVerificationService } from "./email-verification.service";
 
 /**
  * Mobile app sign-in: codes, sessions, step-up. No routes; those live in
@@ -36,6 +37,7 @@ import { DeviceService } from "./device.service";
     LoginApprovalService,
     NewDeviceCapService,
     DeviceService,
+    EmailVerificationService,
   ],
   exports: [
     DeviceService,
@@ -44,6 +46,7 @@ import { DeviceService } from "./device.service";
     LoginService,
     LoginApprovalService,
     NewDeviceCapService,
+    EmailVerificationService,
   ],
 })
 export class AppAuthModule {}

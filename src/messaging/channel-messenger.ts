@@ -118,8 +118,12 @@ export class ChannelMessenger {
     body: string,
     options?: SendOptions,
   ): Promise<void> {
-    await this.deliver("sendText", to, options, (adapter) =>
-      adapter.sendText(to, body),
+    await this.deliver(
+      "sendText",
+      to,
+      options,
+      (adapter) => adapter.sendText(to, body),
+      undefined,
     );
   }
 
@@ -129,8 +133,12 @@ export class ChannelMessenger {
     buttons: ReplyButton[],
     options?: SendOptions,
   ): Promise<void> {
-    await this.deliver("sendButtons", to, options, (adapter) =>
-      adapter.sendButtons(to, body, buttons),
+    await this.deliver(
+      "sendButtons",
+      to,
+      options,
+      (adapter) => adapter.sendButtons(to, body, buttons),
+      undefined,
     );
   }
 
@@ -141,8 +149,12 @@ export class ChannelMessenger {
     rows: ListOption[],
     options?: SendOptions,
   ): Promise<void> {
-    await this.deliver("sendList", to, options, (adapter) =>
-      adapter.sendList(to, body, buttonLabel, rows),
+    await this.deliver(
+      "sendList",
+      to,
+      options,
+      (adapter) => adapter.sendList(to, body, buttonLabel, rows),
+      undefined,
     );
   }
 
@@ -151,8 +163,12 @@ export class ChannelMessenger {
     text: string,
     options?: SendOptions,
   ): Promise<void> {
-    await this.deliver("sendChunked", to, options, (adapter) =>
-      adapter.sendChunked(to, text),
+    await this.deliver(
+      "sendChunked",
+      to,
+      options,
+      (adapter) => adapter.sendChunked(to, text),
+      undefined,
     );
   }
 
@@ -161,8 +177,12 @@ export class ChannelMessenger {
     form: FormRequest,
     options?: SendOptions,
   ): Promise<boolean> {
-    return await this.deliver("requestForm", to, options, (adapter) =>
-      adapter.requestForm(to, form),
+    return await this.deliver(
+      "requestForm",
+      to,
+      options,
+      (adapter) => adapter.requestForm(to, form),
+      false,
     );
   }
 
@@ -173,8 +193,13 @@ export class ChannelMessenger {
     components?: unknown[],
     options?: SendOptions,
   ): Promise<void> {
-    await this.deliver("sendTemplate", to, options, (adapter) =>
-      adapter.sendTemplate(to, templateName, languageCode, components),
+    await this.deliver(
+      "sendTemplate",
+      to,
+      options,
+      (adapter) =>
+        adapter.sendTemplate(to, templateName, languageCode, components),
+      undefined,
     );
   }
 
@@ -187,16 +212,25 @@ export class ChannelMessenger {
     to: MessageRecipient,
     options?: SendOptions,
   ): Promise<Channel> {
-    return (await this.plan("resolveDelivery", to, options)).channel;
+    // A closed account gets nothing; the send that follows is dropped anyway.
+    return (await this.plan("resolveDelivery", to, options))?.channel ?? "app";
   }
 
+  /** `dropped` is what the caller gets when there is nobody to send to. */
   private async deliver<T>(
     method: string,
     to: MessageRecipient,
     options: SendOptions | undefined,
     send: (adapter: ChannelAdapter) => Promise<T>,
+    dropped: T,
   ): Promise<T> {
     const plan = await this.plan(method, to, options);
+    if (!plan) {
+      this.logger.log(
+        `${method}: user ${to.id} has closed their account, so nothing is sent`,
+      );
+      return dropped;
+    }
     const result = await send(this.adapter(plan.channel));
 
     // Both are extras on a message already delivered: a failure is logged,
@@ -221,7 +255,7 @@ export class ChannelMessenger {
     method: string,
     to: MessageRecipient,
     options?: SendOptions,
-  ): Promise<DeliveryPlan> {
+  ): Promise<DeliveryPlan | null> {
     if (options?.channel) return { ...REPLY_PLAN, channel: options.channel };
 
     const context = currentChannelContext();

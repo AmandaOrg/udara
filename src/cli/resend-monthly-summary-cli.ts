@@ -71,6 +71,7 @@ async function main() {
     const users = await prisma.user.findMany({
       where: {
         rubiesAccountNumber: { not: null },
+        closedAt: null,
         ...(userId ? { id: userId } : {}),
       },
       orderBy: { createdAt: "asc" },

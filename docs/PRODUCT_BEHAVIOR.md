@@ -111,8 +111,20 @@ The [Canonical Onboarding Script](✅-Kedu-Onboarding-Script.pdf) is committed, 
 - Initial substantive "managers" reply is delayed by `MANAGER_INITIAL_REPLY_DELAY_HOURS` (default 3), claimed before generating so it is sent once.
 - Decisions are made by an operator via `npm run settings:list` / `npm run settings:decide`, and are final: a decided request cannot be re-decided.
 - `disciplineExitedAt` is written only on an approved `EXIT_RESTRICTIONS` decision. Nothing else in the codebase sets it.
+- A request can be withdrawn by the user until it is decided (app: `POST /v1/settings-requests/:id/withdraw`).
+- Closure requests (`ACCOUNT_DELETION`) are not decided here: `settings:decide` refuses them. See Closing an account below.
 
 Until 2026-09-05 this section read "Verified" while nothing outside `src/manager/` called either entry point — the terms promised a path the code could not reach. See [ADR-0001](decisions/0001-settings-request-surface.md).
+
+## Closing an account
+
+**Built in P9, app only.** The app API is off unless `APP_API_ENABLED=true`. The rules are [ADR-0003](decisions/0003-account-closure-and-retention.md).
+- **Asking.** In the app, `POST /v1/account/deletion` needs a zero balance (checked live), no payment in progress, and the PIN if one is set. Someone who asks in chat or by email has the request filed for them by ops (`npm run account:request`). The chat model cannot file one.
+- **Waiting.** The request can be withdrawn for 7 days. An operator then closes the account (`npm run account:close`) within 30 days of the request, once the balance is still zero.
+- **Closing.** The user is told by chat and email, then signed out everywhere. Their phone number is freed for a new account.
+  - **Account holders:** the identity given at account opening, the payment records and the conversation are kept for six years. Everything else is erased.
+  - **Someone who never opened an account:** erased entirely.
+- **After closing.** A closed account is never messaged again. A later credit to its old account number alerts ops.
 
 ## Recipients
 

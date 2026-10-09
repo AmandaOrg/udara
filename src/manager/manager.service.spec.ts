@@ -13,6 +13,7 @@ describe("ManagerService", () => {
     settingsChangeRequest: {
       create: jest.Mock;
       findUniqueOrThrow: jest.Mock;
+      findFirst: jest.Mock;
       update: jest.Mock;
       updateMany: jest.Mock;
     };
@@ -25,6 +26,7 @@ describe("ManagerService", () => {
           Promise.resolve({ id: "req-1", ...args.data }),
         ),
         findUniqueOrThrow: jest.fn(),
+        findFirst: jest.fn(),
         update: jest.fn((args) =>
           Promise.resolve({ id: args.where.id, ...args.data }),
         ),
@@ -143,6 +145,27 @@ describe("ManagerService", () => {
       expect(result.status).toBe("REJECTED");
     });
 
+    /**
+     * Approving a closure request here would mark it done while nothing was
+     * closed. Only AccountClosureService decides those (ADR-0003).
+     */
+    it.each(["APPROVED", "REJECTED"] as const)(
+      "refuses to decide an account closure request (%s), even once eligible",
+      async (decision) => {
+        prisma.settingsChangeRequest.findUniqueOrThrow.mockResolvedValue({
+          id: "req-1",
+          type: SettingsChangeType.ACCOUNT_DELETION,
+          eligibleAt: new Date(Date.now() - 1000),
+          status: SettingsChangeStatus.PENDING,
+        });
+
+        await expect(service.reviewRequest("req-1", decision)).rejects.toThrow(
+          /account:close/,
+        );
+        expect(prisma.settingsChangeRequest.updateMany).not.toHaveBeenCalled();
+      },
+    );
+
     it('is still blocked a moment before eligibleAt (not just "days" granularity)', async () => {
       // Comfortably in the future relative to test execution time, but far short of a
       // full day, to confirm the gate is a real timestamp comparison, not a date-only check.
@@ -156,6 +179,58 @@ describe("ManagerService", () => {
       await expect(service.reviewRequest("req-1", "APPROVED")).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  describe("withdrawRequest", () => {
+    const now = new Date("2026-10-09T10:00:00Z");
+
+    it("claims only the caller's own undecided request, before eligibleAt too", async () => {
+      prisma.settingsChangeRequest.findFirst.mockResolvedValue({
+        id: "req-1",
+        status: SettingsChangeStatus.WITHDRAWN,
+      });
+
+      const result = await service.withdrawRequest("user-1", "req-1", now);
+
+      expect(result).toEqual({
+        ok: true,
+        request: { id: "req-1", status: SettingsChangeStatus.WITHDRAWN },
+      });
+      expect(prisma.settingsChangeRequest.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "req-1",
+          userId: "user-1",
+          status: {
+            in: [
+              SettingsChangeStatus.PENDING,
+              SettingsChangeStatus.ELIGIBLE_FOR_REVIEW,
+            ],
+          },
+        },
+        data: { status: SettingsChangeStatus.WITHDRAWN, resolvedAt: now },
+      });
+    });
+
+    it("is not_found for someone else's request", async () => {
+      prisma.settingsChangeRequest.updateMany.mockResolvedValue({ count: 0 });
+      prisma.settingsChangeRequest.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.withdrawRequest("user-2", "req-1", now),
+      ).resolves.toEqual({ ok: false, reason: "not_found" });
+    });
+
+    it("cannot undo a decision that landed first", async () => {
+      prisma.settingsChangeRequest.updateMany.mockResolvedValue({ count: 0 });
+      prisma.settingsChangeRequest.findFirst.mockResolvedValue({
+        id: "req-1",
+        status: SettingsChangeStatus.APPROVED,
+      });
+
+      await expect(
+        service.withdrawRequest("user-1", "req-1", now),
+      ).resolves.toEqual({ ok: false, reason: "already_decided" });
     });
   });
 });

@@ -3,6 +3,7 @@ import { PinChallenge, PinChallengePurpose, User } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PinService, OTP_LENGTH } from "../pin/pin.service";
 import { EmailNotificationsService } from "../email/email-notifications.service";
+import { maskEmail } from "../email/mask-email.util";
 import { ChannelMessenger, FormKind } from "../messaging/channel-messenger";
 import { SensitiveFields } from "./whatsapp-message.service";
 
@@ -393,6 +394,16 @@ export class PinGateService {
       return;
     }
 
+    // The code went to the address on file and came back: the same proof as
+    // the app's email check, so the address now counts as verified. Only while
+    // it is still the address the code went to.
+    if (user.email && !user.emailVerifiedAt) {
+      await this.prisma.user.updateMany({
+        where: { id: user.id, email: user.email, emailVerifiedAt: null },
+        data: { emailVerifiedAt: new Date() },
+      });
+    }
+
     // setPin clears pinFailedAttempts and pinLockedUntil, so a reset is also
     // the way out of a lockout.
     await this.messenger.sendText(
@@ -599,15 +610,4 @@ function describe(ref: PaymentRef): string {
   return "transactionId" in ref
     ? `transaction ${ref.transactionId}`
     : `bill payment ${ref.billPaymentId}`;
-}
-
-/**
- * Shows enough of the address to confirm which inbox to check, without
- * printing it in full into a chat that someone holding the phone can read.
- */
-function maskEmail(email: string): string {
-  const [local, domain] = email.split("@");
-  if (!domain) return "your email";
-  const shown = local.slice(0, 2);
-  return `${shown}${"*".repeat(Math.max(local.length - 2, 1))}@${domain}`;
 }

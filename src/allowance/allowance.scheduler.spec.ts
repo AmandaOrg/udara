@@ -76,6 +76,7 @@ describe("AllowanceScheduler", () => {
         expect.objectContaining({
           where: expect.objectContaining({
             rubiesAccountNumber: { not: null },
+            closedAt: null,
           }),
         }),
       );
@@ -262,6 +263,8 @@ describe("AllowanceScheduler", () => {
       const { gte, lte } = call.where.onboardingCompletedAt;
       expect(lte.getTime() - gte.getTime()).toBe(60 * 60 * 1000); // exactly a 1h window
       expect(Date.now() - lte.getTime()).toBeCloseTo(10 * 60 * 60 * 1000, -3);
+      // A closed account is never sent anything (ADR-0003).
+      expect(call.where.closedAt).toBeNull();
     });
 
     it("sends once and logs it via NudgeLog, with no daily-style sentAt bound (once ever)", async () => {

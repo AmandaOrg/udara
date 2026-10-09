@@ -3,7 +3,10 @@ import { PinChallengePurpose } from "@prisma/client";
 import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 describe("PinGateService", () => {
-  let prisma: { transaction: { updateMany: jest.Mock } };
+  let prisma: {
+    transaction: { updateMany: jest.Mock };
+    user: { updateMany: jest.Mock };
+  };
   let config: { get: jest.Mock };
   let pin: {
     createChallenge: jest.Mock;
@@ -28,6 +31,7 @@ describe("PinGateService", () => {
   beforeEach(() => {
     prisma = {
       transaction: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      user: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     };
     config = {
       get: jest.fn((key: string) =>
@@ -389,6 +393,37 @@ describe("PinGateService", () => {
         expect(pin.setPin).toHaveBeenCalledWith("user-1", "8317", "8317");
         expect(outcome).toEqual({ action: "none" });
         expect(sentText()).toContain("pin has been reset");
+      });
+
+      // P9: the emailed code proves the same thing the app's email check does.
+      it("marks the address verified after a successful reset, and only then", async () => {
+        pin.consumeChallenge.mockResolvedValue(resetChallenge());
+        pin.verifyResetOtp.mockResolvedValue({ ok: true });
+        pin.setPin.mockResolvedValue({ ok: true });
+
+        await service.handlePinFlowReply(
+          { ...resetUser, emailVerifiedAt: null },
+          { flow_token: "tok-reset" },
+          { otp: "123456", pin: "8317", pin_confirm: "8317" },
+        );
+
+        expect(prisma.user.updateMany).toHaveBeenCalledWith({
+          where: {
+            id: "user-1",
+            email: "daniel@example.com",
+            emailVerifiedAt: null,
+          },
+          data: { emailVerifiedAt: expect.any(Date) },
+        });
+
+        prisma.user.updateMany.mockClear();
+        pin.setPin.mockResolvedValue({ ok: false, reason: "too easy" });
+        await service.handlePinFlowReply(
+          { ...resetUser, emailVerifiedAt: null },
+          { flow_token: "tok-reset" },
+          { otp: "123456", pin: "1111", pin_confirm: "1111" },
+        );
+        expect(prisma.user.updateMany).not.toHaveBeenCalled();
       });
 
       it("checks the code BEFORE the new PIN, so a wrong code reveals nothing about the PIN", async () => {

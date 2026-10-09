@@ -47,10 +47,19 @@ Each row is enforced in code and verified by `npm run security:check`. Do not re
 | S15 | Nothing in the app API prints or serializes request data; controllers do not log at all and take DTO classes rather than `unknown`; secrets and phone numbers are never query parameters | `src/app-api/**` |
 | S16 | Sign-in codes and session tokens are stored only as HMACs or hashes | `app-auth/secret-hash.util.ts`; no plaintext secret column in `schema.prisma` |
 | S17 | Money executes only from `PinOutcomeService` (`executeVerifiedTransfer` and `executeVerifiedBillPayment` are called nowhere else), and a native app route that creates a payment requires an `Idempotency-Key` | `whatsapp/pin-outcome.service.ts`; `app-api/transfers/transfers.controller.ts`; `app-api/bills/bills.controller.ts` |
+| S18 | Closing an account keeps the records the law requires: no code deletes a transfer, bill payment, credit, override or settings request, and the chat model's settings types never include `ACCOUNT_DELETION` | `src/**`; `orchestrator/transfer-hints.util.ts`; `account-closure/account-closure.service.ts` |
 
 ### Why S14–S17 matter
 
 The app is the first client that can name any id it likes and that authenticates with something other than a Meta signature. That is also why a chat choice must name a message that offered it to the same user, and why the app's KYC and PIN forms hand their values to the handlers in memory exactly as the WhatsApp Flow path does. An unguarded `/v1` route is a public endpoint onto someone's money; a logged request body is a logged PIN or sign-in code; a plaintext token column turns one database read into every session. The native send and bill screens (S17) reach money through the same door as the chat, `PinOutcomeService`, which is also where the new-device cap sits; a second door would be a way around both the PIN and the cap. A retried quote with no idempotency key is a second payment. See [ADR-0002](decisions/0002-app-channel-and-auth.md). The API is off unless `APP_API_ENABLED=true`.
+
+### Why S18 matters
+
+Closing an account erases what Udara no longer needs and keeps what the law requires for six years after closure: the identity given at account opening, the payment records, and the conversation ([ADR-0003](decisions/0003-account-closure-and-retention.md)).
+- Code that deleted a transfer would destroy a record the CBN can demand within 48 hours.
+- A chat model that could file a closure could start an irreversible erasure from one misread sentence.
+
+Closure runs only from the ops CLI. It comes after a seven-day window in which the user can withdraw, with the balance checked live and the erasure done in one transaction under the user's turn lease. A closed account is never messaged again: the delivery policy drops it and the schedulers skip it.
 
 ### Why S13 matters
 

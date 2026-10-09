@@ -77,11 +77,16 @@ function preferredChannel(
 export class DeliveryPolicyService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Null when the account is closed (ADR-0003): it is never sent anything
+   * again, and an app copy would recreate data closure erased. The messenger
+   * drops the send.
+   */
   async plan(
     to: { id: string },
     request: DeliveryRequest,
     now: Date = new Date(),
-  ): Promise<DeliveryPlan> {
+  ): Promise<DeliveryPlan | null> {
     const userId = to.id;
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -89,19 +94,22 @@ export class DeliveryPolicyService {
         whatsappNumber: true,
         lastInboundMessageAt: true,
         lastAppActiveAt: true,
+        closedAt: true,
       },
     });
     if (!user) {
       // Nothing to reach; the adapters drop it with their own log line.
       return { channel: "whatsapp", mirrorToApp: false, push: false };
     }
+    const { closedAt, ...recipient } = user;
+    if (closedAt) return null;
     const [devices, pushable] = await Promise.all([
       this.prisma.device.count({ where: { userId } }),
       this.prisma.device.count({ where: pushableDevices(userId, now) }),
     ]);
     return decideDelivery(
       request,
-      { ...user, hasHadDevice: devices > 0, canPush: pushable > 0 },
+      { ...recipient, hasHadDevice: devices > 0, canPush: pushable > 0 },
       now,
     );
   }

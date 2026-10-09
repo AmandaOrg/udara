@@ -12,6 +12,8 @@ import {
   watDateBucketKey,
 } from "../common/wat-time.util";
 import {
+  accountNoticeEmail,
+  emailVerificationEmail,
   pinResetOtpEmail,
   moneyInEmail,
   moneyOutEmail,
@@ -172,6 +174,64 @@ export class EmailNotificationsService {
       dedupeKey: `PIN_RESET:${params.challengeId}`,
     });
     return result.sent;
+  }
+
+  /**
+   * The code that proves the address is the user's. Not best-effort, like the
+   * PIN reset code: with no email there is nothing to enter, so the caller
+   * must know. Keyed on the verification row, so each code emails once.
+   */
+  async sendEmailVerificationCode(params: {
+    user: User;
+    code: string;
+    verificationId: string;
+    expiresInMinutes: number;
+  }): Promise<boolean> {
+    const { subject, html } = emailVerificationEmail({
+      name: params.user.name,
+      code: params.code,
+      expiresInMinutes: params.expiresInMinutes,
+    });
+    const result = await this.email.send({
+      userId: params.user.id,
+      to: params.user.email,
+      type: EmailType.EMAIL_VERIFICATION,
+      subject,
+      html,
+      dedupeKey: `EMAIL_VERIFY:${params.verificationId}`,
+    });
+    return result.sent;
+  }
+
+  /**
+   * Account closure notices (ADR-0003): the request, and the closure itself.
+   * Best-effort, because the chat says the same thing. Keyed on the request,
+   * so a retried closure never emails twice.
+   */
+  async sendAccountNotice(params: {
+    user: User;
+    type: "ACCOUNT_CLOSURE_REQUESTED" | "ACCOUNT_CLOSED";
+    requestId: string;
+    subject: string;
+    heading: string;
+    paragraphs: string[];
+  }): Promise<void> {
+    await this.safely("account-notice", async () => {
+      const { subject, html } = accountNoticeEmail({
+        name: params.user.name,
+        subject: params.subject,
+        heading: params.heading,
+        paragraphs: params.paragraphs,
+      });
+      await this.email.send({
+        userId: params.user.id,
+        to: params.user.email,
+        type: EmailType[params.type],
+        subject,
+        html,
+        dedupeKey: `${params.type}:${params.requestId}`,
+      });
+    });
   }
 
   /** One per user per WAT calendar day, keyed on that date. */

@@ -2,6 +2,7 @@ import { Controller, Get } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { AppPrincipal } from "../../app-auth/session.service";
 import { CurrentPrincipal } from "../current-principal.decorator";
+import { needsTermsConsent } from "../../onboarding/terms.data";
 
 /** The signed-in user, as much as the app needs to decide what to show next. */
 @Controller("v1/me")
@@ -21,6 +22,9 @@ export class MeController {
       hasPin: user.pinHash !== null,
       whatsappLinked: user.whatsappNumber !== null,
       hasEmail: user.email !== null,
+      emailVerified: user.emailVerifiedAt !== null,
+      // Agreed to an earlier version of the terms: show the new ones.
+      needsTermsConsent: needsTermsConsent(user),
       hasAccount: user.rubiesAccountNumber !== null,
     };
   }

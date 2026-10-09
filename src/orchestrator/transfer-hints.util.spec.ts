@@ -8,6 +8,19 @@ import {
 } from "./transfer-hints.util";
 
 describe("sanitizeTransferHints", () => {
+  // ADR-0003 and S18: the model may file a request to the managers, never a
+  // closure of the account. A chat request to close reaches ops as OTHER.
+  it("keeps the model's settings types closed, without account closure", () => {
+    expect(
+      sanitizeTransferHints({ settings_change_type: "EXIT_RESTRICTIONS" })
+        .settingsChangeType,
+    ).toBe("EXIT_RESTRICTIONS");
+    expect(
+      sanitizeTransferHints({ settings_change_type: "ACCOUNT_DELETION" })
+        .settingsChangeType,
+    ).toBeUndefined();
+  });
+
   it("keeps valid fields and drops invalid ones", () => {
     expect(
       sanitizeTransferHints({
