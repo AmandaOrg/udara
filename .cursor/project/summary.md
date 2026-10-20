@@ -1,4 +1,4 @@
-# Udara project summary
+﻿# Amanda project summary
 
 Last updated: 2026-09-25
 
@@ -6,7 +6,7 @@ Quick orientation for agents. Full behavior: `docs/PRODUCT_BEHAVIOR.md`. Full fl
 
 ## 1. Product
 
-WhatsApp savings agent on a Rubies wallet. Enforces WAT spending window, confirm-before-send, PIN via Flows, daily/weekly allowance with early-access/borrow fees. User-facing name **Udara**; npm package `kedu`.
+WhatsApp savings agent on a Rubies wallet. Enforces WAT spending window, confirm-before-send, PIN via Flows, daily/weekly allowance with early-access/borrow fees. User-facing name **Amanda**; npm package `kedu`.
 
 ## 2. Stack
 

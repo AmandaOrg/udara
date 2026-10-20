@@ -1,4 +1,4 @@
-# Development
+﻿# Development
 
 ## Prerequisites
 
@@ -67,7 +67,7 @@ Set `connection_limit` on `DATABASE_URL` in every deployed environment, for exam
 
 `GET /health` reports database reachability and is the only non-webhook route. Point the platform's health check at it: without one, a container that boots but cannot reach Postgres stays in the rotation and silently drops every message it acks.
 
-Inbound voice notes need `DEEPGRAM_API_KEY` on the **same process that receives the WhatsApp webhook** (local `.env` does not apply to Railway). Optional `DEEPGRAM_STT_MODEL` defaults to `nova-3`. Without the key, Udara asks the user to type. `WHATSAPP_DRY_RUN=true` still skips outbound Graph sends; inbound media download still runs so voice and photos can be understood.
+Inbound voice notes need `DEEPGRAM_API_KEY` on the **same process that receives the WhatsApp webhook** (local `.env` does not apply to Railway). Optional `DEEPGRAM_STT_MODEL` defaults to `nova-3`. Without the key, Amanda asks the user to type. `WHATSAPP_DRY_RUN=true` still skips outbound Graph sends; inbound media download still runs so voice and photos can be understood.
 
 ## Migrations
 
@@ -144,18 +144,18 @@ Monthly summaries and other mail go through [Resend](https://resend.com). Inbox 
 | Variable | Example | Notes |
 | --- | --- | --- |
 | `RESEND_API_KEY` | `re_…` | Resend dashboard |
-| `RESEND_FROM_ADDRESS` | `Udara <noreply@useudara.com>` | Must use a **verified** domain in Resend |
-| `RESEND_REPLY_TO` | `hello@useudara.com` | Optional; improves trust (real reply address) |
+| `RESEND_FROM_ADDRESS` | `Amanda <noreply@useAmanda.com>` | Must use a **verified** domain in Resend |
+| `RESEND_REPLY_TO` | `hello@useAmanda.com` | Optional; improves trust (real reply address) |
 
-Do not use `@udara.ng` or other unverified domains — Resend returns 403 and mail is more likely to spam.
+Do not use `@Amanda.ng` or other unverified domains — Resend returns 403 and mail is more likely to spam.
 
-### DNS checklist (Resend → Domains → useudara.com)
+### DNS checklist (Resend → Domains → useAmanda.com)
 
 Add every record Resend shows until status is **Verified**:
 
 1. **SPF** — TXT on `@` or the sending subdomain Resend assigns
 2. **DKIM** — CNAME/TXT Resend provides
-3. **DMARC** — TXT on `_dmarc.useudara.com`, e.g. `v=DMARC1; p=none; rua=mailto:hello@useudara.com` (tighten `p=` later)
+3. **DMARC** — TXT on `_dmarc.useAmanda.com`, e.g. `v=DMARC1; p=none; rua=mailto:hello@useAmanda.com` (tighten `p=` later)
 
 After DNS propagates, send a test from Resend’s dashboard to Gmail and confirm **SPF pass**, **DKIM pass**, **DMARC pass** in “Show original”.
 
@@ -170,7 +170,7 @@ After DNS propagates, send a test from Resend’s dashboard to Gmail and confirm
 
 1. Mark one message **Not spam** in Gmail (helps sender reputation for that user).
 2. Confirm Resend domain is fully verified (not “pending”).
-3. Avoid changing the From address often; keep `noreply@useudara.com` stable.
+3. Avoid changing the From address often; keep `noreply@useAmanda.com` stable.
 4. Ops resend: `npm run email:resend-monthly -- --user-id <uuid> --dedupe-suffix corrected-aug-2026`
 
 ## Conventions

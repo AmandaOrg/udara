@@ -1,6 +1,6 @@
-# E2E test suite — real HTTP against the running app
+﻿# E2E test suite — real HTTP against the running app
 
-BrandDrive-style black-box scenarios for Udara. Every scenario is a self-contained TypeScript file that:
+BrandDrive-style black-box scenarios for Amanda. Every scenario is a self-contained TypeScript file that:
 
 1. POSTs a Meta-shaped WhatsApp webhook (or hits verify / Rubies webhooks).
 2. Asserts HTTP status immediately (controller acks `200` before processing).
@@ -34,7 +34,7 @@ npm run start:dev
 
 ---
 
-## Contract (Udara-flavored)
+## Contract (Amanda-flavored)
 
 For every non-trivial change, run the relevant subset before declaring done. New features should ship with new `*.scenario.ts` files.
 

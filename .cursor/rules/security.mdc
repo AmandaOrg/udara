@@ -1,11 +1,11 @@
----
-description: Non-negotiable security gate for Udara (money movement, PII, LLM boundary)
+﻿---
+description: Non-negotiable security gate for Amanda (money movement, PII, LLM boundary)
 alwaysApply: true
 ---
 
 # Security gate
 
-Udara moves real money and handles PIN, BVN, NIN, and DOB. Full checklist: `docs/SECURITY.md`. Run `npm run security:check` before claiming any change is done.
+Amanda moves real money and handles PIN, BVN, NIN, and DOB. Full checklist: `docs/SECURITY.md`. Run `npm run security:check` before claiming any change is done.
 
 ## Never do these
 

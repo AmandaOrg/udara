@@ -1,4 +1,4 @@
-# ADR-0003: Account closure and data retention
+﻿# ADR-0003: Account closure and data retention
 
 - **Status:** accepted
 - **Date:** 2026-10-09
@@ -8,9 +8,9 @@ This is not legal advice. Have a Nigerian data protection lawyer, or a licensed 
 
 ## Context
 
-The app stores require a way to delete an account from inside the app. Apple's guideline 5.1.1(v) and Google Play's account-deletion policy both require it. ADR-0002 left the deletion and retention policy open until P9. Udara cannot simply delete everything on request, because some of what it holds is a financial record that the law says must be kept.
+The app stores require a way to delete an account from inside the app. Apple's guideline 5.1.1(v) and Google Play's account-deletion policy both require it. ADR-0002 left the deletion and retention policy open until P9. Amanda cannot simply delete everything on request, because some of what it holds is a financial record that the law says must be kept.
 
-**What Udara holds about a person:**
+**What Amanda holds about a person:**
 - **Identity, from the KYC form:**
   - legal name;
   - date of birth;
@@ -58,9 +58,9 @@ The app stores require a way to delete an account from inside the app. Apple's g
 - The signed Rubies partnership agreement is not public and was not reviewed.
 - Rubies' [public privacy policy](https://rubies.ng/privacy-policy.html) gives no retention periods and no closure process.
 - As a CBN-licensed microfinance bank, Rubies is bound by MLPPA s.8 and CBN regulations 35–36. A partner agreement normally passes those duties on to the partner.
-- This decision meets them on Udara's side. The owner should still check the agreement (see Follow-up).
+- This decision meets them on Amanda's side. The owner should still check the agreement (see Follow-up).
 
-**Which of Udara's own duties apply?** Udara is not the bank. It instructs payments on its customers' behalf and keeps their instructions and payment records. The safe reading is that MLPPA s.8 applies to those records, directly or through the Rubies agreement.
+**Which of Amanda's own duties apply?** Amanda is not the bank. It instructs payments on its customers' behalf and keeps their instructions and payment records. The safe reading is that MLPPA s.8 applies to those records, directly or through the Rubies agreement.
 
 ## Decision
 
@@ -76,7 +76,7 @@ The app stores require a way to delete an account from inside the app. Apple's g
 - The balance is zero, checked live with Rubies, when the request is filed and again at closure.
 - No payment is in flight and no fee is still being collected.
 - If a small amount cannot be moved out (a bank charge, for example), ops arranges it with Rubies before closing. Ops then closes with `--residual-handled`.
-- Udara never pays a balance out itself at closure. That would be a money path outside the PIN (S17) and a target for fraud.
+- Amanda never pays a balance out itself at closure. That would be a money path outside the PIN (S17) and a target for fraud.
 
 **3. The wait and the deadline.**
 - The request becomes eligible 7 days after it is filed. Until then, the user can withdraw it: in the app, or by asking.

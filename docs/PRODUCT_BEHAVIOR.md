@@ -1,4 +1,4 @@
-# Product behavior (verified from code)
+﻿# Product behavior (verified from code)
 
 Stakeholder-facing rules that the running app actually enforces. Cross-feature. Feature-specific observable behavior lives in [specs/](specs/README.md).
 
@@ -14,9 +14,9 @@ Labels used below:
 
 ## Identity
 
-Udara is a WhatsApp savings agent, not a general assistant. It governs outbound spending from a Rubies wallet the user funds. Value is in holding the user’s stated limits, not in doing everything they ask.
+Amanda is a WhatsApp savings agent, not a general assistant. It governs outbound spending from a Rubies wallet the user funds. Value is in holding the user’s stated limits, not in doing everything they ask.
 
-Internal package/DB naming still uses `kedu` / `ConversationPersona.KEDU`. User-facing copy uses Udara.
+Internal package/DB naming still uses `kedu` / `ConversationPersona.KEDU`. User-facing copy uses Amanda.
 
 ---
 

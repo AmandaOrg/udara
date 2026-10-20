@@ -1,4 +1,4 @@
-# Production hardening — spec
+﻿# Production hardening — spec
 
 ## Status
 
@@ -10,7 +10,7 @@ Tech design: [`docs/tech-design/PRODUCTION_HARDENING_TECH.md`](../tech-design/PR
 
 Most of this work is invisible to users when it succeeds. Four of the defects are not.
 
-1. **A customer can be told their transfer failed when the money left their account.** When Rubies answers with a gateway error rather than a normal response, Udara reads it as a definite failure, says "nothing was deducted", and never checks again.
+1. **A customer can be told their transfer failed when the money left their account.** When Rubies answers with a gateway error rather than a normal response, Amanda reads it as a definite failure, says "nothing was deducted", and never checks again.
 2. **A customer can be charged twice.** Tapping Confirm twice, or answering two PIN prompts for the same transfer, can send the same transfer to the bank twice. Nothing on our side prevents it.
 3. **A customer can spend past their own limit without paying the override fee they agreed to.** Three ₦8,000 sends can each be checked against the same ₦10,000 of headroom and all go through as normal spending. A send set up inside the window and confirmed at 23:00 escapes the outside-hours fee.
 4. **A customer's PIN, BVN and date of birth are written to our logs in plain text.** Nobody outside the team sees them, but everyone inside does, and the terms say we do not store them.

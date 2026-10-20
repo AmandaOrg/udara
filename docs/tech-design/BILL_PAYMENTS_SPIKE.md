@@ -1,11 +1,11 @@
-# Bill payments — Rubies API spike
+﻿# Bill payments — Rubies API spike
 
 **Status:** Phase A + B shipped (2026-08-30)  
 Initiative: [initiatives/bill-payments/plan.md](../../initiatives/bill-payments/plan.md)
 
 ## Question
 
-Can Udara vend **one-off airtime** (and later data / Nepa electricity) by debiting the **same Rubies BaaS wallet** users already fund for transfers?
+Can Amanda vend **one-off airtime** (and later data / Nepa electricity) by debiting the **same Rubies BaaS wallet** users already fund for transfers?
 
 **Answer (confirmed 2026-08-30):** Yes — use **`POST /{stage}/baas-vas/purchase`** on the same `RUBIES_BASE_URL` / `RUBIES_API_KEY` as transfers. Catalog: `GET /{stage}/baas-vas/biller-category`, `biller-list`, `product-list`. Status: `GET /{stage}/baas-vas/transaction-query/{requestReference}`.
 
@@ -44,7 +44,7 @@ Auth docs describe **sk_test_ / sk_live_** keys on the BAAS dashboard — not th
 ## Recommendation
 
 1. **Use BaaS VAS** on the same base URL/stage as transfers — do not add a separate Open API client for Phase A.
-2. Poll/async-resolve with **`requestReference`** (Udara idempotency key), not Rubies' internal `reference` alone.
+2. Poll/async-resolve with **`requestReference`** (Amanda idempotency key), not Rubies' internal `reference` alone.
 3. Mirror transfer patterns: confirm → PIN → execute; webhook + TSQ for pending outcomes; `AllowanceService.recordBillPaymentSpend` on EXECUTED.
 4. **Recurring** bills remain a separate initiative (scheduler, allowance rules, PIN policy).
 

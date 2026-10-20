@@ -1,4 +1,4 @@
-# ADR-0002: The mobile app as a second channel, with SMS login
+﻿# ADR-0002: The mobile app as a second channel, with SMS login
 
 - **Status:** accepted
 - **Date:** 2026-09-25
@@ -6,9 +6,9 @@
 
 ## Context
 
-Udara is being built as a standalone iOS/Android app as well as a WhatsApp agent. Three facts shape how:
+Amanda is being built as a standalone iOS/Android app as well as a WhatsApp agent. Three facts shape how:
 
-1. **WhatsApp has been Udara's identity layer.** A person is a phone number that Meta vouched for in a signed webhook. There is no login, session or device model. An app needs all three.
+1. **WhatsApp has been Amanda's identity layer.** A person is a phone number that Meta vouched for in a signed webhook. There is no login, session or device model. An app needs all three.
 2. **Several security rules are written for WhatsApp specifically.** AGENTS.md says "KYC and PIN only via WhatsApp Flows". S2, S5, S6 and S13 describe WhatsApp payloads. An app changes where these secrets arrive from, which `SECURITY.md` §4.7 says needs a recorded human decision.
 3. **Button payloads were trusted.** Confirm and cancel looked a transaction up by id alone. That was safe only because WhatsApp is the only client and Meta signs every tap. The app can send any id it likes.
 

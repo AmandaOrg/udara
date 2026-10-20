@@ -1,8 +1,8 @@
-# Udara
+# Amanda
 
-A strict WhatsApp savings agent that governs a real Rubies Microfinance account. Udara enforces a daily spending window, confirm-before-send transfers, daily/weekly allowances, and a delayed “managers” path for settings changes.
+A strict WhatsApp savings agent that governs a real Rubies Microfinance account. Amanda enforces a daily spending window, confirm-before-send transfers, daily/weekly allowances, and a delayed “managers” path for settings changes.
 
-The npm package is still named `kedu`. User-facing product voice is **Udara**.
+The npm package is still named `kedu`. User-facing product voice is **Amanda**.
 
 ## Start here
 
@@ -83,3 +83,116 @@ Non-trivial work uses three layers:
 3. **Tech design** — implementation in `docs/tech-design/`
 
 Cross-cutting maps live in [docs/PRODUCT_BEHAVIOR.md](docs/PRODUCT_BEHAVIOR.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/TESTING.md](docs/TESTING.md).
+
+---
+
+## Testing Guide
+
+Verification is required before any code merge. Run the appropriate test layers depending on the changes made.
+
+### 1. Test Layers Overview
+
+| Layer | Command | Focus & Guarantees |
+| --- | --- | --- |
+| **Unit Tests** | `npm test` | Jest test suite under `src/` validating business logic, allowance calculations, windows, and router paths. |
+| **Golden Dialogues** | `npm run orchestrator:golden` | Evaluates dialogue turns against predefined golden conversation fixtures in `src/orchestrator/evals/golden-dialogues.json`. |
+| **Smoke E2E** | `npm run e2e:smoke` | Black-box HTTP validation of critical webhook flows against a running local instance. |
+| **Full E2E Scenarios** | `npm run e2e` | Comprehensive end-to-end scenarios (transfer wizards, account flows, onboarding, and auth). |
+| **Docs Structure & Links** | `npm run docs:check` | Validates markdown link integrity, headings, and required architecture documents. |
+| **Security Invariants** | `npm run security:check` | Scans for secret leaks, checks redaction tables, and verifies security-critical test coverage. |
+
+### 2. Running Tests Locally
+
+Ensure the local database container is running and environment variables use dry-run mode:
+
+```bash
+# 1. Start Postgres container
+docker compose up -d
+
+# 2. Run unit tests
+npm test
+
+# 3. Targeted test execution
+npx jest src/orchestrator/action-validator.service.spec.ts
+
+# 4. Dialogue and validator eval
+npm run orchestrator:golden
+
+# 5. Security and documentation validation
+npm run security:check
+npm run docs:check
+```
+
+### 3. Black-Box E2E Testing
+
+E2E tests run against a running server process with stubbed third-party services:
+
+```bash
+# Terminal 1: Start the server with dry-run flags
+WHATSAPP_DRY_RUN=true RUBIES_DRY_RUN=true AI_PROVIDER=stub npm run start:dev
+
+# Terminal 2: Run smoke or full e2e suite
+npm run e2e:smoke
+npm run e2e
+```
+
+---
+
+## Deployment Guide
+
+### 1. Pre-Deployment Verification
+
+Before triggering a release, ensure all CI checks pass locally:
+
+```bash
+npm run security:check
+npm run docs:check
+npm run lint
+npm test
+npm run build
+```
+
+### 2. Production Build and Start
+
+The production lifecycle automatically runs Prisma migrations prior to booting the application:
+
+```bash
+# Compile TypeScript and generate Prisma client
+npm run build
+
+# Apply database migrations and start server (invokes scripts/start-prod.js)
+npm run start:prod
+```
+
+### 3. Docker Deployment
+
+A production-ready `Dockerfile` based on `node:20-bookworm-slim` is provided:
+
+```bash
+# Build the container image
+docker build -t amanda-backend:latest .
+
+# Run container with environment configuration
+docker run -d \
+  --name amanda-backend \
+  -p 3000:3000 \
+  -e DATABASE_URL="postgresql://user:pass@host:5432/db?sslmode=require" \
+  -e NODE_ENV="production" \
+  amanda-backend:latest
+```
+
+### 4. Railway / Cloud Deployment
+
+Amanda is configured for continuous deployment on **Railway** (see [`railway.json`](railway.json) and [`railpack.json`](railpack.json)):
+
+- **Build Pipeline**: Uses the `RAILPACK` builder to install production dependencies and compile via `npm run build`.
+- **Start Command**: Runs `node scripts/start-prod.js`, which automatically applies `prisma migrate deploy` before launching `dist/main.js`.
+- **Health Checks**: Exposes HTTP health checks at `/health` on port `3000`.
+- **Required Production Environment Variables**:
+  - `DATABASE_URL`: Connection string to production PostgreSQL database.
+  - `PORT`: Server port (defaults to `3000`).
+  - `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`: Meta Cloud API credentials.
+  - `RUBIES_SECRET_KEY`, `RUBIES_BASE_URL`: Rubies Microfinance Bank BaaS credentials.
+  - `AI_PROVIDER`: Configured AI provider (`anthropic`, `gemini`, `openrouter`, or `bedrock`).
+  - `SENTRY_DSN`: Error monitoring.
+

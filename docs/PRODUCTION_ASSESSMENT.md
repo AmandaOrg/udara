@@ -1,4 +1,4 @@
-# Production assessment
+﻿# Production assessment
 
 **Date:** 2026-09-04 · **Commit assessed:** `main @ 0ba5135` · **Audience:** founders and engineering
 
@@ -25,9 +25,9 @@ This file is a point-in-time snapshot. It is **not** authority over behavior —
 
 ---
 
-## What Udara is
+## What Amanda is
 
-A WhatsApp-only spending-discipline agent on a real Rubies Microfinance wallet. Users fund it, and Udara becomes the only outbound path: a daily allowance derived from 30% of stated income, an 11:00–20:00 WAT spending window, confirm-then-PIN on every send, and airtime, data and electricity on the same rails. Free text reaches an LLM that can only *propose*; `ActionValidatorService` decides what happens.
+A WhatsApp-only spending-discipline agent on a real Rubies Microfinance wallet. Users fund it, and Amanda becomes the only outbound path: a daily allowance derived from 30% of stated income, an 11:00–20:00 WAT spending window, confirm-then-PIN on every send, and airtime, data and electricity on the same rails. Free text reaches an LLM that can only *propose*; `ActionValidatorService` decides what happens.
 
 Revenue in code is override fees only: ₦1,000 + 0.2% outside the window, ₦1,000 + 0.4% for borrowing against future days.
 

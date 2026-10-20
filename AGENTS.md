@@ -1,6 +1,6 @@
-# Agent and collaborator guide
+﻿# Agent and collaborator guide
 
-Read this before editing Udara. Tool-neutral: Cursor, Claude Code, humans.
+Read this before editing Amanda. Tool-neutral: Cursor, Claude Code, humans.
 
 ## Read order
 
@@ -26,7 +26,7 @@ If they disagree, fix the docs in the same change as the code, or flag the gap. 
 
 ## Security first
 
-Udara moves real money and handles PIN, BVN, NIN, and DOB. [docs/SECURITY.md](docs/SECURITY.md) defines twelve invariants (S1–S12) and a per-change-type checklist. Both are mandatory.
+Amanda moves real money and handles PIN, BVN, NIN, and DOB. [docs/SECURITY.md](docs/SECURITY.md) defines twelve invariants (S1–S12) and a per-change-type checklist. Both are mandatory.
 
 Never weaken a guard, the validator, the confirm step, or the PIN step to make something work. Never add a bypass flag. Never log or commit a secret. If a change would alter S1–S12 or widen what the LLM can trigger, stop and ask; record the answer in the initiative plan.
 
@@ -38,7 +38,7 @@ Never weaken a guard, the validator, the confirm step, or the PIN step to make s
 - **KYC and PIN** only through a form: a WhatsApp Flow, or the app's `/v1/forms/kyc` and `/v1/forms/pin`, never chat text. Values travel to the handler only in the in-memory `sensitive` map. Never persist or log raw PIN/BVN/NIN. (Amended by [ADR-0002](docs/decisions/0002-app-channel-and-auth.md).)
 - **Spending window** is WAT wall-clock, not overridable in chat.
 - **Confirm then PIN** before money moves.
-- Package name `kedu` vs product **Udara** — user-facing copy is Udara.
+- Package name `kedu` vs product **Amanda** — user-facing copy is Amanda.
 
 ## Coding conventions
 

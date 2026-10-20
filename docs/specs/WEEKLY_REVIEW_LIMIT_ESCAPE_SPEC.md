@@ -1,4 +1,4 @@
-# Weekly review limit escape
+﻿# Weekly review limit escape
 
 **Status:** Draft  
 Initiative: [initiatives/weekly-review-limit-escape/plan.md](../../initiatives/weekly-review-limit-escape/plan.md)  
@@ -6,7 +6,7 @@ Tech design: [../tech-design/WEEKLY_REVIEW_LIMIT_ESCAPE_TECH.md](../tech-design/
 
 ## Problem
 
-After **Adjust limits**, Udara treated every message as a daily-limit number. Users who said hello, asked for balance, or tried to send money were stuck on “that didn’t read as an amount” — including the day after a too-high number was rejected.
+After **Adjust limits**, Amanda treated every message as a daily-limit number. Users who said hello, asked for balance, or tried to send money were stuck on “that didn’t read as an amount” — including the day after a too-high number was rejected.
 
 ## Goals
 
@@ -28,9 +28,9 @@ After **Adjust limits**:
 
 - An amount is read the way people write one: `5000`, `5k`, `₦5,000`, `5000 naira`, `5000 a day`, `make it 5k`, `7000/day`, and a voice note transcribed as `Five thousand.` all count. Only the weekly review is this forgiving; wizard amount entry stays strict, because guessing an amount out of prose there would move money the user did not ask to move.
 - An in-range amount applies for the rest of the current week, then the check-in is done. Answering on Monday adjusts that same day, and the total quoted back counts the days actually left rather than always seven.
-- Too low or more than double the plan: Udara says so and still waits for another number.
-- `cancel`, `stop`, or `nevermind`: Udara keeps the current limits and says so.
-- Any other text: Udara says the limits are staying as they are, then handles the message normally. It is never dropped silently — a mistyped limit used to vanish with no trace, and re-tapping the button answered "that check-in has already been answered".
+- Too low or more than double the plan: Amanda says so and still waits for another number.
+- `cancel`, `stop`, or `nevermind`: Amanda keeps the current limits and says so.
+- Any other text: Amanda says the limits are staying as they are, then handles the message normally. It is never dropped silently — a mistyped limit used to vanish with no trace, and re-tapping the button answered "that check-in has already been answered".
 - A photo or a voice note is never treated as an answer. A captionless photo in particular is not an amount and no longer closes the wait on its way past.
 - An active airtime, data, electricity or transfer wizard takes precedence. A number typed for a wizard is that wizard's, and `cancel` cancels the wizard, not the check-in.
 - If no valid amount arrives within **24 hours** of the last Adjust or retry, the wait expires quietly and limits stay as they were.

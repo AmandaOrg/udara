@@ -1,4 +1,4 @@
-# AI Orchestrator Architecture Plan
+﻿# AI Orchestrator Architecture Plan
 
 > **Status:** Phase 0–1 implemented (ActionExecutor, validator confidence, timeout SOP, golden evals). Phase 2 (activeMode / interrupts / KYC Flow) still open.  
 > **Audience:** ML engineers, backend engineers  
@@ -8,7 +8,7 @@
 
 ## 1. Vision
 
-Udara/Kedu is a **proactive financial discipline agent on WhatsApp**. Users should feel like they are talking to a person (Kedu/Udara persona), but the system must become **structured exactly when structure matters**.
+Amanda/Kedu is a **proactive financial discipline agent on WhatsApp**. Users should feel like they are talking to a person (Kedu/Amanda persona), but the system must become **structured exactly when structure matters**.
 
 The AI should:
 - Own the **conversation flow** — empathy, explanation, nudging, clarifying intent
@@ -93,7 +93,7 @@ Single agent per turn that outputs a **structured turn plan**, not just free tex
 Responsibilities:
 - Read user message + strictly budgeted context block (history, facts, mode)
 - Choose the best **modality** for this moment from a **dynamically pruned** list of eligible surfaces
-- Write user-facing text in Kedu/Udara voice
+- Write user-facing text in Kedu/Amanda voice
 - Emit a structured `propose_turn_action` tool call with a **confidence score**
 
 Does **not**:
@@ -188,7 +188,7 @@ The orchestrator uses **forced tool calling** (`forceTool: true`).
     "properties": {
       "message": {
         "type": "string",
-        "description": "Reply in Kedu/Udara voice. Always required."
+        "description": "Reply in Kedu/Amanda voice. Always required."
       },
       "action": {
         "type": "object",

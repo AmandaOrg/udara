@@ -1,6 +1,6 @@
-# Security review gate
+﻿# Security review gate
 
-**Mandatory for every change, human or AI agent.** Udara moves real money out of real bank accounts and handles BVN, NIN, date of birth, and transfer PINs. A bad merge here does not produce a broken page. It produces a wrong transfer, a leaked identity document, or a bypassed spending lock that the customer trusted us to hold.
+**Mandatory for every change, human or AI agent.** Amanda moves real money out of real bank accounts and handles BVN, NIN, date of birth, and transfer PINs. A bad merge here does not produce a broken page. It produces a wrong transfer, a leaked identity document, or a bypassed spending lock that the customer trusted us to hold.
 
 Nothing merges until [the checklist](#3-mandatory-pre-merge-checklist) is satisfied and `npm run security:check` passes.
 
@@ -55,7 +55,7 @@ The app is the first client that can name any id it likes and that authenticates
 
 ### Why S18 matters
 
-Closing an account erases what Udara no longer needs and keeps what the law requires for six years after closure: the identity given at account opening, the payment records, and the conversation ([ADR-0003](decisions/0003-account-closure-and-retention.md)).
+Closing an account erases what Amanda no longer needs and keeps what the law requires for six years after closure: the identity given at account opening, the payment records, and the conversation ([ADR-0003](decisions/0003-account-closure-and-retention.md)).
 - Code that deleted a transfer would destroy a record the CBN can demand within 48 hours.
 - A chat model that could file a closure could start an irreversible erasure from one misread sentence.
 

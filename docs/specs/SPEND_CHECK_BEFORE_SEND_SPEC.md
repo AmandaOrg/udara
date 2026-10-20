@@ -1,4 +1,4 @@
-# Spend check before send
+﻿# Spend check before send
 
 **Status:** Frozen for the in-progress implementation (amend if behavior changes)  
 Initiative: [initiatives/spend-check-before-send/plan.md](../../initiatives/spend-check-before-send/plan.md)  
@@ -10,7 +10,7 @@ The original PRD is committed in `docs/` but is historical background, not spec.
 
 ## Problem
 
-Users who still have remaining daily allowance can say they want to send money and Udara prepares the transfer without asking what it is for. “You can still spend today” is treated as “go ahead.”
+Users who still have remaining daily allowance can say they want to send money and Amanda prepares the transfer without asking what it is for. “You can still spend today” is treated as “go ahead.”
 
 ## Goals
 
@@ -27,8 +27,8 @@ Users who still have remaining daily allowance can say they want to send money a
 
 ## User-visible behavior
 
-1. **First send** (for example `send 800 to opay`, `send 5k to my landlord for rent`): Udara replies in chat only. It asks what the money is for / whether it is actually needed. It does **not** open send money on that turn.
-2. **After the check:** if they give a purpose, say send it anyway, or otherwise still want the send, Udara opens the wizard that turn using details already collected. If they back off (`never mind`, `don't send`), it stays chat-only and does not open the wizard.
+1. **First send** (for example `send 800 to opay`, `send 5k to my landlord for rent`): Amanda replies in chat only. It asks what the money is for / whether it is actually needed. It does **not** open send money on that turn.
+2. **After the check:** if they give a purpose, say send it anyway, or otherwise still want the send, Amanda opens the wizard that turn using details already collected. If they back off (`never mind`, `don't send`), it stays chat-only and does not open the wizard.
 3. Mid-wizard field answers, confirm, and PIN are unchanged. Thanks / “you already sent it” still must not start a send (see transfer-intent grounding).
 
 ## Edge cases

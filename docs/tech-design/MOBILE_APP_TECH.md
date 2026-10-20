@@ -1,4 +1,4 @@
-# Mobile app backend: tech design
+﻿# Mobile app backend: tech design
 
 Companion to [`initiatives/mobile-app/plan.md`](../../initiatives/mobile-app/plan.md) and [`docs/specs/MOBILE_APP_SPEC.md`](../specs/MOBILE_APP_SPEC.md).
 
@@ -308,8 +308,8 @@ Then two adjustments:
 
 **Push (`PushService.notify(userId, delivery)`):**
 - For each eligible device, claim a 60-second cooldown: `updateMany` where `lastPushAt` is null or older, and set it.
-- `POST https://exp.host/--/api/v2/push/send` with `{ to, title: "Udara", body, data: { screen: "chat" }, sound: "default" }`, plus a bearer `EXPO_ACCESS_TOKEN` if set.
-- Body by class: transactional "There's an update on your Udara account."; proactive "Udara has a message for you."
+- `POST https://exp.host/--/api/v2/push/send` with `{ to, title: "Amanda", body, data: { screen: "chat" }, sound: "default" }`, plus a bearer `EXPO_ACCESS_TOKEN` if set.
+- Body by class: transactional "There's an update on your Amanda account."; proactive "Amanda has a message for you."
 - On a `DeviceNotRegistered` ticket, clear that token (conditional on it still being the token).
 - Never throws into the send path; failures are logged with the device id only.
 - `PUSH_DRY_RUN=true` logs "not sent" and still claims the cooldown, so e2e can observe it.

@@ -1,4 +1,4 @@
-# Initiative: mobile app backend
+﻿# Initiative: mobile app backend
 
 Companion spec: [`docs/specs/MOBILE_APP_SPEC.md`](../../docs/specs/MOBILE_APP_SPEC.md)
 Companion tech design: [`docs/tech-design/MOBILE_APP_TECH.md`](../../docs/tech-design/MOBILE_APP_TECH.md)
@@ -12,7 +12,7 @@ Each phase ships on its own with CI green. Phases after P0 are outlined, not des
 
 ## Problem
 
-Udara only exists inside WhatsApp. A standalone iOS/Android app (TypeScript, Expo, in the sibling `udara-mobile` repo) has nothing to talk to:
+Amanda only exists inside WhatsApp. A standalone iOS/Android app (TypeScript, Expo, in the sibling `Amanda-mobile` repo) has nothing to talk to:
 
 - The only routes are the two signed webhooks and `/health`. There is no client API, no authentication, and no DTOs.
 - Identity is `User.whatsappNumber`. A user is only ever created by `WhatsappRouterService.findOrCreateUser`.
@@ -34,7 +34,7 @@ Everything the backend needs so the app can stand alone:
 
 - sign up and log in by SMS one-time code;
 - onboard conversationally in an in-app chat, with KYC and PIN as native forms;
-- chat with Udara;
+- chat with Amanda;
 - use native screens for balance, limits, history, recipients, transfers, bills, devices and settings requests;
 - receive push notifications.
 
@@ -43,11 +43,11 @@ Users decided (2026-09-25, Egwu David Samuel):
 1. **One account across channels.** WhatsApp keeps working, and the same phone number is the same `User` on both.
 2. **Conversational onboarding in the app.** It uses the same stage machine as WhatsApp.
 3. **SMS one-time codes** through a Nigerian provider (Termii or similar).
-4. **Chat with Udara is in v1.**
+4. **Chat with Amanda is in v1.**
 
 ## Non-goals
 
-- The Expo app itself, which lives in `udara-mobile`.
+- The Expo app itself, which lives in `Amanda-mobile`.
 - Voice notes and images sent from the app. Multipart uploads bring in multer, which [`SECURITY.md`](../../docs/SECURITY.md) currently lists as unreachable. Deferred.
 - Changing the persona, prompts or golden dialogues. The "WhatsApp bubble" wording stays for v1.
 - Retiring WhatsApp or migrating its users.

@@ -1,4 +1,4 @@
-# Mobile app backend
+﻿# Mobile app backend
 
 Companion to [`initiatives/mobile-app/plan.md`](../../initiatives/mobile-app/plan.md) and [`docs/tech-design/MOBILE_APP_TECH.md`](../tech-design/MOBILE_APP_TECH.md).
 
@@ -14,12 +14,12 @@ This spec covers P0 in full. Later phases are described at the level the product
 
 ## Problem
 
-Udara can only be used from WhatsApp. People who don't want to manage their money inside a chat app, or who want a home screen, a history view and push alerts, have no way in.
+Amanda can only be used from WhatsApp. People who don't want to manage their money inside a chat app, or who want a home screen, a history view and push alerts, have no way in.
 
 ## Goals
 
-- A person can download the app, sign up with their phone number, and be onboarded by Udara in an in-app chat, just as on WhatsApp.
-- Someone who already uses Udara on WhatsApp can log into the app with the same number and see the same account, balance and limits.
+- A person can download the app, sign up with their phone number, and be onboarded by Amanda in an in-app chat, just as on WhatsApp.
+- Someone who already uses Amanda on WhatsApp can log into the app with the same number and see the same account, balance and limits.
 - Everything that protects the money still holds in the app:
   - the spending window;
   - allowances;
@@ -39,23 +39,23 @@ Udara can only be used from WhatsApp. People who don't want to manage their mone
 
 These changes ship before the app exists. They close gaps the app would otherwise have exposed.
 
-- **Bill purchases are re-quoted like transfers.** If the user taps Confirm more than 10 minutes after the quote, or the fee or spend type has changed since (for example the window closed), Udara sends the card again with current figures under one line:
+- **Bill purchases are re-quoted like transfers.** If the user taps Confirm more than 10 minutes after the quote, or the fee or spend type has changed since (for example the window closed), Amanda sends the card again with current figures under one line:
   - "this has been waiting a while, so let's confirm it again:" (stale), or
   - "the terms on this one moved while it was waiting, so here it is again:" (terms changed).
 
   The user confirms again before the PIN is asked for.
-- **A purchase waiting on the PIN is withdrawn, not left behind.** An airtime, data or electricity purchase waiting on the PIN is cancelled when the user moves on to something else: a new bill purchase, another menu item or surface, or asking Udara to cancel. Udara says so ("Cancelled, no airtime was bought."), even though those paths otherwise cancel silently. Transfers already behaved this way.
-- **Only the latest identity form can be submitted, and only once.** If the user submits an older KYC form (for example one reopened from earlier in the chat), Udara replies "that form has expired, here's a fresh one:" and sends a new one. Nothing is sent to the bank.
+- **A purchase waiting on the PIN is withdrawn, not left behind.** An airtime, data or electricity purchase waiting on the PIN is cancelled when the user moves on to something else: a new bill purchase, another menu item or surface, or asking Amanda to cancel. Amanda says so ("Cancelled, no airtime was bought."), even though those paths otherwise cancel silently. Transfers already behaved this way.
+- **Only the latest identity form can be submitted, and only once.** If the user submits an older KYC form (for example one reopened from earlier in the chat), Amanda replies "that form has expired, here's a fresh one:" and sends a new one. Nothing is sent to the bank.
 - **The message-flood limit now works.** A number that sends more than 40 messages in 10 minutes gets one "that's a lot of messages at once" reply, and further messages are ignored until the window passes. The limit was always meant to do this, but it never triggered.
 
 ### P4 (in-app conversation)
 
-- **The app chat is the WhatsApp conversation.** A new user opens the chat and Udara introduces itself, as it does to a first WhatsApp message. Buttons and lists appear as tappable choices. Everything after that (terms, the four questions, the plan, "talk to Udara") is the same script and the same assistant.
-- **Forms are native screens.** When Udara asks for identity details or a PIN, the chat shows a card that opens a native form. Submitting it returns to the chat, where the result arrives as it does on WhatsApp: the account number, or what was wrong and a fresh form.
-- **An app-only user sets a PIN straight after the account is created.** Udara says "one more thing before we carry on: set the 4-digit pin…" and does not carry on with onboarding until it is set. WhatsApp users are unchanged: their PIN is still first asked for at their first transfer.
+- **The app chat is the WhatsApp conversation.** A new user opens the chat and Amanda introduces itself, as it does to a first WhatsApp message. Buttons and lists appear as tappable choices. Everything after that (terms, the four questions, the plan, "talk to Amanda") is the same script and the same assistant.
+- **Forms are native screens.** When Amanda asks for identity details or a PIN, the chat shows a card that opens a native form. Submitting it returns to the chat, where the result arrives as it does on WhatsApp: the account number, or what was wrong and a fresh form.
+- **An app-only user sets a PIN straight after the account is created.** Amanda says "one more thing before we carry on: set the 4-digit pin…" and does not carry on with onboarding until it is set. WhatsApp users are unchanged: their PIN is still first asked for at their first transfer.
 - **A phone signed in less than 24 hours ago can send at most ₦20,000 in total** (configurable) until the 24 hours are up. A payment that would go over is cancelled after the PIN, before any money moves, with how much is left and when the limit lifts.
 - **Switching channel closes what was left open.** A transfer or airtime wizard, a pending pick between saved recipients, or a weekly "what limit do you want?" left open on one channel is quietly closed when the user writes on the other. Anything waiting on a Confirm button or a PIN is not affected.
-- **One conversation at a time per person.** A message that arrives while Udara is still answering the previous one (on either channel) waits for it, rather than both being handled at once.
+- **One conversation at a time per person.** A message that arrives while Amanda is still answering the previous one (on either channel) waits for it, rather than both being handled at once.
 - **One message-flood budget across both channels:** 40 messages in 10 minutes in total. In the app, a message over the limit is refused rather than answered.
 - **If handling a message fails, the app says so** ("sorry, something went wrong on my side…"). WhatsApp stays silent, as today.
 
@@ -66,12 +66,12 @@ Edge cases:
 
 ### P5 (push and delivery rules)
 
-Messages Udara sends when the user hasn't just written (money arriving, a transfer that finished later, the daily "your day is unlocked", the weekly check-in, the managers' answer) now go where the user will see them:
+Messages Amanda sends when the user hasn't just written (money arriving, a transfer that finished later, the daily "your day is unlocked", the weekly check-in, the managers' answer) now go where the user will see them:
 - **A transfer or purchase result** goes back to where it was started: the app or WhatsApp.
 - **Everything else** goes to whichever of the two the user used last.
 - **WhatsApp only while Meta allows it.** WhatsApp refuses ordinary messages more than 24 hours after the user last wrote there, and fails them silently. For someone who also has the app, such a message goes to the app instead. Someone who has never used the app gets exactly what they get today.
 - **One alert per event.** A WhatsApp message is its own alert. Anything that lands only in the app raises a push notification. Several messages at once (a recap and its buttons) raise one push, not several.
-- **A push never shows an amount, a name or an account number.** It says "There's an update on your Udara account." or "Udara has a message for you." and opens the chat.
+- **A push never shows an amount, a name or an account number.** It says "There's an update on your Amanda account." or "Amanda has a message for you." and opens the chat.
 - **The app's chat shows the whole story.** Anything sent to WhatsApp is also added to the app chat, silently, for someone who has signed in to the app.
 - **Only signed-in phones get pushes.** Signing out, or a session revoked as stolen, stops them. When a phone signs in as someone else, the previous account's pushes stop reaching it.
 - **Sign-in approvals and new-device warnings always go to WhatsApp**, never to the app: the warning is for the other phone.
@@ -115,7 +115,7 @@ Also:
 ### P8 (buying airtime, data and electricity from the app's own screens)
 
 The app can buy airtime, a data bundle or prepaid electricity without the chat, in the same four steps as sending money: quote, Confirm, PIN, result. The checks, the fees, the 10-minute re-quote, the PIN lockout and the new-phone limit are the same as in the chat.
-- **What can be bought comes from Udara's catalog.** The app sends the network, bundle or electricity company it shows from the catalog, and the server takes every code, name, price and amount limit from the catalog itself. A data bundle costs what the catalog says; the app cannot send a different price. Airtime and electricity are ₦50 to ₦50,000, as on WhatsApp.
+- **What can be bought comes from Amanda's catalog.** The app sends the network, bundle or electricity company it shows from the catalog, and the server takes every code, name, price and amount limit from the catalog itself. A data bundle costs what the catalog says; the app cannot send a different price. Airtime and electricity are ₦50 to ₦50,000, as on WhatsApp.
 - **An electricity quote shows the name on the meter,** as the electricity company holds it, so the user can check it is the right meter before confirming. Each check counts towards the same 20-an-hour limit as checking an account's name.
 - **A successful electricity purchase returns its token** on the result screen, and the token is also added to the chat.
 - **Nothing is bought twice, and the chat and the screens stay out of each other's way,** exactly as for sending money.
@@ -140,7 +140,7 @@ The app can buy airtime, a data bundle or prepaid electricity without the chat, 
 - A PIN reset still works for an address that has not been checked: the reset sends its own code to that address.
 
 **New terms.**
-- When Udara's terms change, someone who agreed to the old ones is asked to read and accept the new ones the next time the app opens.
+- When Amanda's terms change, someone who agreed to the old ones is asked to read and accept the new ones the next time the app opens.
 - Someone still onboarding agrees in the chat, as now.
 - Nothing is blocked while the question is open: there is no terms change yet. Whether to block, and how to ask on WhatsApp, will be decided with the first change.
 
@@ -154,37 +154,37 @@ The rules are set by ADR-0003.
   - a payment still being processed;
   - an open request to close.
 - With a PIN set, the user enters it. A wrong PIN counts towards the same lockout as payments.
-- People without the app ask in chat or by email, and Udara's team files the request for them once it has checked it is them.
+- People without the app ask in chat or by email, and Amanda's team files the request for them once it has checked it is them.
 
 *Before asking, the app says what happens* (one of two versions):
-- **Account holder:** "we'll close your udara account and delete your plan, goals, saved recipients and settings. nigerian law requires us to keep your identity details, payment history and our messages for six years after the account closes. we keep them for that alone, then delete them. rubies microfinance bank, which holds your account, keeps its own records too."
-- **Never opened an account:** "we'll close your udara account and delete everything we hold about you."
+- **Account holder:** "we'll close your Amanda account and delete your plan, goals, saved recipients and settings. nigerian law requires us to keep your identity details, payment history and our messages for six years after the account closes. we keep them for that alone, then delete them. rubies microfinance bank, which holds your account, keeps its own records too."
+- **Never opened an account:** "we'll close your Amanda account and delete everything we hold about you."
 
 *Once asked:*
-- The chat says, and an email says where there is an address: "your request to close your udara account is in. it can be closed from {date}, and we'll have done it by {date}. until then you can withdraw it in the app, under settings. keep your balance at zero until it's done."
-- When Udara's team filed the request, the sentence about withdrawing in the app is instead: "if you change your mind before then, reply here and we'll stop it."
-- For 7 days the request can be withdrawn. After that, Udara's team closes the account within 30 days of the request.
+- The chat says, and an email says where there is an address: "your request to close your Amanda account is in. it can be closed from {date}, and we'll have done it by {date}. until then you can withdraw it in the app, under settings. keep your balance at zero until it's done."
+- When Amanda's team filed the request, the sentence about withdrawing in the app is instead: "if you change your mind before then, reply here and we'll stop it."
+- For 7 days the request can be withdrawn. After that, Amanda's team closes the account within 30 days of the request.
 - The balance must still be zero, and nothing still being processed.
-- If a small amount can't be moved out, Udara's team sorts it out with Rubies first.
+- If a small amount can't be moved out, Amanda's team sorts it out with Rubies first.
 
 *When the account closes, the user gets one last message* in the chat and by email:
-- **Account holder:** "your udara account is closed and you've been signed out everywhere. as nigerian law requires, we're keeping your identity details, payment history and our messages for six years, for that purpose alone; everything else has been deleted. we're asking rubies microfinance bank, which holds your account, to close it too. don't let anyone send money to your old account number."
-- **Never opened an account:** "your udara account is closed and everything we held about you has been deleted."
+- **Account holder:** "your Amanda account is closed and you've been signed out everywhere. as nigerian law requires, we're keeping your identity details, payment history and our messages for six years, for that purpose alone; everything else has been deleted. we're asking rubies microfinance bank, which holds your account, to close it too. don't let anyone send money to your old account number."
+- **Never opened an account:** "your Amanda account is closed and everything we held about you has been deleted."
 
 *Then:*
 - The app is signed out on every phone. The number can sign up again, but as a new account with nothing carried over.
-- Udara sends the closed account nothing more.
-- Money sent to the old account number later is recorded, and Udara's team is alerted to sort it out with Rubies.
+- Amanda sends the closed account nothing more.
+- Money sent to the old account number later is recorded, and Amanda's team is alerted to sort it out with Rubies.
 
-*If Udara's team cannot close it* (a regulator or court has asked for the records to be held, for example), the user is told: "we can't close your udara account yet. {reason}. we'll be in touch."
+*If Amanda's team cannot close it* (a regulator or court has asked for the records to be held, for example), the user is told: "we can't close your Amanda account yet. {reason}. we'll be in touch."
 
 Edge cases:
-- **Money arrives during the 7 days:** the account cannot be closed until it has gone out again. Udara's team tells the user.
+- **Money arrives during the 7 days:** the account cannot be closed until it has gone out again. Amanda's team tells the user.
 - **The person filing is not the owner** (a stolen, unlocked phone):
   - With a PIN set, the request cannot be filed without it.
   - Without one, the owner hears by email, if there is an address, and has 7 days to withdraw.
   - Nothing can be closed with money in the account.
-- **Someone asks in chat to close their account:** the request reaches Udara's team as an ordinary request to the managers. The chat cannot close an account by itself.
+- **Someone asks in chat to close their account:** the request reaches Amanda's team as an ordinary request to the managers. The chat cannot close an account by itself.
 
 ### Later phases (outline)
 
@@ -193,9 +193,9 @@ Edge cases:
   - On a new phone, if a PIN is already set, the user also enters the PIN.
   - Every new device is announced on the user's other channels and by email.
 - **Onboarding.** The same conversation as WhatsApp in an in-app chat. The identity form and PIN entry are native screens, never chat messages.
-- **Talk to Udara.** The same assistant and rules as WhatsApp, with a shared memory of what was done on either channel.
+- **Talk to Amanda.** The same assistant and rules as WhatsApp, with a shared memory of what was done on either channel.
 - **Native screens:** balance, limits and window, history, recipients, send money, airtime, data and electricity, settings requests, and devices. Sending money is still quote, then Confirm, then PIN.
-- **Push notifications** for money in and out and for Udara's check-ins. The lock screen never shows amounts or account details.
+- **Push notifications** for money in and out and for Amanda's check-ins. The lock screen never shows amounts or account details.
 
 ## Edge cases
 

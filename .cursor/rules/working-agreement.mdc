@@ -1,5 +1,5 @@
----
-description: Udara always-on working rules (routing, money safety, docs, tests)
+﻿---
+description: Amanda always-on working rules (routing, money safety, docs, tests)
 alwaysApply: true
 ---
 
@@ -13,7 +13,7 @@ Read `AGENTS.md` before editing. Canonical behavior is code + `docs/`. The found
 - The model never executes transfers or invents balances. Surfaces own numbers.
 - KYC/PIN only via WhatsApp Flows under `docs/whatsapp-flows/`. Redact sensitive fields in persisted messages.
 - Spending window is WAT (`WindowService`). Confirm then PIN before money moves.
-- User-facing name is Udara; package/DB may say `kedu` / `KEDU`.
+- User-facing name is Amanda; package/DB may say `kedu` / `KEDU`.
 
 ## Work tracking
 

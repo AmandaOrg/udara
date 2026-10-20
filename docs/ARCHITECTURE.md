@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 How inbound events become outbound WhatsApp messages and database writes.
 
@@ -124,7 +124,7 @@ A `User` is identified by `phoneNumber` (international digits, no "+"; see `comm
 
 `AppMessage` is the in-app chat, both directions, ordered by `seq`. `UserTurnLease` is the per-user turn lock and last channel. App sign-in has `AuthOtp`, `Device`, `AppSession` and `LoginChallenge`. `NameEnquiryLog` counts the app's account-name lookups per user, and deliberately holds no account number. `EmailVerification` holds email-check codes as HMACs. `User.emailVerifiedAt`, `closedAt` and `closedPhoneNumber` record a checked address and a closed account; `SettingsChangeType.ACCOUNT_DELETION` and `SettingsChangeStatus.WITHDRAWN` are the closure request and a request taken back. `Transaction.originSurface` and `BillPayment.originSurface` (`CHAT` or `NATIVE`) say which surface quoted a payment, and `clientRequestKey` holds the app's `Idempotency-Key`, unique per user.
 
-`TransferDraft` is the interactive send-money wizard. `ConversationSession` is chat history for the Udara (`KEDU`) and manager personas. Do not merge them.
+`TransferDraft` is the interactive send-money wizard. `ConversationSession` is chat history for the Amanda (`KEDU`) and manager personas. Do not merge them.
 
 ## Integrations
 
@@ -157,5 +157,5 @@ Schedulers are not leader-elected. Correctness comes from the claims above, so a
 
 ## Known structural notes
 
-- Package name `kedu` vs product name Udara.
+- Package name `kedu` vs product name Amanda.
 - CI does not run e2e or live LLM tests. The golden dialogues do run, under jest.
