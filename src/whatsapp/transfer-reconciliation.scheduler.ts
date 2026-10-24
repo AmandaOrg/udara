@@ -189,12 +189,15 @@ export class TransferReconciliationScheduler {
     this.running.allowance = true;
     try {
       const since = new Date(Date.now() - GIVE_UP_AFTER_MS);
+      // Not for a closed account: its allowance ledger was erased with it
+      // (ADR-0003), and applying spend would only write a new one.
       const [transactions, billPayments] = await Promise.all([
         this.prisma.transaction.findMany({
           where: {
             status: TransactionStatus.EXECUTED,
             appliedToAllowanceAt: null,
             executedAt: { gte: since },
+            user: { closedAt: null },
           },
           orderBy: { executedAt: "asc" },
           take: BATCH_SIZE,
@@ -204,6 +207,7 @@ export class TransferReconciliationScheduler {
             status: BillPaymentStatus.EXECUTED,
             appliedToAllowanceAt: null,
             executedAt: { gte: since },
+            user: { closedAt: null },
           },
           orderBy: { executedAt: "asc" },
           take: BATCH_SIZE,
@@ -285,6 +289,8 @@ export class TransferReconciliationScheduler {
           status: TransactionStatus.EXECUTED,
           appliedToAllowanceAt: null,
           executedAt: { lt: cutoff },
+          // A closed account has no allowance left to apply it to.
+          user: { closedAt: null },
         },
       }),
     ]);

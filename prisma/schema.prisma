@@ -62,6 +62,14 @@ enum TransactionType {
   BORROWED // against future allowance
 }
 
+// Where a payment was quoted: the conversation (WhatsApp or the app chat), or
+// the app's own send-money screens (P7). The chat never resumes, confirms or
+// cancels a NATIVE quote, and the native routes never act on a CHAT one.
+enum PaymentSurface {
+  CHAT
+  NATIVE
+}
+
 enum TransactionStatus {
   PENDING_CONFIRMATION
   // Confirm button tapped and all pre-flight guards passed, now waiting on
@@ -134,6 +142,9 @@ enum SettingsChangeType {
   OVERRIDE_FEES
   EXIT_RESTRICTIONS
   OTHER
+  // Decided only by AccountClosureService, never by reviewRequest, and never
+  // proposed by the model (S18, ADR-0003).
+  ACCOUNT_DELETION
 }
 
 enum SettingsChangeStatus {
@@ -141,6 +152,8 @@ enum SettingsChangeStatus {
   ELIGIBLE_FOR_REVIEW
   APPROVED
   REJECTED
+  // The user took it back before it was decided.
+  WITHDRAWN
 }
 
 enum WhatsappMessageDirection {
@@ -212,8 +225,16 @@ enum NudgeType {
 // ---------------------------------------------------------------------------
 
 model User {
-  id              String  @id @default(uuid())
-  whatsappNumber  String  @unique
+  id String @id @default(uuid())
+
+  // Who the user is, on every channel: the international number as digits,
+  // no "+" (the shape Meta sends as a WhatsApp sender id, e.g. 2348012345678).
+  // See common/phone.util.ts. This, not whatsappNumber, is what makes an app
+  // sign-up and the same number messaging on WhatsApp one account.
+  phoneNumber     String  @unique
+  // Set once the number has actually messaged Udara on WhatsApp. Null for a
+  // user who has only ever used the app.
+  whatsappNumber  String? @unique
   rubiesAccountId String? @unique
 
   // Identity captured during onboarding (Identity/AI Reflection stages, onboarding script)
@@ -232,6 +253,9 @@ model User {
   legalMiddleName String?
   legalLastName   String?
   email           String?
+  // Set when the user enters a code sent to `email` (the app) or completes a
+  // PIN reset by email, which proves the same thing.
+  emailVerifiedAt DateTime?
 
   // Financial profile (captured at onboarding — section 7 / 7a of PRD)
   monthlyIncome    Decimal?      @db.Decimal(14, 2)
@@ -268,6 +292,10 @@ model User {
 
   // Drives the WhatsApp 24h free-form-vs-template send decision.
   lastInboundMessageAt DateTime?
+  // Last authenticated app request. Kept apart from lastInboundMessageAt,
+  // which means "a WhatsApp message arrived" and decides whether Meta will
+  // accept a free-form send; app activity must never extend that window.
+  lastAppActiveAt      DateTime?
 
   onboardingStage       OnboardingStage @default(DISCOVERY)
   onboardingCompletedAt DateTime?
@@ -297,6 +325,13 @@ model User {
   pinFailedAttempts Int       @default(0)
   pinLockedUntil    DateTime?
 
+  // Account closure (ADR-0003). Set only by AccountClosureService. A closed
+  // account is never messaged or signed in to: its phoneNumber is replaced by
+  // "closed:<id>" so the number is free for a new account, and the number is
+  // kept here, with the other records the law requires, for six years.
+  closedAt          DateTime?
+  closedPhoneNumber String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -317,6 +352,13 @@ model User {
   pinChallenges        PinChallenge[]
   EmailLog             EmailLog[]
   WeeklyReview         WeeklyReview[]
+  devices              Device[]
+  appSessions          AppSession[]
+  loginChallenges      LoginChallenge[]
+  appMessages          AppMessage[]
+  turnLease            UserTurnLease?
+  nameEnquiries        NameEnquiryLog[]
+  emailVerifications   EmailVerification[]
 }
 
 // One row per user per calendar day — the heart of the discipline engine.
@@ -414,6 +456,14 @@ model BillPayment {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
+  // Where the quote was made; see Transaction.originChannel.
+  originChannel    MessageChannel @default(WHATSAPP)
+  // Conversation or the app's own screens; see Transaction.originSurface.
+  originSurface    PaymentSurface @default(CHAT)
+  // The app's Idempotency-Key for a native purchase. Never requestReference
+  // or idempotencyKey, which the server generates for Rubies.
+  clientRequestKey String?
+
   category     BillPaymentCategory @default(AIRTIME)
   billerCode   String
   productCode  String
@@ -442,7 +492,10 @@ model BillPayment {
 
   pinChallenges PinChallenge[]
 
+  @@unique([userId, clientRequestKey])
   @@index([userId, status])
+  // The app's history reads a user's purchases newest first.
+  @@index([userId, createdAt])
 }
 
 model Transaction {
@@ -452,13 +505,20 @@ model Transaction {
   recipientId String
   recipient   Recipient @relation(fields: [recipientId], references: [id])
 
-  amount       Decimal           @db.Decimal(14, 2)
-  type         TransactionType   @default(NORMAL)
-  status       TransactionStatus @default(PENDING_CONFIRMATION)
+  amount           Decimal           @db.Decimal(14, 2)
+  type             TransactionType   @default(NORMAL)
+  status           TransactionStatus @default(PENDING_CONFIRMATION)
+  // Where the quote was made. Decides where the result is sent when it arrives
+  // later, from the Rubies webhook or reconciliation (P5 delivery rules).
+  originChannel    MessageChannel    @default(WHATSAPP)
+  originSurface    PaymentSurface    @default(CHAT)
+  // The app's Idempotency-Key for a native quote. Never the Rubies
+  // idempotencyKey, which the server generates, so a client cannot pick it.
+  clientRequestKey String?
   // This send's stated purpose (spend-check / orchestrator label_hint) — may
   // differ from Recipient.label when the person was tagged on an earlier send.
-  purposeLabel RecipientLabel?
-  purposeNote  String?
+  purposeLabel     RecipientLabel?
+  purposeNote      String?
 
   feeAmount         Decimal   @default(0) @db.Decimal(14, 2)
   // Set once the feeAmount (if any) has actually been moved to
@@ -496,6 +556,7 @@ model Transaction {
   // but its primary key and idempotencyKey. Every orchestrator turn scans it
   // twice (pending confirms, last completed send) and the reconciler scans it
   // once a minute.
+  @@unique([userId, clientRequestKey])
   @@index([userId, status, createdAt])
   @@index([status, confirmedAt])
   @@index([status, appliedToAllowanceAt])
@@ -558,6 +619,11 @@ model OnboardingSession {
   stage         OnboardingStage
   messages      Json // [{ role, content, at }]
   extractedData Json? // partial structured data as it's confirmed
+
+  // flowToken of the one KYC form currently allowed to submit. Cleared by an
+  // atomic claim when a submission arrives, so a stale form or a duplicate
+  // submission never reaches Rubies. Null when no form is outstanding.
+  kycFlowToken String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -660,6 +726,9 @@ model IncomingCredit {
   sourceNarration String?
   creditedAt      DateTime
   createdAt       DateTime @default(now())
+
+  // The app's history reads a user's credits newest first.
+  @@index([userId, creditedAt])
 }
 
 // Proactive nudge dedup (PRD #13 — post-v0, see plan Phase 9).
@@ -669,7 +738,7 @@ model NudgeLog {
   user         User      @relation(fields: [userId], references: [id])
   type         NudgeType
   sentAt       DateTime  @default(now())
-  channel      String // "template" | "freeform"
+  channel      String // "template" | "freeform" | "app"
   templateName String?
 
   // Idempotency guard, same shape and reasoning as EmailLog.dedupeKey. Dedup
@@ -734,12 +803,16 @@ model PinChallenge {
 // ---------------------------------------------------------------------------
 
 enum EmailType {
+  NEW_DEVICE_LOGIN
   PIN_RESET_OTP
   MONEY_IN
   MONEY_OUT
   WINDOW_OPEN
   WEEKLY_SUMMARY
   MONTHLY_SUMMARY
+  EMAIL_VERIFICATION
+  ACCOUNT_CLOSURE_REQUESTED
+  ACCOUNT_CLOSED
 }
 
 enum EmailStatus {
@@ -807,4 +880,207 @@ model WeeklyReview {
 
   @@unique([userId, weekStartDate])
   @@index([userId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Mobile app sign-in. See docs/decisions/0002-app-channel-and-auth.md.
+// Every code and token here is stored only as a hash or HMAC (S16).
+// ---------------------------------------------------------------------------
+
+// A one-time sign-in code sent by SMS. `codeHmac` is HMAC-SHA256 under
+// OTP_PEPPER over "phoneNumber:code"; a 6-digit code has too little entropy
+// for a slow hash to help, so the attempt cap and send caps do the work.
+model AuthOtp {
+  id          String    @id @default(uuid())
+  phoneNumber String
+  codeHmac    String
+  attempts    Int       @default(0)
+  requestIp   String?
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([phoneNumber, createdAt])
+  @@index([requestIp, createdAt])
+  @@index([createdAt])
+}
+
+enum DevicePlatform {
+  IOS
+  ANDROID
+}
+
+// One app installation a user signed in on. Every sign-in creates one: without
+// a device-bound key there is nothing to prove a returning install is the same
+// phone, so treating it as new is the safe reading. `trustedAt` is null until
+// any step-up the sign-in needed has passed; the new-device transfer cap runs
+// from it.
+model Device {
+  id         String         @id @default(uuid())
+  userId     String
+  user       User           @relation(fields: [userId], references: [id])
+  platform   DevicePlatform
+  name       String?
+  // One device per token: a phone that changes hands, or signs in as someone
+  // else, must stop receiving the previous account's alerts.
+  pushToken  String?        @unique
+  // Last push sent to this device. Claimed atomically so a burst of messages
+  // (several bubbles, or a result and a follow-up) raises one alert.
+  lastPushAt DateTime?
+  trustedAt  DateTime?
+  lastSeenAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime       @default(now())
+
+  sessions        AppSession[]
+  loginChallenges LoginChallenge[]
+
+  @@index([userId])
+}
+
+// One access/refresh pair. Refreshing creates a successor row in the same
+// family and stamps this one `rotatedAt`; presenting a rotated refresh token
+// again is treated as theft and revokes the whole family.
+model AppSession {
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id])
+  deviceId         String
+  device           Device    @relation(fields: [deviceId], references: [id])
+  familyId         String
+  accessHash       String    @unique
+  accessExpiresAt  DateTime
+  refreshHash      String    @unique
+  refreshExpiresAt DateTime
+  rotatedAt        DateTime?
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([familyId])
+  @@index([deviceId])
+}
+
+enum LoginStepUpMethod {
+  PIN
+  WHATSAPP
+}
+
+// The extra proof a sign-in on a new device owes before it gets tokens: the
+// transfer PIN, or a tap on WhatsApp. `tokenHash` is what the app holds while
+// it waits.
+model LoginChallenge {
+  id         String            @id @default(uuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id])
+  deviceId   String
+  device     Device            @relation(fields: [deviceId], references: [id])
+  method     LoginStepUpMethod
+  tokenHash  String            @unique
+  approvedAt DateTime?
+  rejectedAt DateTime?
+  consumedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime          @default(now())
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// In-app conversation. See docs/tech-design/MOBILE_APP_TECH.md (P4).
+// ---------------------------------------------------------------------------
+
+enum MessageChannel {
+  WHATSAPP
+  APP
+}
+
+enum AppMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum AppMessageKind {
+  // Outbound
+  TEXT
+  BUTTONS
+  LIST
+  FORM_REQUEST
+  // Inbound (TEXT is shared)
+  CHOICE
+  FORM_SUBMISSION
+  START
+}
+
+enum AppMessageStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+// The in-app chat, both directions. `seq` is the cursor the app polls from.
+//
+// Inbound text is stored after scrubFreeTextSecrets, the same as a WhatsApp
+// text. Form values (KYC, PIN) are never stored: a FORM_SUBMISSION row records
+// only which form arrived, and the values travel to the handler in memory.
+// One row per account-name lookup from the app, to limit them per user
+// (POST /v1/name-enquiry). Deliberately holds no account number: it counts
+// lookups, it is not a record of whose accounts were looked up.
+model NameEnquiryLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model AppMessage {
+  id              String              @id @default(uuid())
+  seq             BigInt              @unique @default(autoincrement())
+  userId          String
+  user            User                @relation(fields: [userId], references: [id])
+  direction       AppMessageDirection
+  kind            AppMessageKind
+  body            String?
+  // Outbound: the buttons, list rows or form offered. Inbound: the choice made
+  // or the form submitted, never its values.
+  payload         Json?
+  // The app's own id for an inbound message, so a retried send is not
+  // processed twice. Null on outbound rows.
+  clientMessageId String?
+  // Inbound only.
+  status          AppMessageStatus?
+  createdAt       DateTime            @default(now())
+  processedAt     DateTime?
+
+  @@unique([userId, clientMessageId])
+  @@index([userId, seq])
+}
+
+// One conversational turn per user at a time, across channels and replicas.
+// The row outlives each turn so `lastChannel` can tell when the user has
+// switched channels, which expires wizards left open on the other one.
+model UserTurnLease {
+  userId      String          @id
+  user        User            @relation(fields: [userId], references: [id])
+  holder      String
+  expiresAt   DateTime
+  lastChannel MessageChannel?
+}
+
+// A code emailed to prove the address on file is the user's (P9). Only the
+// HMAC is stored (S16), bound to the user and to the address it went to, so a
+// code sent before the address changed never verifies the new one.
+model EmailVerification {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  email      String
+  codeHmac   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, createdAt])
 }

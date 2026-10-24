@@ -19,6 +19,8 @@ Skip an ADR for a one-file bugfix. Link the ADR from the initiative plan when bo
 | ID | Title | Status |
 | --- | --- | --- |
 | [0001](0001-settings-request-surface.md) | Let the model file a settings-change request | accepted |
+| [0002](0002-app-channel-and-auth.md) | The mobile app as a second channel, with SMS login | accepted |
+| [0003](0003-account-closure-and-retention.md) | Account closure and data retention | accepted |
 
 ## New record
 

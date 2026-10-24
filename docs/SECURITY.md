@@ -1,6 +1,6 @@
-# Security review gate
+﻿# Security review gate
 
-**Mandatory for every change, human or AI agent.** Udara moves real money out of real bank accounts and handles BVN, NIN, date of birth, and transfer PINs. A bad merge here does not produce a broken page. It produces a wrong transfer, a leaked identity document, or a bypassed spending lock that the customer trusted us to hold.
+**Mandatory for every change, human or AI agent.** Amanda moves real money out of real bank accounts and handles BVN, NIN, date of birth, and transfer PINs. A bad merge here does not produce a broken page. It produces a wrong transfer, a leaked identity document, or a bypassed spending lock that the customer trusted us to hold.
 
 Nothing merges until [the checklist](#3-mandatory-pre-merge-checklist) is satisfied and `npm run security:check` passes.
 
@@ -34,7 +34,7 @@ Each row is enforced in code and verified by `npm run security:check`. Do not re
 | S2 | WhatsApp webhook is signature-guarded | `whatsapp.controller.ts` + `whatsapp-signature.guard.ts` |
 | S3 | Rubies webhook is signature-guarded with replay tolerance | `rubies-webhook.controller.ts` + `rubies-signature.guard.ts` |
 | S4 | Signature comparison is constant-time | both guards use `timingSafeEqual` |
-| S5 | Inbound persistence redacts sensitive fields | `whatsapp-message.service.ts` via `sensitive-fields.util.ts` |
+| S5 | Inbound persistence redacts sensitive fields | `whatsapp-message.service.ts` via `sensitive-fields.util.ts`; app chat text via `scrubFreeTextSecrets` in `messaging/app-message.service.ts` |
 | S6 | Every sensitive WhatsApp Flow field is in the redaction list | `SENSITIVE_FLOW_FIELDS` vs `docs/whatsapp-flows/*.json` |
 | S7 | Money moves only after PIN verification | `TransactionStatus.PENDING_PIN` in `transfer-confirmation.service.ts` |
 | S8 | Every LLM turn passes through the validator | `orchestrator.service.ts` calls `ActionValidatorService.validate` |
@@ -43,6 +43,23 @@ Each row is enforced in code and verified by `npm run security:check`. Do not re
 | S11 | No credentials in the repository | whole tree |
 | S12 | Security-critical files have unit tests | colocated `*.spec.ts` |
 | S13 | Webhook controllers never serialize the inbound payload into a log line | `whatsapp.controller.ts` + `rubies-webhook.controller.ts` |
+| S14 | The mobile app API denies by default: every `/v1` controller needs a live session unless a handler is `@Public()`, which only the sign-in controller and `app-config` (the minimum app version) may use. Sign-in approvals and new-device warnings are pinned to WhatsApp | `app-api/app-auth.guard.ts`, registered globally in `app-api.module.ts`; every app controller mounted under `v1`; `app-auth/login.service.ts` |
+| S15 | Nothing in the app API prints or serializes request data; controllers do not log at all and take DTO classes rather than `unknown`; secrets and phone numbers are never query parameters | `src/app-api/**` |
+| S16 | Sign-in codes and session tokens are stored only as HMACs or hashes | `app-auth/secret-hash.util.ts`; no plaintext secret column in `schema.prisma` |
+| S17 | Money executes only from `PinOutcomeService` (`executeVerifiedTransfer` and `executeVerifiedBillPayment` are called nowhere else), and a native app route that creates a payment requires an `Idempotency-Key` | `whatsapp/pin-outcome.service.ts`; `app-api/transfers/transfers.controller.ts`; `app-api/bills/bills.controller.ts` |
+| S18 | Closing an account keeps the records the law requires: no code deletes a transfer, bill payment, credit, override or settings request, and the chat model's settings types never include `ACCOUNT_DELETION` | `src/**`; `orchestrator/transfer-hints.util.ts`; `account-closure/account-closure.service.ts` |
+
+### Why S14–S17 matter
+
+The app is the first client that can name any id it likes and that authenticates with something other than a Meta signature. That is also why a chat choice must name a message that offered it to the same user, and why the app's KYC and PIN forms hand their values to the handlers in memory exactly as the WhatsApp Flow path does. An unguarded `/v1` route is a public endpoint onto someone's money; a logged request body is a logged PIN or sign-in code; a plaintext token column turns one database read into every session. The native send and bill screens (S17) reach money through the same door as the chat, `PinOutcomeService`, which is also where the new-device cap sits; a second door would be a way around both the PIN and the cap. A retried quote with no idempotency key is a second payment. See [ADR-0002](decisions/0002-app-channel-and-auth.md). The API is off unless `APP_API_ENABLED=true`.
+
+### Why S18 matters
+
+Closing an account erases what Amanda no longer needs and keeps what the law requires for six years after closure: the identity given at account opening, the payment records, and the conversation ([ADR-0003](decisions/0003-account-closure-and-retention.md)).
+- Code that deleted a transfer would destroy a record the CBN can demand within 48 hours.
+- A chat model that could file a closure could start an irreversible erasure from one misread sentence.
+
+Closure runs only from the ops CLI. It comes after a seven-day window in which the user can withdraw, with the balance checked live and the erasure done in one transaction under the user's turn lease. A closed account is never messaged again: the delivery policy drops it and the schedulers skip it.
 
 ### Why S13 matters
 
@@ -83,6 +100,7 @@ Wizard, confirm, PIN, Rubies calls, fees, allowance, window.
 KYC, PIN, onboarding Flows, message persistence, logging.
 
 - [ ] New Flow fields that carry secrets are added to `SENSITIVE_FLOW_FIELDS` in the same change
+- [ ] New app form fields that carry secrets go into the `sensitive` map in `AppConversationService`, never into the stored `AppMessage` row
 - [ ] Plaintext values travel only through the in-memory `sensitive` map, never a DB column
 - [ ] No new log line interpolates a sensitive value
 - [ ] A unit test proves the value is redacted where it is stored
@@ -163,6 +181,7 @@ Tracked deliberately, not forgotten.
 | Unsigned webhooks accepted when the secret is blank | **Retired 2026-09-04.** Boot now fails when either secret is blank unless `ALLOW_UNSIGNED_WEBHOOKS=true` is set explicitly, so the escape hatch has to be asked for rather than being the accidental default. Local and e2e set the flag; deployed environments do not. `RubiesWebhookEvent.signatureValid` now records the real verdict instead of hardcoding `true` | Confirm both secrets are set in Railway and that the flag is absent there |
 | E2e is not in CI | CI runs lint, build, unit tests, docs and security checks. The golden dialogues **do** run, via `golden-dialogues.spec.ts` under jest | Run `npm run e2e` before any release |
 | 7 high-severity npm advisories, all requiring a Nest 10 → 12 upgrade | `npm audit fix` applies cleanly; the remainder are `@nestjs/cli` and its build-time chain (glob, picomatch, tmp), plus lodash via `@nestjs/config` and multer via `@nestjs/platform-express`. None is reachable from the two JSON webhook routes and the health route — multer in particular is only relevant to multipart uploads, which this app does not accept | Plan the framework upgrade as its own change with the full suite and e2e green; do not force it into a defect-repair batch |
+| `js-yaml` advisories via `@nestjs/swagger` (added 2026-09-26 for the app API's OpenAPI document) | Every advisory is in YAML *parsing* (merge keys, `!!omap`). Swagger only uses `js-yaml` to write out its own document; no request input is ever parsed as YAML. The document is served only with `APP_API_DOCS=true`, which is local-only | Keep `APP_API_DOCS` unset in every deployed environment; revisit with the framework upgrade |
 | Fee sweep silently skipped | Skipped with a warning when `RUBIES_FEES_ACCOUNT_NUMBER` is unset | Configure the fees account; fees are recorded but unmoved until then |
 | Provider secrets live in `.env` | No secret manager in this repo | Use the deployment platform's secret store; never bake into an image |
 

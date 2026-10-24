@@ -33,7 +33,8 @@ export class WeeklyReviewScheduler {
     if (getWatHour(now) !== REVIEW_SEND_HOUR) return;
 
     const users = await this.prisma.user.findMany({
-      where: { rubiesAccountNumber: { not: null } },
+      // Closed accounts keep their account number as a record (ADR-0003).
+      where: { rubiesAccountNumber: { not: null }, closedAt: null },
     });
     if (users.length === 0) return;
 

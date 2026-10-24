@@ -200,6 +200,8 @@ describe("TransferReconciliationScheduler", () => {
       expect(where).toMatchObject({
         status: TransactionStatus.EXECUTED,
         appliedToAllowanceAt: null,
+        // A closed account has no allowance to repair (ADR-0003).
+        user: { closedAt: null },
       });
     });
 
@@ -209,6 +211,9 @@ describe("TransferReconciliationScheduler", () => {
       await scheduler.repairUnappliedSpend();
 
       expect(allowance.recordBillPaymentSpend).toHaveBeenCalledWith("bill-1");
+      expect(prisma.billPayment.findMany.mock.calls[0][0].where).toMatchObject({
+        user: { closedAt: null },
+      });
     });
 
     it("keeps going when one repair throws", async () => {

@@ -5,6 +5,7 @@ import { firstValueFrom } from "rxjs";
 import { EmailStatus, EmailType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { htmlToPlainText } from "./email-plain-text.util";
+import { maskEmail } from "./mask-email.util";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
@@ -121,7 +122,7 @@ export class EmailService {
     // skip, carry on.
     if (!this.apiKey) {
       this.logger.warn(
-        `RESEND_API_KEY is not set — skipping ${params.type} email to ${params.to}`,
+        `RESEND_API_KEY is not set — skipping ${params.type} email to ${maskEmail(params.to)}`,
       );
       await this.finalize(claimed.id, EmailStatus.SKIPPED, {
         error: "RESEND_API_KEY not configured",

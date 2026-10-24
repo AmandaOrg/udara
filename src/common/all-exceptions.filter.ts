@@ -41,12 +41,24 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // The path may already be resolved — webhook controllers ack before doing
     // their work, so by the time something throws the response is often sent.
     if (response.headersSent) return;
-    response.status(status).json({
-      statusCode: status,
-      message:
-        exception instanceof HttpException
-          ? exception.message
-          : "Internal server error",
-    });
+
+    // A deliberate HttpException's body is part of the API: the app reads
+    // `error`, `attemptsLeft`, `retryAfter` and the like from it. Only an
+    // unexpected error is reduced to a generic message, so nothing internal
+    // leaks.
+    if (exception instanceof HttpException) {
+      const body = exception.getResponse();
+      response
+        .status(status)
+        .json(
+          typeof body === "string"
+            ? { statusCode: status, message: body }
+            : body,
+        );
+      return;
+    }
+    response
+      .status(status)
+      .json({ statusCode: status, message: "Internal server error" });
   }
 }

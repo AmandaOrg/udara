@@ -1,4 +1,4 @@
-# AI money intents
+﻿# AI money intents
 
 **Status:** Draft  
 Initiative: [initiatives/ai-money-intents/plan.md](../../initiatives/ai-money-intents/plan.md)  
@@ -34,7 +34,7 @@ Saved nicknames in live facts are ground truth. “Send 5k to james” prefills 
 
 ### Other purpose
 
-After **Other** (or when the purpose is not Rent/Food/Vendor), Udara asks what it is for. That note is stored on the send. Spend summary still buckets Other.
+After **Other** (or when the purpose is not Rent/Food/Vendor), Amanda asks what it is for. That note is stored on the send. Spend summary still buckets Other.
 
 ### Amounts
 

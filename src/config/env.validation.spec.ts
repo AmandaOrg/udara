@@ -87,3 +87,56 @@ describe("validate — webhook signing secrets", () => {
     ).toThrow("DATABASE_URL");
   });
 });
+
+/**
+ * The mobile app API is off by default, so deploying it changes nothing. Once
+ * it is switched on, its secrets are mandatory: a weak pepper makes stored
+ * code hashes guessable, and a missing SMS key silently sends no codes.
+ */
+describe("validate — mobile app API", () => {
+  const base = {
+    DATABASE_URL: "postgresql://kedu:kedu@localhost:5433/kedu?schema=public",
+    DAILY_WINDOW_START_HOUR: "11",
+    DAILY_WINDOW_END_HOUR: "20",
+    EARLY_ACCESS_FLAT_FEE: "1000",
+    EARLY_ACCESS_PERCENT_FEE: "0.002",
+    BORROW_FLAT_FEE: "1000",
+    BORROW_PERCENT_FEE: "0.004",
+    SETTINGS_CHANGE_MIN_DAYS: "7",
+    PORT: "3000",
+    ALLOW_UNSIGNED_WEBHOOKS: "true",
+  };
+  const pepper = "p".repeat(32);
+
+  it("asks for nothing while the app API is off", () => {
+    expect(() => validate(base)).not.toThrow();
+  });
+
+  it("requires a pepper of at least 32 characters once it is on", () => {
+    expect(() =>
+      validate({ ...base, APP_API_ENABLED: "true", SMS_DRY_RUN: "true" }),
+    ).toThrow(/OTP_PEPPER/);
+    expect(() =>
+      validate({
+        ...base,
+        APP_API_ENABLED: "true",
+        SMS_DRY_RUN: "true",
+        OTP_PEPPER: "short",
+      }),
+    ).toThrow(/OTP_PEPPER/);
+  });
+
+  it("requires the SMS credentials unless SMS is explicitly dry-run", () => {
+    const on = { ...base, APP_API_ENABLED: "true", OTP_PEPPER: pepper };
+
+    expect(() => validate(on)).toThrow(/TERMII_API_KEY[\s\S]*TERMII_SENDER_ID/);
+    expect(() => validate({ ...on, SMS_DRY_RUN: "true" })).not.toThrow();
+    expect(() =>
+      validate({
+        ...on,
+        TERMII_API_KEY: "tk_live",
+        TERMII_SENDER_ID: "Udara",
+      }),
+    ).not.toThrow();
+  });
+});

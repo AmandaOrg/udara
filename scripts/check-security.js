@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Security gate for Udara. Enforces the S1-S12 invariants documented in
+ * Security gate for Udara. Enforces the S1-S18 invariants documented in
  * docs/SECURITY.md. Dependency-free so it can run before install completes
  * in any environment.
  *
@@ -175,6 +175,19 @@ const INVARIANTS = [
     message: 'inbound Flow responses must be redacted before persistence',
   },
   {
+    id: 'S5',
+    file: 'src/messaging/app-message.service.ts',
+    pattern: /scrubFreeTextSecrets/,
+    message: 'text typed into the app chat must be scrubbed before it is stored, as WhatsApp text is',
+  },
+  {
+    id: 'S14',
+    file: 'src/app-auth/login.service.ts',
+    pattern: /channel:\s*"whatsapp"/,
+    message:
+      'sign-in approvals and new-device warnings must stay pinned to WhatsApp; routed by the delivery policy they could land on the phone that is signing in',
+  },
+  {
     id: 'S7',
     file: 'src/whatsapp/transfer-confirmation.service.ts',
     pattern: /PENDING_PIN/,
@@ -236,7 +249,14 @@ const orchestratorModule = readIfExists('src/orchestrator/orchestrator.module.ts
 if (orchestratorModule === null) {
   fail('S9', 'src/orchestrator/orchestrator.module.ts is missing');
 } else {
-  for (const provider of ['WhatsappService', 'RubiesService', 'ActionExecutorService']) {
+  for (const provider of [
+    'WhatsappService',
+    'RubiesService',
+    'ActionExecutorService',
+    // The channel-neutral way to send. Same rule: the brain proposes, it never speaks.
+    'ChannelMessenger',
+    'MessagingModule',
+  ]) {
     if (orchestratorModule.includes(provider)) {
       fail(
         'S9',
@@ -454,12 +474,42 @@ const NEEDS_TESTS = [
   'src/whatsapp/sensitive-fields.util.ts',
   'src/whatsapp/transfer-confirmation.service.ts',
   'src/whatsapp/pin-gate.service.ts',
+  'src/whatsapp/pin-outcome.service.ts',
+  'src/messaging/channel-messenger.ts',
+  'src/messaging/whatsapp-channel.adapter.ts',
+  'src/messaging/app-channel.adapter.ts',
+  'src/messaging/app-message.service.ts',
+  'src/messaging/delivery-policy.ts',
+  'src/messaging/push.service.ts',
+  'src/app-auth/device.service.ts',
+  'src/conversation/conversation-router.service.ts',
+  'src/conversation/turn.service.ts',
+  'src/app-api/app-auth.guard.ts',
+  'src/app-api/chat/app-conversation.service.ts',
+  'src/app-api/chat/forms.controller.ts',
+  'src/app-api/history/transaction-history.service.ts',
+  'src/app-api/banks/name-enquiry.service.ts',
+  'src/app-api/transfers/native-transfer.service.ts',
+  'src/app-api/transfers/transfers.controller.ts',
+  'src/app-api/bills/native-bill.service.ts',
+  'src/app-api/bills/bills.controller.ts',
+  'src/app-auth/new-device-cap.service.ts',
+  'src/app-auth/secret-hash.util.ts',
+  'src/app-auth/otp.service.ts',
+  'src/app-auth/session.service.ts',
+  'src/app-auth/login.service.ts',
+  'src/app-auth/login-approval.service.ts',
+  'src/app-auth/sms.service.ts',
   'src/pin/pin.service.ts',
   'src/orchestrator/action-validator.service.ts',
   'src/orchestrator/transfer-hints.util.ts',
   'src/orchestrator/bill-hints.util.ts',
   'src/allowance/fee-calculator.service.ts',
   'src/allowance/window.service.ts',
+  // Account and compliance (P9, ADR-0003)
+  'src/account-closure/account-closure.service.ts',
+  'src/app-auth/email-verification.service.ts',
+  'src/app-api/account/account-deletion.controller.ts',
 ];
 
 for (const target of NEEDS_TESTS) {
@@ -471,6 +521,220 @@ for (const target of NEEDS_TESTS) {
   if (!fs.existsSync(repoPath(spec))) {
     fail('S12', `${target} is security-critical and has no ${path.basename(spec)}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// S14-S16: the mobile app API (docs/decisions/0002-app-channel-and-auth.md)
+// ---------------------------------------------------------------------------
+
+// S14: deny by default. The guard must stay registered globally and keep
+// deciding by declared path; every app controller must be mounted under v1,
+// which is what the guard keys on; and @Public() may open only the sign-in
+// routes themselves.
+const APP_API_DIR = 'src/app-api/';
+const PUBLIC_ALLOWED = new Set([
+  'src/app-api/auth/auth.controller.ts',
+  'src/app-api/public.decorator.ts',
+  // The minimum app version, read before sign-in; holds nothing about a user.
+  'src/app-api/app-config/app-config.controller.ts',
+]);
+
+/** True when line `index` sits inside a `class …QueryDto { … }` body. */
+function inQueryDto(lines, index) {
+  for (let i = index; i >= 0; i--) {
+    if (/^}/.test(lines[i]) && i !== index) return false;
+    const opened = /^export class (\w+)/.exec(lines[i]);
+    if (opened) return /QueryDto$/.test(opened[1]);
+  }
+  return false;
+}
+
+const appApiModule = readIfExists('src/app-api/app-api.module.ts');
+if (
+  appApiModule === null ||
+  !/provide:\s*APP_GUARD,\s*useClass:\s*AppAuthGuard/.test(appApiModule)
+) {
+  fail('S14', 'src/app-api/app-api.module.ts must register AppAuthGuard as APP_GUARD');
+}
+const appAuthGuard = readIfExists('src/app-api/app-auth.guard.ts');
+if (
+  appAuthGuard === null ||
+  !/PATH_METADATA/.test(appAuthGuard) ||
+  !/IS_PUBLIC_KEY/.test(appAuthGuard)
+) {
+  fail(
+    'S14',
+    'src/app-api/app-auth.guard.ts must decide by the declared controller path and honour only @Public()',
+  );
+}
+
+for (const full of ALL_FILES) {
+  const file = rel(full);
+  if (!file.startsWith(APP_API_DIR) || !file.endsWith('.ts') || file.endsWith('.spec.ts')) {
+    continue;
+  }
+  const lines = fs.readFileSync(full, 'utf8').split(/\r?\n/);
+  lines.forEach((line, index) => {
+    if (isWaived(lines, index)) return;
+    // Applied as a decorator, not mentioned in a comment.
+    if (/^\s*@Public\(\)/.test(line) && !PUBLIC_ALLOWED.has(file)) {
+      fail('S14', `${file}:${index + 1}: @Public() is only for the sign-in routes and app-config`);
+    }
+    const mount = /@Controller\(\s*(?:(['"`])([^'"`]*)\1)?\s*\)/.exec(line);
+    if (mount && !/^\/?v1(\/|$)/i.test(mount[2] || '')) {
+      fail(
+        'S14',
+        `${file}:${index + 1}: app API controllers must be mounted under v1, or AppAuthGuard does not protect them`,
+      );
+    }
+    // S15: request bodies here carry phone numbers, codes, PINs, ID numbers
+    // and tokens. Nothing in the app API serializes one; services may log
+    // (ids and error names), controllers may not log at all.
+    if (/console\.|JSON\.stringify\(/.test(line)) {
+      fail(
+        'S15',
+        `${file}:${index + 1}: the app API must not print or serialize request data`,
+      );
+    }
+    // Sentry keeps query strings, so a secret or a phone number must never be
+    // a query parameter.
+    if (
+      /@Query\(\s*(['"`])(pin\w*|otp|code|token\w*|phone\w*|idNumber|password)\1/i.test(line) ||
+      (inQueryDto(lines, index) &&
+        /^\s+(pin\w*|otp|code|token\w*|phone\w*|idNumber|password)[!?]?\s*:/i.test(line))
+    ) {
+      fail(
+        'S15',
+        `${file}:${index + 1}: secrets and phone numbers go in the body, never the query string`,
+      );
+    }
+    if (file.endsWith('.controller.ts')) {
+      if (/\bLogger\b/.test(line)) {
+        fail(
+          'S15',
+          `${file}:${index + 1}: app API controllers must not log or serialize request data`,
+        );
+      }
+      if (/@Body\(\)\s*\w+\s*:\s*(unknown|any)\b/.test(line)) {
+        fail(
+          'S15',
+          `${file}:${index + 1}: app API handlers must take a DTO class, so unknown fields are stripped and every field is validated`,
+        );
+      }
+    }
+  });
+}
+
+// S16: sign-in secrets exist in plaintext only in memory. No column may hold
+// one, and the helper that makes the digests must keep its keyed hash and
+// constant-time comparison.
+const schemaSource = readIfExists('prisma/schema.prisma');
+if (schemaSource !== null) {
+  schemaSource.split(/\r?\n/).forEach((line, index) => {
+    if (
+      /^\s+(code|otp|pin|token|accessToken|refreshToken|challengeToken|password)\s+String/.test(
+        line,
+      )
+    ) {
+      fail(
+        'S16',
+        `prisma/schema.prisma:${index + 1}: store sign-in secrets as a hash or HMAC, never as plaintext`,
+      );
+    }
+  });
+}
+const secretHash = readIfExists('src/app-auth/secret-hash.util.ts');
+if (
+  secretHash === null ||
+  !/createHmac/.test(secretHash) ||
+  !/timingSafeEqual/.test(secretHash)
+) {
+  fail(
+    'S16',
+    'src/app-auth/secret-hash.util.ts must keep keyed code digests and constant-time comparison',
+  );
+}
+
+// ---------------------------------------------------------------------------
+// S17: money executes only from PinOutcomeService, the one door from a
+// verified PIN (and the new-device cap) to Rubies. A native route that
+// creates a payment requires an Idempotency-Key, so a retried request cannot
+// become a second payment.
+// ---------------------------------------------------------------------------
+
+const EXECUTE_ALLOWED = new Set(['src/whatsapp/pin-outcome.service.ts']);
+for (const full of ALL_FILES) {
+  const file = rel(full);
+  if (!file.startsWith('src/') || !file.endsWith('.ts') || file.endsWith('.spec.ts')) {
+    continue;
+  }
+  const lines = fs.readFileSync(full, 'utf8').split(/\r?\n/);
+  lines.forEach((line, index) => {
+    if (isWaived(lines, index)) return;
+    if (/\.executeVerified(Transfer|BillPayment)\(/.test(line) && !EXECUTE_ALLOWED.has(file)) {
+      fail(
+        'S17',
+        `${file}:${index + 1}: money executes only from src/whatsapp/pin-outcome.service.ts`,
+      );
+    }
+  });
+}
+
+const NATIVE_PAYMENT_CONTROLLERS = [
+  'src/app-api/transfers/transfers.controller.ts',
+  'src/app-api/bills/bills.controller.ts',
+];
+for (const file of NATIVE_PAYMENT_CONTROLLERS) {
+  const source = readIfExists(file);
+  if (
+    source === null ||
+    !/@Headers\(\s*(['"`])idempotency-key\1\s*\)/i.test(source) ||
+    !/IDEMPOTENCY_KEY\.test\(/.test(source)
+  ) {
+    fail('S17', `${file} must require an Idempotency-Key on the route that creates a payment`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// S18: closing an account keeps the records the law requires, for six years
+// after closure (docs/decisions/0003-account-closure-and-retention.md). No
+// code deletes a payment record or a settings request, and the chat model can
+// never ask for a closure. The six-year purge, when it is built, will be the
+// one file allowed to delete them.
+// ---------------------------------------------------------------------------
+
+const RECORD_DELETE =
+  /\.(transaction|billPayment|incomingCredit|overrideHistory|settingsChangeRequest)\.(delete|deleteMany)\(/;
+for (const full of ALL_FILES) {
+  const file = rel(full);
+  if (!file.startsWith('src/') || !file.endsWith('.ts') || file.endsWith('.spec.ts')) {
+    continue;
+  }
+  const lines = fs.readFileSync(full, 'utf8').split(/\r?\n/);
+  lines.forEach((line, index) => {
+    if (isWaived(lines, index)) return;
+    if (RECORD_DELETE.test(line)) {
+      fail(
+        'S18',
+        `${file}:${index + 1}: payment records and settings requests are kept for six years after an account closes; nothing deletes them (ADR-0003)`,
+      );
+    }
+  });
+}
+
+const hintsSource = readIfExists('src/orchestrator/transfer-hints.util.ts');
+const modelSettingsTypes =
+  hintsSource && /SETTINGS_CHANGE_TYPES[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/.exec(hintsSource);
+if (!modelSettingsTypes) {
+  fail(
+    'S18',
+    'src/orchestrator/transfer-hints.util.ts must keep SETTINGS_CHANGE_TYPES, the closed list of settings requests the model may file',
+  );
+} else if (/ACCOUNT_DELETION/.test(modelSettingsTypes[1])) {
+  fail(
+    'S18',
+    'the chat model must never file an account closure: take ACCOUNT_DELETION out of SETTINGS_CHANGE_TYPES (ADR-0003)',
+  );
 }
 
 // ---------------------------------------------------------------------------

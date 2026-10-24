@@ -1,4 +1,4 @@
-# Initiative: WhatsApp media and spend pushback
+﻿# Initiative: WhatsApp media and spend pushback
 
 Companion spec: [docs/specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md](../../docs/specs/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_SPEC.md)  
 Companion tech design: [docs/tech-design/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_TECH.md](../../docs/tech-design/WHATSAPP_MEDIA_AND_SPEND_PUSHBACK_TECH.md)
@@ -11,7 +11,7 @@ Living document. Update phase status, progress log, checklist, and the tracking 
 
 ## Problem
 
-Udara refuses voice notes and photos. Users who already stated a purpose still get the send-money wizard immediately, including when the send would be a paid override. The product promise is to challenge spending, not to say yes.
+Amanda refuses voice notes and photos. Users who already stated a purpose still get the send-money wizard immediately, including when the send would be a paid override. The product promise is to challenge spending, not to say yes.
 
 ## Evidence
 
@@ -28,7 +28,7 @@ Udara refuses voice notes and photos. Users who already stated a purpose still g
 ## Non-goals
 
 - Per-person caps and recurring transfers.
-- Outbound TTS / Udara sending voice notes.
+- Outbound TTS / Amanda sending voice notes.
 - Documents, location, KYC from photos.
 - Weakening confirm, PIN, window lock, or the validator.
 

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   LlmCallPurpose,
@@ -16,8 +15,8 @@ import {
 } from "../ai/extraction-validator.service";
 import { LlmCallLoggerService } from "../ai/llm-call-logger.service";
 import { buildOnboardingPrompt } from "../ai/prompts/onboarding.prompts";
-import { ChunkedMessengerService } from "../whatsapp/chunked-messenger.service";
-import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
+import { forChannel } from "../messaging/channel-context";
 import { RubiesService } from "../rubies/rubies.service";
 import { displayFirstNameOrThere } from "../common/display-name.util";
 import {
@@ -119,12 +118,10 @@ export class OnboardingService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
     @Inject(CONVERSATION_LLM) private readonly llm: LlmService,
     private readonly validator: ExtractionValidatorService,
     private readonly llmLogger: LlmCallLoggerService,
-    private readonly chunkedMessenger: ChunkedMessengerService,
-    private readonly whatsapp: WhatsappService,
+    private readonly messenger: ChannelMessenger,
     private readonly rubies: RubiesService,
   ) {}
 
@@ -192,8 +189,55 @@ export class OnboardingService {
   }
 
   // =========================================================================
-  // Entry points — called by WhatsappRouterService for pre-account-stage users
+  // Entry points — called by ConversationRouterService for pre-account-stage users
   // =========================================================================
+
+  /**
+   * Opens the conversation for someone who has not said anything yet. On
+   * WhatsApp the user's first message does this; the app has no first message
+   * to wait for, so it asks for this when the chat first opens. Does nothing
+   * once the conversation has begun, so opening the chat again is harmless.
+   */
+  async startConversation(user: User): Promise<void> {
+    if (user.onboardingStage !== OnboardingStage.DISCOVERY) return;
+    const session = await this.getOrStartSession(user.id);
+    await this.sendIntroduction(user, session.id);
+  }
+
+  /**
+   * True while an app-only user owes a PIN before onboarding may continue.
+   *
+   * A SIM swap gives an attacker the sign-in code. For someone with a PIN that
+   * is not enough to get in, and for someone on WhatsApp the sign-in has to be
+   * approved there; an app-only user with no PIN has neither. So once their
+   * account exists they set a PIN before anything else, and above all before
+   * they are told to fund it (ADR-0002).
+   */
+  async isAwaitingPinSetup(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
+    if (user.pinHash) return false;
+    const session = await this.getOrStartSession(userId);
+    const extractedData = isRecord(session.extractedData)
+      ? session.extractedData
+      : {};
+    return extractedData.pinSetupRequired === true;
+  }
+
+  /** Picks onboarding back up once the PIN it was waiting on is set. */
+  async resumeAfterPinSetup(userId: string): Promise<void> {
+    const session = await this.getOrStartSession(userId);
+    const extractedData = isRecord(session.extractedData)
+      ? session.extractedData
+      : {};
+    if (extractedData.pinSetupRequired !== true) return;
+    await this.mergeExtractedData(session.id, { pinSetupRequired: false });
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
+    await this.sendMoneyStoryQuestions(user, session.id);
+  }
 
   async handleInboundText(user: User, text: string): Promise<void> {
     const session = await this.getOrStartSession(user.id);
@@ -205,11 +249,7 @@ export class OnboardingService {
     // question they did not understand) had no way out at all, and no way to
     // ask for one, before they even had an account.
     if (HELP_WORDS.test(text.trim())) {
-      await this.chunkedMessenger.sendChunkedReply(
-        user.whatsappNumber,
-        HELP_TEXT,
-        user.id,
-      );
+      await this.messenger.sendChunked(user, HELP_TEXT);
       return;
     }
 
@@ -222,25 +262,19 @@ export class OnboardingService {
       case OnboardingStage.MONEY_STORY:
         return this.runAiTurn(user, session.id, user.onboardingStage);
       case OnboardingStage.TERMS_CONSENT:
-        await this.whatsapp.sendInteractiveButtons(
-          user.whatsappNumber,
+        await this.messenger.sendButtons(
+          user,
           TERMS_CONSENT_QUESTION,
           TERMS_BUTTONS,
-          user.id,
         );
         return;
       case OnboardingStage.FREQUENCY_CHECK:
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
-          "tap one of the options above.",
-          user.id,
-        );
+        await this.messenger.sendText(user, "tap one of the options above.");
         return;
       case OnboardingStage.STRUCTURED_QUESTIONS:
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           "tap one of the options above, if the list didn't show up, try again in a moment.",
-          user.id,
         );
         return;
       case OnboardingStage.PLAN_PROPOSED:
@@ -269,10 +303,9 @@ export class OnboardingService {
       case OnboardingStage.PLAN_REVIEW:
         return this.handlePlanReviewChoice(user, buttonId);
       default:
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           "that button doesn't apply right now, let's keep going with what i just asked.",
-          user.id,
         );
     }
   }
@@ -297,6 +330,27 @@ export class OnboardingService {
     }
 
     const session = await this.getOrStartSession(user.id);
+
+    // Claimed before anything is read or validated. Only the most recently
+    // sent form may submit, and only once: without this, a stale form, or two
+    // submissions arriving together, could both reach provisionAccount.
+    const flowToken = String(responseJson.flow_token ?? "");
+    const claimed = flowToken
+      ? await this.prisma.onboardingSession.updateMany({
+          where: { id: session.id, kycFlowToken: flowToken },
+          data: { kycFlowToken: null },
+        })
+      : { count: 0 };
+    if (claimed.count === 0) {
+      this.logger.warn(
+        `KYC submission from user ${user.id} carried a stale or unknown form token — sending a fresh form`,
+      );
+      const note = "that form has expired, here's a fresh one:";
+      await this.appendMessage(session.id, "assistant", note);
+      await this.messenger.sendText(user, note);
+      await this.sendKycFlow(user);
+      return;
+    }
 
     const firstName = String(responseJson.first_name ?? "").trim();
     const middleName = String(responseJson.middle_name ?? "").trim();
@@ -333,7 +387,7 @@ export class OnboardingService {
     if (problems.length > 0) {
       const nudge = `hmm, ${problems.join(" and ")}, let's try that again:`;
       await this.appendMessage(session.id, "assistant", nudge);
-      await this.whatsapp.sendText(user.whatsappNumber, nudge, user.id);
+      await this.messenger.sendText(user, nudge);
       await this.sendKycFlow(user);
       return;
     }
@@ -365,11 +419,7 @@ export class OnboardingService {
       "most saving apps and banking platforms just let you put money in and spend it without thinking about what tomorrow holds. i do the opposite. i help you think through your expenses and align your finances with what you actually want your future to look like.",
     ].join("\n\n");
     await this.appendMessage(sessionId, "assistant", intro);
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      intro,
-      user.id,
-    );
+    await this.messenger.sendChunked(user, intro);
 
     await this.sendComprehensionCheck(user, sessionId);
     await this.advanceStage(sessionId, OnboardingStage.WELCOME);
@@ -381,21 +431,11 @@ export class OnboardingService {
   ): Promise<void> {
     const question = "do you understand?";
     await this.appendMessage(sessionId, "assistant", question);
-    await this.whatsapp.sendInteractiveButtons(
-      user.whatsappNumber,
-      question,
-      INTRO_BUTTONS,
-      user.id,
-    );
+    await this.messenger.sendButtons(user, question, INTRO_BUTTONS);
   }
 
   private async nudgeIntroButtons(user: User): Promise<void> {
-    await this.whatsapp.sendInteractiveButtons(
-      user.whatsappNumber,
-      "do you understand?",
-      INTRO_BUTTONS,
-      user.id,
-    );
+    await this.messenger.sendButtons(user, "do you understand?", INTRO_BUTTONS);
   }
 
   private async handleIntroConfirmation(
@@ -411,11 +451,7 @@ export class OnboardingService {
         "udara is different. i sit between you and your spending. every transfer out of your udara account goes through me first, i check it against a plan built specifically around your income and goals, and i say something if it doesn't fit. the point isn't to make your life harder, it's to catch the moments you'd otherwise regret later.",
       ].join("\n\n");
       await this.appendMessage(session.id, "assistant", longer);
-      await this.chunkedMessenger.sendChunkedReply(
-        user.whatsappNumber,
-        longer,
-        user.id,
-      );
+      await this.messenger.sendChunked(user, longer);
       await this.sendComprehensionCheck(user, session.id);
       return; // stays on WELCOME
     }
@@ -439,21 +475,16 @@ export class OnboardingService {
     for (const part of TERMS_SUMMARY) {
       await this.appendMessage(sessionId, "assistant", part);
     }
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      TERMS_SUMMARY.join("\n\n"),
-      user.id,
-    );
+    await this.messenger.sendChunked(user, TERMS_SUMMARY.join("\n\n"));
     await this.askForConsent(user, sessionId);
   }
 
   private async askForConsent(user: User, sessionId: string): Promise<void> {
     await this.appendMessage(sessionId, "assistant", TERMS_CONSENT_QUESTION);
-    await this.whatsapp.sendInteractiveButtons(
-      user.whatsappNumber,
+    await this.messenger.sendButtons(
+      user,
       TERMS_CONSENT_QUESTION,
       TERMS_BUTTONS,
-      user.id,
     );
   }
 
@@ -466,11 +497,7 @@ export class OnboardingService {
     if (buttonId === TERMS_DETAIL) {
       const detail = TERMS_CONSEQUENCES_DETAIL.join("\n\n");
       await this.appendMessage(session.id, "assistant", detail);
-      await this.chunkedMessenger.sendChunkedReply(
-        user.whatsappNumber,
-        detail,
-        user.id,
-      );
+      await this.messenger.sendChunked(user, detail);
       await this.askForConsent(user, session.id);
       return; // stays on TERMS_CONSENT — consent is not implied by reading more
     }
@@ -486,10 +513,9 @@ export class OnboardingService {
         termsVersion: TERMS_VERSION,
       });
 
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "noted, and thank you for actually reading it. let's get you set up.",
-        user.id,
       );
       await this.advanceStage(session.id, OnboardingStage.IDENTITY);
       await this.sendQuickQuestions(user, session.id);
@@ -513,11 +539,7 @@ export class OnboardingService {
       "but before i set up your account, i need 4 quick things from you:\n\nwhat should i call you?\nwhere do you currently live?\nhow much do you make monthly?\nwhy did you come to me?",
     ].join("\n\n");
     await this.appendMessage(sessionId, "assistant", text);
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      text,
-      user.id,
-    );
+    await this.messenger.sendChunked(user, text);
   }
 
   private async runAiTurn(
@@ -560,10 +582,9 @@ export class OnboardingService {
       this.logger.error(
         `Onboarding LLM turn failed for user ${user.id} at ${stage}: ${String(err)}`,
       );
-      await this.chunkedMessenger.sendChunkedReply(
-        user.whatsappNumber,
+      await this.messenger.sendChunked(
+        user,
         "sorry, i didn't catch that. could you say it again?",
-        user.id,
       );
       return;
     }
@@ -590,21 +611,13 @@ export class OnboardingService {
       // Rejected — same handling as a vague free-text answer: stay put, ask again.
       const nudge = `hmm, ${outcome.reason ?? "that didn't quite land"}, could you say a bit more?`;
       await this.appendMessage(sessionId, "assistant", nudge);
-      await this.chunkedMessenger.sendChunkedReply(
-        user.whatsappNumber,
-        nudge,
-        user.id,
-      );
+      await this.messenger.sendChunked(user, nudge);
       return;
     }
 
     const reply = result.text ?? "sorry, could you say that again?";
     await this.appendMessage(sessionId, "assistant", reply);
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      reply,
-      user.id,
-    );
+    await this.messenger.sendChunked(user, reply);
   }
 
   private validateToolCall(
@@ -658,15 +671,10 @@ export class OnboardingService {
       );
       const confirm = `here's what i heard: ${summary} did i get that right?`;
       await this.appendMessage(sessionId, "assistant", confirm);
-      await this.whatsapp.sendInteractiveButtons(
-        user.whatsappNumber,
-        confirm,
-        [
-          { id: MONEY_STORY_YES, title: "Yes, that's right" },
-          { id: MONEY_STORY_NO, title: "No, let me clarify" },
-        ],
-        user.id,
-      );
+      await this.messenger.sendButtons(user, confirm, [
+        { id: MONEY_STORY_YES, title: "Yes, that's right" },
+        { id: MONEY_STORY_NO, title: "No, let me clarify" },
+      ]);
       return;
     }
   }
@@ -695,16 +703,12 @@ export class OnboardingService {
       await this.mergeExtractedData(session.id, { pendingMoneyStory: null });
       const nudge = "no worries, tell me again, what should i have gotten?";
       await this.appendMessage(session.id, "assistant", nudge);
-      await this.whatsapp.sendText(user.whatsappNumber, nudge, user.id);
+      await this.messenger.sendText(user, nudge);
       return; // stays on MONEY_STORY — the next text message re-triggers the AI turn
     }
 
     if (buttonId !== MONEY_STORY_YES || !pending) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        "tap one of the options above.",
-        user.id,
-      );
+      await this.messenger.sendText(user, "tap one of the options above.");
       return;
     }
 
@@ -738,11 +742,7 @@ export class OnboardingService {
       "tell me:\n\nwhat financial goal are you currently trying to achieve this year?\nwhat do you think makes it difficult for you to achieve that goal?\nhave you tried anything before to control your spending, and what made it hard to stay consistent?",
     ].join("\n\n");
     await this.appendMessage(sessionId, "assistant", text);
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      text,
-      user.id,
-    );
+    await this.messenger.sendChunked(user, text);
   }
 
   // =========================================================================
@@ -759,16 +759,11 @@ export class OnboardingService {
   ): Promise<void> {
     const question = "got it. how often does this happen?";
     await this.appendMessage(sessionId, "assistant", question);
-    await this.whatsapp.sendInteractiveButtons(
-      user.whatsappNumber,
-      question,
-      [
-        { id: FREQ_WEEKLY, title: "Weekly" },
-        { id: FREQ_MONTHLY, title: "Monthly" },
-        { id: FREQ_OFTEN, title: "Almost every payday" },
-      ],
-      user.id,
-    );
+    await this.messenger.sendButtons(user, question, [
+      { id: FREQ_WEEKLY, title: "Weekly" },
+      { id: FREQ_MONTHLY, title: "Monthly" },
+      { id: FREQ_OFTEN, title: "Almost every payday" },
+    ]);
   }
 
   private async handleFrequencyAnswer(
@@ -777,11 +772,7 @@ export class OnboardingService {
   ): Promise<void> {
     const session = await this.getOrStartSession(user.id);
     if (![FREQ_WEEKLY, FREQ_MONTHLY, FREQ_OFTEN].includes(buttonId)) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        "tap one of the options above.",
-        user.id,
-      );
+      await this.messenger.sendText(user, "tap one of the options above.");
       return;
     }
 
@@ -793,7 +784,7 @@ export class OnboardingService {
     const firstName = displayFirstNameOrThere(freshUser.name);
     const ack = `got it, ${firstName}.`;
     await this.appendMessage(session.id, "assistant", ack);
-    await this.whatsapp.sendText(user.whatsappNumber, ack, user.id);
+    await this.messenger.sendText(user, ack);
 
     await this.advanceStage(session.id, OnboardingStage.PLAN_PROPOSED);
     await this.sendAccountCreationAsk(freshUser, session.id);
@@ -818,11 +809,7 @@ export class OnboardingService {
       "tap below to fill it in securely, it never comes through as a chat message.",
     ].join("\n\n");
     await this.appendMessage(sessionId, "assistant", text);
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      text,
-      user.id,
-    );
+    await this.messenger.sendChunked(user, text);
     await this.sendKycFlow(user);
   }
 
@@ -834,43 +821,41 @@ export class OnboardingService {
     const nudge =
       "please use the form above to share your bvn/nin, date of birth, and email, it's the secure way to do this. resending it now:";
     await this.appendMessage(sessionId, "assistant", nudge);
-    await this.whatsapp.sendText(user.whatsappNumber, nudge, user.id);
+    await this.messenger.sendText(user, nudge);
     await this.sendKycFlow(user);
   }
 
   /**
-   * Sends the KYC WhatsApp Flow. flowToken is freshly generated on every
-   * send (initial send and every retry) so a resubmission can never be
-   * confused with an earlier one. WHATSAPP_KYC_FLOW_ID unset is a dev-mode
-   * escape hatch — loud warning, not a silent failure — since a Flow must be
-   * created/published in the Meta Business Manager (or via the Graph API)
-   * before it has an ID to send; see docs/whatsapp-flows/.
+   * Asks for the KYC form (a WhatsApp Flow, or the app's native screen). The
+   * token is freshly generated on every send (initial send and every retry)
+   * and recorded on the session, which makes it the only form
+   * handleInboundFlowReply will accept. A channel that cannot show the form
+   * in this environment (on WhatsApp, an unpublished Flow; see
+   * docs/whatsapp-flows/) is told to the user plainly, not failed silently.
    */
   private async sendKycFlow(user: User): Promise<void> {
-    const flowId = this.config.get<string>("WHATSAPP_KYC_FLOW_ID");
-    if (!flowId) {
-      this.logger.warn(
-        "WHATSAPP_KYC_FLOW_ID is not set — cannot send the KYC form. See docs/whatsapp-flows/.",
-      );
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        "the identity-verification form isn't set up on this environment yet, a developer needs to publish it first.",
-        user.id,
-      );
-      return;
-    }
+    // Recorded before sending, so the reply can never arrive ahead of it.
+    const flowToken = randomUUID();
+    const session = await this.getOrStartSession(user.id);
+    await this.prisma.onboardingSession.update({
+      where: { id: session.id },
+      data: { kycFlowToken: flowToken },
+    });
 
-    await this.whatsapp.sendFlow({
-      to: user.whatsappNumber,
-      flowId,
-      flowToken: randomUUID(),
-      screenId: "KYC",
+    const shown = await this.messenger.requestForm(user, {
+      kind: "KYC",
+      token: flowToken,
       headerText: "Verify your identity",
       bodyText:
         "Tap below to securely share your BVN or NIN, date of birth, and email. Takes under a minute.",
       ctaText: "Verify identity",
-      userId: user.id,
     });
+    if (!shown) {
+      await this.messenger.sendText(
+        user,
+        "the identity-verification form isn't set up on this environment yet, a developer needs to publish it first.",
+      );
+    }
   }
 
   private async provisionRubiesAccount(
@@ -900,7 +885,7 @@ export class OnboardingService {
         nin: kyc.idType === "NIN" ? kyc.idNumber : undefined,
         firstName: kyc.firstName,
         lastName: kyc.lastName,
-        phoneNumber: freshUser.whatsappNumber,
+        phoneNumber: freshUser.phoneNumber,
         dob: kyc.dateOfBirth,
         email: kyc.email,
       });
@@ -932,14 +917,23 @@ export class OnboardingService {
 
       const confirmText = [
         `your udara account has been created successfully 🎉 your account number is: ${account.accountNumber}.`,
-        "pin this chat so you can send money here anytime.",
+        forChannel({
+          whatsapp: "pin this chat so you can send money here anytime.",
+          app: "you can send money right here in the app, anytime.",
+        }),
       ].join("\n\n");
       await this.appendMessage(sessionId, "assistant", confirmText);
-      await this.chunkedMessenger.sendChunkedReply(
-        user.whatsappNumber,
-        confirmText,
-        user.id,
-      );
+      await this.messenger.sendChunked(user, confirmText);
+
+      if (!freshUser.pinHash && !freshUser.whatsappNumber) {
+        // See isAwaitingPinSetup. The caller sends the PIN form.
+        await this.mergeExtractedData(sessionId, { pinSetupRequired: true });
+        const ask =
+          "one more thing before we carry on: set the 4-digit pin you'll use to approve every transfer. it's what keeps your money safe if someone ever gets hold of your number.";
+        await this.appendMessage(sessionId, "assistant", ask);
+        await this.messenger.sendText(user, ask);
+        return;
+      }
 
       await this.sendMoneyStoryQuestions(user, sessionId);
     } catch (err) {
@@ -952,7 +946,7 @@ export class OnboardingService {
       // free-type anything.
       const message = this.describeProvisioningFailure(err);
       await this.appendMessage(sessionId, "assistant", message);
-      await this.whatsapp.sendText(user.whatsappNumber, message, user.id);
+      await this.messenger.sendText(user, message);
       await this.sendKycFlow(user);
     }
   }
@@ -981,7 +975,11 @@ export class OnboardingService {
           fields.includes("rubiesAccountId") ||
           fields.includes("rubiesAccountNumber")
         ) {
-          return "that bvn/nin is already linked to a different udara account. if that's a different number of yours, message us from that whatsapp chat instead. if this looks wrong, let us know. here's the form if you'd like to try a different id:";
+          return forChannel({
+            whatsapp:
+              "that bvn/nin is already linked to a different udara account. if that's a different number of yours, message us from that whatsapp chat instead. if this looks wrong, let us know. here's the form if you'd like to try a different id:",
+            app: "that bvn/nin is already linked to a different udara account. if that's a different number of yours, sign in with that number instead. if this looks wrong, let us know. here's the form if you'd like to try a different id:",
+          });
         }
       }
       return "that didn't go through, something on our end needs a look. here's the form to try again:";
@@ -1039,11 +1037,7 @@ export class OnboardingService {
       "now let's build your udara profile.",
     ].join("\n\n");
     await this.appendMessage(sessionId, "assistant", reflection);
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      reflection,
-      user.id,
-    );
+    await this.messenger.sendChunked(user, reflection);
 
     await this.advanceStage(sessionId, OnboardingStage.STRUCTURED_QUESTIONS);
     await this.sendStructuredQuestion(user, sessionId, 0);
@@ -1064,12 +1058,11 @@ export class OnboardingService {
     await this.mergeExtractedData(sessionId, {
       structuredQuestionIndex: index,
     });
-    await this.whatsapp.sendListMessage(
-      user.whatsappNumber,
+    await this.messenger.sendList(
+      user,
       question.bodyText,
       question.buttonLabel,
       question.rows,
-      user.id,
     );
   }
 
@@ -1089,17 +1082,15 @@ export class OnboardingService {
     if (!question) return;
 
     if (!question.rows.some((r) => r.id === buttonId)) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "that doesn't match the current question, here it is again.",
-        user.id,
       );
-      await this.whatsapp.sendListMessage(
-        user.whatsappNumber,
+      await this.messenger.sendList(
+        user,
         question.bodyText,
         question.buttonLabel,
         question.rows,
-        user.id,
       );
       return;
     }
@@ -1166,24 +1157,15 @@ export class OnboardingService {
       "spending window: 11am to 8pm. outside that window, transfers are locked, no exceptions. within it, if you go over your daily limit, we'll talk through it before anything moves.",
     ].join("\n\n");
     await this.appendMessage(sessionId, "assistant", planText);
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      planText,
-      user.id,
-    );
+    await this.messenger.sendChunked(user, planText);
 
     const checkpoint =
       "what do you think, does this feel right, or want to adjust anything?";
     await this.appendMessage(sessionId, "assistant", checkpoint);
-    await this.whatsapp.sendInteractiveButtons(
-      user.whatsappNumber,
-      checkpoint,
-      [
-        { id: PLAN_REVIEW_FEELS_RIGHT, title: "Feels right" },
-        { id: PLAN_REVIEW_ADJUST, title: "Let's adjust" },
-      ],
-      user.id,
-    );
+    await this.messenger.sendButtons(user, checkpoint, [
+      { id: PLAN_REVIEW_FEELS_RIGHT, title: "Feels right" },
+      { id: PLAN_REVIEW_ADJUST, title: "Let's adjust" },
+    ]);
   }
 
   // =========================================================================
@@ -1203,7 +1185,7 @@ export class OnboardingService {
       const ask =
         "tell me what you'd like different, i'll take it into account.";
       await this.appendMessage(session.id, "assistant", ask);
-      await this.whatsapp.sendText(user.whatsappNumber, ask, user.id);
+      await this.messenger.sendText(user, ask);
       return; // stays on PLAN_REVIEW — next text handled by handlePlanReviewText
     }
 
@@ -1212,11 +1194,7 @@ export class OnboardingService {
       return;
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
-      "tap one of the options above.",
-      user.id,
-    );
+    await this.messenger.sendText(user, "tap one of the options above.");
   }
 
   /**
@@ -1240,11 +1218,7 @@ export class OnboardingService {
       : {};
 
     if (!extractedData.awaitingAdjustmentNote) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        "tap one of the options above.",
-        user.id,
-      );
+      await this.messenger.sendText(user, "tap one of the options above.");
       return;
     }
 
@@ -1255,7 +1229,7 @@ export class OnboardingService {
     const ack =
       "got it, noted. you can always fine-tune this with me later, let's get your account funded for now.";
     await this.appendMessage(sessionId, "assistant", ack);
-    await this.whatsapp.sendText(user.whatsappNumber, ack, user.id);
+    await this.messenger.sendText(user, ack);
 
     await this.sendFundingInstructions(user, sessionId);
   }
@@ -1287,11 +1261,7 @@ export class OnboardingService {
 
     const text = `your next step is to fund your udara account. send ₦${monthlyAllowance.toLocaleString("en-NG")} into this account, that's your full monthly spending allowance based on the plan we just built. once received, udara will automatically activate your spending plan.`;
     await this.appendMessage(sessionId, "assistant", text);
-    await this.chunkedMessenger.sendChunkedReply(
-      user.whatsappNumber,
-      text,
-      user.id,
-    );
+    await this.messenger.sendChunked(user, text);
   }
 
   // =========================================================================

@@ -1,10 +1,10 @@
-# Production hardening — plain-language task list
+﻿# Production hardening — plain-language task list
 
 The same work as [`PRODUCTION_HARDENING_TASKS.md`](PRODUCTION_HARDENING_TASKS.md),
 written for a non-technical reader. Numbering matches exactly, so the two can be read
 side by side.
 
-Everything below was found by reviewing Udara while it was already live and handling
+Everything below was found by reviewing Amanda while it was already live and handling
 real customer money.
 
 ---

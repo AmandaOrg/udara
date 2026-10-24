@@ -23,7 +23,11 @@
     "docs:check": "node scripts/check-docs.js",
     "security:check": "node scripts/check-security.js",
     "settings:list": "ts-node -r tsconfig-paths/register src/cli/settings-request-cli.ts",
-    "settings:decide": "ts-node -r tsconfig-paths/register src/cli/settings-request-cli.ts --decide"
+    "settings:decide": "ts-node -r tsconfig-paths/register src/cli/settings-request-cli.ts --decide",
+    "account:request": "ts-node -r tsconfig-paths/register src/cli/account-closure-cli.ts request",
+    "account:close": "ts-node -r tsconfig-paths/register src/cli/account-closure-cli.ts close",
+    "account:decline": "ts-node -r tsconfig-paths/register src/cli/account-closure-cli.ts decline",
+    "account:withdraw": "ts-node -r tsconfig-paths/register src/cli/account-closure-cli.ts withdraw"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
@@ -34,6 +38,7 @@
     "@nestjs/core": "^10.3.0",
     "@nestjs/platform-express": "^10.3.0",
     "@nestjs/schedule": "^4.0.0",
+    "@nestjs/swagger": "~7.4.2",
     "@nestjs/terminus": "^10.3.0",
     "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "^5.10.0",

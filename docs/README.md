@@ -1,6 +1,6 @@
-# Documentation index
+﻿# Documentation index
 
-Canonical home for Udara knowledge that should survive a chat session. Code comments explain *why a line exists*. These files explain *what the product does*, *how the system is shaped*, and *what is in flight*.
+Canonical home for Amanda knowledge that should survive a chat session. Code comments explain *why a line exists*. These files explain *what the product does*, *how the system is shaped*, and *what is in flight*.
 
 ## Ownership map
 
@@ -39,7 +39,7 @@ Three original documents sit in this folder and have been committed since the in
 | [Canonical Onboarding Script](✅-Kedu-Onboarding-Script.pdf) | `prisma/schema.prisma`, onboarding prompts and service |
 | [Character & Tone System Prompt](✅-Kedu-Character-Tone-Prompt.pdf) | `src/ai/prompts/kedu-persona.prompts.ts` |
 
-**Read them for background only. They are stale in places and the code is correct.** They predate the rename to Udara and the current stack — the PRD still describes n8n orchestration and calls the product Kedu. The onboarding script's stage numbering does not match the `OnboardingStage` enum that actually runs.
+**Read them for background only. They are stale in places and the code is correct.** They predate the rename to Amanda and the current stack — the PRD still describes n8n orchestration and calls the product Kedu. The onboarding script's stage numbering does not match the `OnboardingStage` enum that actually runs.
 
 So, concretely:
 

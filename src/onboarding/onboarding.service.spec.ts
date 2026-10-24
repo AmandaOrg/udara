@@ -1,5 +1,7 @@
 import { OnboardingService, isPreAccountStage } from "./onboarding.service";
 import { OnboardingStage, Prisma } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
+import { runInChannel } from "../messaging/channel-context";
 
 /**
  * A tiny in-memory fake for the two models OnboardingService touches. Each
@@ -63,6 +65,13 @@ function createFakePrisma(initialUser: Record<string, unknown>) {
         sessions.set(id, updated);
         return { ...updated };
       }),
+      // Only the KYC token claim uses this: match on id and the token.
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const s = sessions.get(where.id);
+        if (!s || s.kycFlowToken !== where.kycFlowToken) return { count: 0 };
+        sessions.set(where.id, { ...s, ...data });
+        return { count: 1 };
+      }),
     },
     _users: users,
     _sessions: sessions,
@@ -112,11 +121,13 @@ describe("OnboardingService", () => {
     sendFlow: jest.Mock;
   };
   let rubies: { provisionAccount: jest.Mock };
+  let appMessages: { recordOutbound: jest.Mock };
   let service: OnboardingService;
 
   function makeUser(overrides: Record<string, unknown> = {}) {
     return {
       id: "user-1",
+      phoneNumber: "234801",
       whatsappNumber: "234801",
       onboardingStage: OnboardingStage.DISCOVERY,
       name: null,
@@ -155,18 +166,22 @@ describe("OnboardingService", () => {
       sendFlow: jest.fn().mockResolvedValue({ waMessageId: "wamid.4" }),
     };
     rubies = { provisionAccount: jest.fn() };
+    appMessages = { recordOutbound: jest.fn().mockResolvedValue({}) };
   });
 
   function build(user: Record<string, unknown>) {
     prisma = createFakePrisma(user);
     service = new OnboardingService(
       prisma as any,
-      config as any,
       llm as any,
       validator as any,
       llmLogger as any,
-      chunkedMessenger as any,
-      whatsapp as any,
+      whatsappTestMessenger({
+        whatsapp,
+        chunkedMessenger,
+        config,
+        appMessages,
+      }),
       rubies as any,
     );
     return prisma._users.get(user.id as string)!;
@@ -478,11 +493,25 @@ describe("OnboardingService", () => {
      * is what keeps these tests honest about where the handler reads them
      * from.
      */
+    /** Records a KYC form as sent, the way sendKycFlow does, and returns its token. */
+    async function issueForm(target: unknown): Promise<string> {
+      const session = await service.getOrStartSession((target as any).id);
+      await prisma.onboardingSession.update({
+        where: { id: session.id },
+        data: { kycFlowToken: "kyc-token-1" },
+      });
+      return "kyc-token-1";
+    }
+
     async function submitFlow(
       target: unknown,
       overrides: Record<string, unknown> = {},
     ) {
-      const full = flowSubmission(overrides) as Record<string, unknown>;
+      const flow_token = await issueForm(target);
+      const full = {
+        flow_token,
+        ...flowSubmission(overrides),
+      } as Record<string, unknown>;
       const sensitive: Record<string, string> = {};
       for (const key of ["id_number", "date_of_birth"]) {
         const value = full[key];
@@ -499,6 +528,9 @@ describe("OnboardingService", () => {
         makeUser({
           onboardingStage: OnboardingStage.PLAN_PROPOSED,
           name: "Danny O", // deliberately different from the form's legal name below
+          // Different on purpose: Rubies gets the account's phone number, which
+          // an app-only user has without any WhatsApp number.
+          phoneNumber: "2348011112222",
           whatsappNumber: "234801",
         }),
       );
@@ -517,6 +549,7 @@ describe("OnboardingService", () => {
           nin: undefined,
           firstName: "Daniel",
           lastName: "Okafor",
+          phoneNumber: "2348011112222",
           dob: "1998-04-12",
           email: "me@example.com",
         }),
@@ -744,6 +777,192 @@ describe("OnboardingService", () => {
       );
       await submitFlow(user);
       expect(rubies.provisionAccount).not.toHaveBeenCalled();
+    });
+
+    it("records the token of every form it sends, so only that form can submit", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.FREQUENCY_CHECK }),
+      );
+
+      await service.handleInboundButton(user as any, "freq:weekly");
+
+      const [{ flowToken }] = whatsapp.sendFlow.mock.calls[0];
+      const session = await service.getOrStartSession("user-1");
+      expect(flowToken).toEqual(expect.any(String));
+      expect(session.kycFlowToken).toBe(flowToken);
+    });
+
+    /**
+     * The form token used to be generated and never checked, so any KYC reply
+     * was accepted: an old form reopened from chat history, or the same form
+     * submitted twice, went straight to Rubies.
+     */
+    it("rejects a form whose token isn't the one outstanding, and sends a fresh one", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+
+      await submitFlow(user, { flow_token: "an-older-form" });
+
+      expect(rubies.provisionAccount).not.toHaveBeenCalled();
+      expect(whatsapp.sendText).toHaveBeenCalledWith(
+        "234801",
+        expect.stringContaining("expired"),
+        "user-1",
+      );
+      expect(whatsapp.sendFlow).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a form with no token at all", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+
+      await submitFlow(user, { flow_token: undefined });
+
+      expect(rubies.provisionAccount).not.toHaveBeenCalled();
+      expect(whatsapp.sendFlow).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets only one of two simultaneous submissions of the same form reach Rubies", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+      );
+      rubies.provisionAccount.mockResolvedValue({
+        accountId: "CUST-1",
+        accountNumber: "0123456789",
+        accountName: "Daniel Okafor",
+        bankCode: "090175",
+      });
+      const token = await issueForm(user);
+      const submission = () =>
+        service.handleInboundFlowReply(
+          user as any,
+          {
+            ...flowSubmission(),
+            flow_token: token,
+            id_number: "[redacted]",
+            date_of_birth: "[redacted]",
+          },
+          { id_number: "12345678901", date_of_birth: "1998-04-12" },
+        );
+
+      await Promise.all([submission(), submission()]);
+
+      expect(rubies.provisionAccount).toHaveBeenCalledTimes(1);
+    });
+
+    describe("an app-only user with no PIN (ADR-0002)", () => {
+      const appText = () =>
+        appMessages.recordOutbound.mock.calls
+          .map(([, message]) => message.body ?? "")
+          .join(" | ");
+
+      beforeEach(() => {
+        rubies.provisionAccount.mockResolvedValue({
+          accountId: "CUST-1",
+          accountNumber: "0123456789",
+          accountName: "Daniel Okafor",
+          bankCode: "090175",
+        });
+      });
+
+      it("asks for a PIN straight after the account is created, and holds the money-story questions", async () => {
+        const user = build(
+          makeUser({
+            onboardingStage: OnboardingStage.PLAN_PROPOSED,
+            whatsappNumber: null,
+          }),
+        );
+
+        await runInChannel({ channel: "app", deviceId: "d1" }, () =>
+          submitFlow(user),
+        );
+
+        expect(prisma._users.get("user-1")!.onboardingStage).toBe(
+          OnboardingStage.MONEY_STORY,
+        );
+        expect(appText()).toContain("0123456789");
+        expect(appText()).toContain("set the 4-digit pin");
+        expect(appText()).not.toContain("what financial goal");
+        // The WhatsApp line about pinning the chat means nothing in the app.
+        expect(appText()).not.toContain("pin this chat");
+        expect(appText()).toContain("right here in the app");
+        await expect(service.isAwaitingPinSetup("user-1")).resolves.toBe(true);
+      });
+
+      it("carries on with the money-story questions once the PIN is set", async () => {
+        const user = build(
+          makeUser({
+            onboardingStage: OnboardingStage.PLAN_PROPOSED,
+            whatsappNumber: null,
+          }),
+        );
+        await runInChannel({ channel: "app", deviceId: "d1" }, async () => {
+          await submitFlow(user);
+          prisma._users.get("user-1")!.pinHash = "scrypt$...";
+          await service.resumeAfterPinSetup("user-1");
+        });
+
+        expect(appText()).toContain("what financial goal");
+        await expect(service.isAwaitingPinSetup("user-1")).resolves.toBe(false);
+      });
+
+      it("resumes nothing for a user it was not waiting on", async () => {
+        build(makeUser({ onboardingStage: OnboardingStage.MONEY_STORY }));
+
+        await service.resumeAfterPinSetup("user-1");
+
+        expect(chunkedMessenger.sendChunkedReply).not.toHaveBeenCalled();
+        expect(appMessages.recordOutbound).not.toHaveBeenCalled();
+      });
+
+      it("does not hold a WhatsApp user, whose sign-ins WhatsApp can approve", async () => {
+        const user = build(
+          makeUser({ onboardingStage: OnboardingStage.PLAN_PROPOSED }),
+        );
+
+        await submitFlow(user);
+
+        await expect(service.isAwaitingPinSetup("user-1")).resolves.toBe(false);
+        expect(chunkedMessenger.sendChunkedReply).toHaveBeenCalledWith(
+          "234801",
+          expect.stringContaining("what financial goal"),
+          "user-1",
+        );
+      });
+    });
+  });
+
+  describe("startConversation (the app's first open)", () => {
+    it("introduces Udara to someone who has not started", async () => {
+      const user = build(makeUser({ whatsappNumber: null }));
+
+      await runInChannel({ channel: "app", deviceId: "d1" }, () =>
+        service.startConversation(user as any),
+      );
+
+      expect(appMessages.recordOutbound).toHaveBeenCalledWith(
+        "user-1",
+        expect.objectContaining({
+          kind: "BUTTONS",
+          body: "do you understand?",
+        }),
+      );
+      expect(prisma._users.get("user-1")!.onboardingStage).toBe(
+        OnboardingStage.WELCOME,
+      );
+    });
+
+    it("does nothing once the conversation has begun, so reopening the chat is harmless", async () => {
+      const user = build(
+        makeUser({ onboardingStage: OnboardingStage.WELCOME }),
+      );
+
+      await service.startConversation(user as any);
+
+      expect(appMessages.recordOutbound).not.toHaveBeenCalled();
+      expect(whatsapp.sendInteractiveButtons).not.toHaveBeenCalled();
     });
   });
 

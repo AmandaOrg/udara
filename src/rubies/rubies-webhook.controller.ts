@@ -1,11 +1,12 @@
 import { Body, Controller, Logger, Post, Req, UseGuards } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
 import { TransferConfirmationService } from "../whatsapp/transfer-confirmation.service";
 import { BillPaymentConfirmationService } from "../whatsapp/bill-payment-confirmation.service";
 import { AllowanceService } from "../allowance/allowance.service";
 import { EmailNotificationsService } from "../email/email-notifications.service";
 import { displayFirstNameOrThere } from "../common/display-name.util";
+import { Sentry } from "../common/sentry";
 import {
   RubiesSignatureGuard,
   SignatureCheckedRequest,
@@ -51,7 +52,7 @@ export class RubiesWebhookController {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly whatsapp: WhatsappService,
+    private readonly messenger: ChannelMessenger,
     private readonly transferConfirmation: TransferConfirmationService,
     private readonly billPaymentConfirmation: BillPaymentConfirmationService,
     private readonly rubies: RubiesService,
@@ -153,6 +154,16 @@ export class RubiesWebhookController {
       },
     });
 
+    // A closed account (ADR-0003): the credit is a money record, so it is kept
+    // above, but nobody is messaged. Ops must get the money back to the sender
+    // through Rubies, so this pages rather than just logging.
+    if (user.closedAt) {
+      const alert = `Credit to closed account of user ${user.id}, reference=${payload.paymentReference}: ask Rubies to return it`;
+      this.logger.error(alert);
+      Sentry.captureMessage(alert, "error");
+      return;
+    }
+
     // Best-effort, keyed on the Rubies reference so a redelivered webhook
     // can't double-send. Never awaited for its result beyond completion:
     // EmailNotificationsService swallows its own failures.
@@ -178,7 +189,9 @@ export class RubiesWebhookController {
         `daily spending limit: ₦${daily.toLocaleString("en-NG")}\nweekly spending limit: ₦${weekly.toLocaleString("en-NG")}`,
         "spending window opens 11am, closes 8pm. i'll check in with you as you go, let's get started.",
       ].join("\n\n");
-      await this.whatsapp.sendText(user.whatsappNumber, message, user.id);
+      await this.messenger.sendText(user, message, {
+        delivery: "transactional",
+      });
 
       await this.prisma.user.update({
         where: { id: user.id },
@@ -187,10 +200,10 @@ export class RubiesWebhookController {
       return;
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       `We've received ₦${amount.toLocaleString("en-NG")} into your Udara account. It'll be available during your next spending window.`,
-      user.id,
+      { delivery: "transactional" },
     );
   }
 

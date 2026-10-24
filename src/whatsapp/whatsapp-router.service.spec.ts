@@ -1,5 +1,8 @@
 import { WhatsappRouterService } from "./whatsapp-router.service";
-import { OnboardingStage, WhatsappMessageType } from "@prisma/client";
+import { PinOutcomeService } from "./pin-outcome.service";
+import { ConversationRouterService } from "../conversation/conversation-router.service";
+import { OnboardingStage, Prisma, WhatsappMessageType } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 /**
  * Post-onboarding free text always goes through Orchestrator + ActionExecutor.
@@ -7,7 +10,12 @@ import { OnboardingStage, WhatsappMessageType } from "@prisma/client";
  */
 describe("WhatsappRouterService — orchestrator free text", () => {
   let prisma: {
-    user: { findUnique: jest.Mock; update: jest.Mock; create: jest.Mock };
+    user: {
+      findUnique: jest.Mock;
+      update: jest.Mock;
+      create: jest.Mock;
+      updateMany: jest.Mock;
+    };
   };
   let whatsapp: { sendText: jest.Mock; downloadMedia: jest.Mock };
   let onboarding: Record<string, jest.Mock>;
@@ -25,8 +33,10 @@ describe("WhatsappRouterService — orchestrator free text", () => {
   let orchestrator: { handleMessage: jest.Mock };
   let actionExecutor: { execute: jest.Mock; sendSafeFallback: jest.Mock };
   let deepgram: { isConfigured: jest.Mock; transcribe: jest.Mock };
-  let inboundMessages: { updateTextBody: jest.Mock };
+  let inboundMessages: { updateTextBody: jest.Mock; attachUser: jest.Mock };
   let rateLimit: { check: jest.Mock };
+  let loginApproval: { decide: jest.Mock };
+  let turns: { run: jest.Mock };
   let service: WhatsappRouterService;
 
   const user = {
@@ -49,6 +59,7 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         findUnique: jest.fn().mockResolvedValue(user),
         update: jest.fn().mockResolvedValue(user),
         create: jest.fn().mockResolvedValue(user),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
     };
     whatsapp = {
@@ -59,6 +70,8 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       handleInboundText: jest.fn(),
       handleInboundButton: jest.fn(),
       handleInboundFlowReply: jest.fn().mockResolvedValue(undefined),
+      isAwaitingPinSetup: jest.fn().mockResolvedValue(false),
+      resumeAfterPinSetup: jest.fn().mockResolvedValue(undefined),
     };
     transferConfirmation = {
       initiateTransfer: jest.fn(),
@@ -114,7 +127,9 @@ describe("WhatsappRouterService — orchestrator free text", () => {
     };
     inboundMessages = {
       updateTextBody: jest.fn().mockResolvedValue(undefined),
+      attachUser: jest.fn().mockResolvedValue(undefined),
     };
+    loginApproval = { decide: jest.fn().mockResolvedValue(undefined) };
     // Under the limit by default; the throttling tests override it.
     rateLimit = {
       check: jest
@@ -122,9 +137,14 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         .mockResolvedValue({ limited: false, justCrossed: false }),
     };
 
-    service = new WhatsappRouterService(
-      prisma as any,
-      whatsapp as any,
+    // Runs the turn inline. The real TurnService re-reads the user inside the
+    // lease; here the turn gets the user the router's own lookup resolved,
+    // which is what every handler received before the lease existed.
+    turns = { run: jest.fn() };
+    const messenger = whatsappTestMessenger({ whatsapp });
+    // The real conversation router over the same mocks: this spec predates the
+    // extraction and still asserts what WhatsApp input ends up doing.
+    const conversation = new ConversationRouterService(
       onboarding as any,
       transferConfirmation as any,
       billPaymentActions as any,
@@ -134,13 +154,149 @@ describe("WhatsappRouterService — orchestrator free text", () => {
       orchestrator as any,
       actionExecutor as any,
       weeklyReview as any,
+      // Real, over the mocks below, so the PIN tests still assert what runs.
+      new PinOutcomeService(
+        prisma as any,
+        transferConfirmation as any,
+        billPaymentConfirmation as any,
+        onboarding as any,
+        { check: jest.fn() } as any,
+        messenger,
+      ),
+      messenger,
+    );
+    service = new WhatsappRouterService(
+      prisma as any,
+      whatsapp as any,
+      conversation,
+      turns as any,
       deepgram as any,
       inboundMessages as any,
       rateLimit as any,
+      messenger,
+      loginApproval as any,
+    );
+    const findOrCreateUser = jest.spyOn(service as any, "findOrCreateUser");
+    turns.run.mockImplementation(async (_userId, _channel, fn) =>
+      fn(await findOrCreateUser.mock.results.at(-1)!.value),
     );
   });
 
+  describe("who the sender is", () => {
+    const hello = {
+      id: "m1",
+      type: WhatsappMessageType.TEXT,
+      textBody: "hello",
+      fromNumber: "234801",
+    } as any;
+
+    beforeEach(() => {
+      orchestrator.handleMessage.mockResolvedValue({ message: "hi" });
+    });
+
+    it("finds a returning WhatsApp user by their number and records the message time", async () => {
+      await service.route(hello);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { whatsappNumber: "234801" },
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { lastInboundMessageAt: expect.any(Date) },
+      });
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it("creates a new number as a user whose phone number is the WhatsApp id", async () => {
+      prisma.user.findUnique.mockResolvedValueOnce(null);
+
+      await service.route(hello);
+
+      expect(prisma.user.create).toHaveBeenCalledWith({
+        data: {
+          phoneNumber: "234801",
+          whatsappNumber: "234801",
+          lastInboundMessageAt: expect.any(Date),
+        },
+      });
+    });
+
+    /**
+     * Someone who signed up in the app and then messages on WhatsApp is one
+     * person with one set of limits, not a second account.
+     */
+    it("links the first WhatsApp message to the account that already has that phone number", async () => {
+      prisma.user.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(user);
+      prisma.user.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.route(hello);
+
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { phoneNumber: "234801", whatsappNumber: null },
+        data: {
+          whatsappNumber: "234801",
+          lastInboundMessageAt: expect.any(Date),
+        },
+      });
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(orchestrator.handleMessage).toHaveBeenCalledWith(
+        user,
+        "hello",
+        expect.anything(),
+      );
+    });
+
+    it("uses the row a racing request created instead of failing", async () => {
+      prisma.user.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(user);
+      prisma.user.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+          code: "P2002",
+          clientVersion: "5.22.0",
+        }),
+      );
+
+      await service.route(hello);
+
+      expect(orchestrator.handleMessage).toHaveBeenCalledWith(
+        user,
+        "hello",
+        expect.anything(),
+      );
+    });
+  });
+
   describe("inbound rate limit", () => {
+    /**
+     * The cap counts inbound rows by userId, but the row is persisted before
+     * the sender is known. Until the router linked it, every count was zero
+     * and the limit could never trip.
+     */
+    it("links the inbound row to the user before counting", async () => {
+      const order: string[] = [];
+      inboundMessages.attachUser.mockImplementation(async () => {
+        order.push("attach");
+      });
+      rateLimit.check.mockImplementation(async () => {
+        order.push("check");
+        return { limited: false, justCrossed: false };
+      });
+      orchestrator.handleMessage.mockResolvedValue({ message: "hi" });
+
+      await service.route({
+        id: "m1",
+        type: "TEXT",
+        textBody: "hello",
+        fromNumber: "234801",
+      } as any);
+
+      expect(inboundMessages.attachUser).toHaveBeenCalledWith("m1", "user-1");
+      expect(order).toEqual(["attach", "check"]);
+    });
+
     it("drops the message before any handler once the user is over the limit", async () => {
       rateLimit.check.mockResolvedValue({ limited: true, justCrossed: false });
 
@@ -173,6 +329,117 @@ describe("WhatsappRouterService — orchestrator free text", () => {
         expect.any(String),
       );
       expect(orchestrator.handleMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("app sign-in approval buttons", () => {
+    it.each([
+      ["login_approve:challenge-9", true],
+      ["login_deny:challenge-9", false],
+    ])(
+      "hands %s to the approval service for the tapping user",
+      async (payload, approve) => {
+        await service.route({
+          id: "m1",
+          type: WhatsappMessageType.BUTTON_REPLY,
+          fromNumber: "234801",
+          buttonPayload: payload,
+        } as any);
+
+        expect(loginApproval.decide).toHaveBeenCalledWith(
+          user,
+          "challenge-9",
+          approve,
+        );
+      },
+    );
+
+    it("answers them even for a user still in onboarding", async () => {
+      // The router works with the row findOrCreateUser's update returns.
+      prisma.user.update.mockResolvedValueOnce({
+        ...user,
+        onboardingStage: OnboardingStage.IDENTITY,
+      });
+
+      await service.route({
+        id: "m1",
+        type: WhatsappMessageType.BUTTON_REPLY,
+        fromNumber: "234801",
+        buttonPayload: "login_approve:challenge-9",
+      } as any);
+
+      expect(loginApproval.decide).toHaveBeenCalled();
+      expect(onboarding.handleInboundButton).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Approving a sign-in is not a conversation turn. Taken as one, it would
+     * count as switching to WhatsApp and close a wizard the user has open in
+     * the very app they are signing in to.
+     */
+    it("answers them outside a turn", async () => {
+      await service.route({
+        id: "m1",
+        type: WhatsappMessageType.BUTTON_REPLY,
+        fromNumber: "234801",
+        buttonPayload: "login_approve:challenge-9",
+      } as any);
+
+      expect(turns.run).not.toHaveBeenCalled();
+    });
+  });
+
+  it("handles every other message as one WhatsApp turn for that user", async () => {
+    orchestrator.handleMessage.mockResolvedValue({ message: "hi" });
+
+    await service.route(makeMessage("hello"));
+
+    expect(turns.run).toHaveBeenCalledWith(
+      "user-1",
+      "whatsapp",
+      expect.any(Function),
+    );
+  });
+
+  describe("confirm and cancel buttons", () => {
+    function buttonMessage(buttonPayload: string) {
+      return {
+        id: "m1",
+        type: WhatsappMessageType.BUTTON_REPLY,
+        fromNumber: "234801",
+        buttonPayload,
+      } as any;
+    }
+
+    /**
+     * The id inside the payload is scoped to whoever tapped it, so a payload
+     * naming someone else's transaction reads as "not found" downstream.
+     */
+    it("passes the sender's own user id alongside the id in the payload", async () => {
+      transferConfirmation.confirmTransfer = jest.fn();
+      transferConfirmation.cancelTransfer = jest.fn();
+
+      await service.route(buttonMessage("confirm_transfer:txn-9"));
+      await service.route(buttonMessage("cancel_transfer:txn-9"));
+      await service.route(buttonMessage("confirm_bill:bill-9"));
+      await service.route(buttonMessage("cancel_bill:bill-9"));
+
+      expect(transferConfirmation.confirmTransfer).toHaveBeenCalledWith(
+        "user-1",
+        "txn-9",
+      );
+      expect(transferConfirmation.cancelTransfer).toHaveBeenCalledWith(
+        "user-1",
+        "txn-9",
+      );
+      expect(billPaymentConfirmation.confirmBillPayment).toHaveBeenCalledWith(
+        "user-1",
+        "bill-9",
+      );
+      expect(billPaymentConfirmation.cancelBillPayment).toHaveBeenCalledWith(
+        "user-1",
+        "bill-9",
+      );
     });
   });
 

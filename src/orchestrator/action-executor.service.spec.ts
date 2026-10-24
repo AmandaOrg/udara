@@ -1,5 +1,6 @@
 import { ActionExecutorService } from "./action-executor.service";
 import { OnboardingStage } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 describe("ActionExecutorService", () => {
   let chunkedMessenger: { sendChunkedReply: jest.Mock };
@@ -61,11 +62,10 @@ describe("ActionExecutorService", () => {
     };
 
     executor = new ActionExecutorService(
-      chunkedMessenger as any,
+      whatsappTestMessenger({ whatsapp, chunkedMessenger }),
       accountActions as any,
       billPaymentActions as any,
       spendSummary as any,
-      whatsapp as any,
       pinGate as any,
       managerConversation as any,
     );

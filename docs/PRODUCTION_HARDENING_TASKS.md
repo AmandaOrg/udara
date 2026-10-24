@@ -1,6 +1,6 @@
-# Production hardening — task breakdown
+﻿# Production hardening — task breakdown
 
-Work breakdown for the remediation campaign on branch `Udara-codeReview-improvement`
+Work breakdown for the remediation campaign on branch `Amanda-codeReview-improvement`
 (13 commits, `ba81758` → `6bd0f47`), derived from the 2026-09-04 assessment in
 [`PRODUCTION_ASSESSMENT.md`](PRODUCTION_ASSESSMENT.md).
 
@@ -16,7 +16,7 @@ already consent to promise it.
 
 | | |
 | --- | --- |
-| Branch | `Udara-codeReview-improvement` |
+| Branch | `Amanda-codeReview-improvement` |
 | Commits | 13 |
 | Tests | 671 → 773 |
 | Spec files | 48 → 53 |

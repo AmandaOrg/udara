@@ -1,4 +1,4 @@
-# Initiative: production hardening
+﻿# Initiative: production hardening
 
 Companion spec: `docs/specs/PRODUCTION_HARDENING_SPEC.md`
 Companion tech design: `docs/tech-design/PRODUCTION_HARDENING_TECH.md`
@@ -11,7 +11,7 @@ Findings are numbered as in [`docs/PRODUCTION_ASSESSMENT.md`](../../docs/PRODUCT
 
 ## Problem
 
-Udara is live and moving real money. A full assessment of `main @ 0ba5135` on 2026-09-04 found five critical and eight high-severity defects. Two are actively harmful right now: customer PINs and identity numbers are being written to production logs, and a gateway error from Rubies is recorded as a failed transfer even when the debit succeeded.
+Amanda is live and moving real money. A full assessment of `main @ 0ba5135` on 2026-09-04 found five critical and eight high-severity defects. Two are actively harmful right now: customer PINs and identity numbers are being written to production logs, and a gateway error from Rubies is recorded as a failed transfer even when the debit succeeded.
 
 The rest fall into three groups: money-state transitions that are not atomic, so correctness rests on an unverified assumption about Rubies-side idempotency; missing operational basics (no health check, no timeouts, no error tracking, no rate limiting, schedulers that double-fire); and an LLM boundary that lets model-authored digits reach a transfer wizard.
 

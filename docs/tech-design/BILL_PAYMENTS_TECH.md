@@ -1,4 +1,4 @@
-# Bill payments — full implementation (Phase A + B)
+﻿# Bill payments — full implementation (Phase A + B)
 
 **Shipped:** 2026-08-30  
 **Spec:** [../specs/BILL_PAYMENTS_SPEC.md](../specs/BILL_PAYMENTS_SPEC.md)  
@@ -11,7 +11,7 @@ This document is the engineer-facing record of everything built from the first a
 
 ## 1. Summary
 
-Udara can now vend three bill categories from WhatsApp, debiting the same Rubies BaaS wallet used for P2P transfers:
+Amanda can now vend three bill categories from WhatsApp, debiting the same Rubies BaaS wallet used for P2P transfers:
 
 | Category | Entry points | Rubies path |
 | --- | --- | --- |
@@ -120,7 +120,7 @@ flowchart TD
 | Field | Use |
 | --- | --- |
 | `status` | `PENDING_CONFIRMATION` → `PENDING_PIN` → `CONFIRMED` → `EXECUTED` \| `FAILED` \| `CANCELLED` |
-| `requestReference` / `idempotencyKey` | `UDARA-BILL-{uuid}` sent to Rubies as `reference` |
+| `requestReference` / `idempotencyKey` | `Amanda-BILL-{uuid}` sent to Rubies as `reference` |
 | `vendorToken` | Electricity recharge token (shown once to user; not treated as a secret) |
 | `feeAmount`, `type` | From `AllowanceService.evaluateSpend` |
 | `dailyAllowanceId` | Set when spend is recorded |
@@ -224,7 +224,7 @@ All calls use existing `RUBIES_BASE_URL`, `RUBIES_API_KEY`, and stage prefix (sa
 
 ### Idempotency
 
-Each payment gets `requestReference = UDARA-BILL-{uuid}` stored as both `requestReference` and `idempotencyKey`. Rubies webhook matches on this key before calling `queryVasTransaction`.
+Each payment gets `requestReference = Amanda-BILL-{uuid}` stored as both `requestReference` and `idempotencyKey`. Rubies webhook matches on this key before calling `queryVasTransaction`.
 
 ---
 

@@ -3,9 +3,10 @@ import { PrismaService } from "../prisma/prisma.service";
 import { isCancelWord } from "../common/cancel-words.util";
 import { AllowanceService } from "../allowance/allowance.service";
 import { WindowService } from "../allowance/window.service";
+import { describeLimits } from "../allowance/limits-status";
 import { RubiesService } from "../rubies/rubies.service";
 import { TaggingService } from "../tagging/tagging.service";
-import { WhatsappService } from "./whatsapp.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
 import { TransferConfirmationService } from "./transfer-confirmation.service";
 import { BillPaymentActionsService } from "./bill-payment-actions.service";
 import { BillPaymentConfirmationService } from "./bill-payment-confirmation.service";
@@ -80,7 +81,7 @@ export class AccountActionsService {
     private readonly windowService: WindowService,
     private readonly rubies: RubiesService,
     private readonly tagging: TaggingService,
-    private readonly whatsapp: WhatsappService,
+    private readonly messenger: ChannelMessenger,
     private readonly transferConfirmation: TransferConfirmationService,
     private readonly billPaymentActions: BillPaymentActionsService,
     private readonly billPaymentConfirmation: BillPaymentConfirmationService,
@@ -91,9 +92,9 @@ export class AccountActionsService {
   // =========================================================================
 
   async sendMainMenu(user: User): Promise<void> {
-    await this.whatsapp.sendText(user.whatsappNumber, MENU_OVERVIEW, user.id);
-    await this.whatsapp.sendListMessage(
-      user.whatsappNumber,
+    await this.messenger.sendText(user, MENU_OVERVIEW);
+    await this.messenger.sendList(
+      user,
       "what would you like to do?",
       "Open menu",
       [
@@ -105,7 +106,6 @@ export class AccountActionsService {
         { id: MENU_DATA, title: "📶 Buy data" },
         { id: MENU_ELECTRICITY, title: "⚡ Pay electricity" },
       ],
-      user.id,
     );
   }
 
@@ -115,10 +115,9 @@ export class AccountActionsService {
 
   async sendBalance(user: User): Promise<void> {
     if (!user.rubiesAccountNumber) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "you don't have a udara account yet.",
-        user.id,
       );
       return;
     }
@@ -127,63 +126,51 @@ export class AccountActionsService {
       .getBalance(user.rubiesAccountNumber)
       .catch(() => null);
     if (balance === null) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "couldn't reach rubies to check your balance right now, try again in a moment.",
-        user.id,
       );
       return;
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       `account balance: ₦${balance.toLocaleString("en-NG")}`,
-      user.id,
     );
   }
 
   async sendLimitsStatus(user: User): Promise<void> {
-    const { remainingToday, remainingWeek } =
-      await this.allowance.getRemainingSummary(user.id);
+    const status = describeLimits(
+      user,
+      await this.allowance.getRemainingSummary(user.id),
+      this.windowService,
+    );
 
     const lines = [
-      `today's remaining allowance: ₦${remainingToday.toLocaleString("en-NG")}`,
-      `remaining this week: ₦${remainingWeek.toLocaleString("en-NG")}`,
+      `today's remaining allowance: ₦${status.remainingToday.toLocaleString("en-NG")}`,
+      `remaining this week: ₦${status.remainingWeek.toLocaleString("en-NG")}`,
     ];
 
-    if (user.disciplineExitedAt) {
+    if (status.restrictionsOff) {
       lines.push(
         "restrictions are off for your account, the spending window and override fees don't apply.",
       );
-    } else if (
-      this.windowService.isWithinWindow(
-        user.windowStartHour,
-        user.windowEndHour,
-      )
-    ) {
-      lines.push(`spending window is open until ${user.windowEndHour}:00.`);
+    } else if (status.window.open) {
+      lines.push(`spending window is open until ${status.window.endHour}:00.`);
     } else {
-      const hoursUntil = this.windowService.hoursUntilWindowOpens(
-        user.windowStartHour,
-      );
       lines.push(
-        `spending window is closed, opens in about ${hoursUntil}h (${user.windowStartHour}:00).`,
+        `spending window is closed, opens in about ${status.window.opensInHours}h (${status.window.startHour}:00).`,
       );
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
-      lines.join("\n"),
-      user.id,
-    );
+    await this.messenger.sendText(user, lines.join("\n"));
   }
 
   async sendAccountDetails(user: User): Promise<void> {
     if (!user.rubiesAccountNumber) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "you don't have a udara account yet.",
-        user.id,
       );
       return;
     }
@@ -193,11 +180,7 @@ export class AccountActionsService {
       `account name: ${user.rubiesAccountName}`,
       "bank: rubies mfb",
     ];
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
-      lines.join("\n"),
-      user.id,
-    );
+    await this.messenger.sendText(user, lines.join("\n"));
   }
 
   // =========================================================================
@@ -219,10 +202,9 @@ export class AccountActionsService {
     _options?: { recoverFromSession?: boolean },
   ): Promise<void> {
     if (!user.rubiesAccountNumber) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "you don't have a udara account yet, so there's nothing to send from.",
-        user.id,
       );
       return;
     }
@@ -263,10 +245,9 @@ export class AccountActionsService {
   ): Promise<void> {
     const pick = await this.readBeneficiaryPick(user.id);
     if (!pick) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         'that request has expired, say "transfer" to start again.',
-        user.id,
       );
       return;
     }
@@ -275,10 +256,9 @@ export class AccountActionsService {
       where: { id: recipientId, userId: user.id },
     });
     if (!recipient) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "couldn't find that saved recipient, try again.",
-        user.id,
       );
       return;
     }
@@ -303,10 +283,9 @@ export class AccountActionsService {
     hints: TransferWizardHints,
   ): Promise<void> {
     if (!user.rubiesAccountNumber) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "you don't have a udara account yet, so there's nothing to send from.",
-        user.id,
       );
       return;
     }
@@ -463,10 +442,9 @@ export class AccountActionsService {
           },
         });
       }
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `got it, ₦${amount.toLocaleString("en-NG")} to ${accountNumber}. which bank? type the bank name (e.g. gtbank, access, zenith).`,
-        user.id,
       );
       return;
     }
@@ -489,10 +467,9 @@ export class AccountActionsService {
           },
         });
       }
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `got it, ₦${amount.toLocaleString("en-NG")} to ${bankName}. what's the recipient's 10-digit account number?`,
-        user.id,
       );
       return;
     }
@@ -512,10 +489,9 @@ export class AccountActionsService {
           },
         });
       }
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `how much would you like to send to ${accountNumber} at ${bankName}?`,
-        user.id,
       );
       return;
     }
@@ -535,10 +511,9 @@ export class AccountActionsService {
           },
         });
       }
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `how much would you like to send to account ${accountNumber}?`,
-        user.id,
       );
       return;
     }
@@ -562,10 +537,9 @@ export class AccountActionsService {
           },
         });
       }
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `got it, ₦${amount.toLocaleString("en-NG")}. what's the recipient's 10-digit account number?`,
-        user.id,
       );
       return;
     }
@@ -581,11 +555,7 @@ export class AccountActionsService {
       });
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
-      "how much would you like to send?",
-      user.id,
-    );
+    await this.messenger.sendText(user, "how much would you like to send?");
   }
 
   async cancelDraft(
@@ -598,7 +568,7 @@ export class AccountActionsService {
       data: { status: TransferDraftStatus.CANCELLED },
     });
     if (!options?.silent) {
-      await this.whatsapp.sendText(user.whatsappNumber, "cancelled.", user.id);
+      await this.messenger.sendText(user, "cancelled.");
     }
   }
 
@@ -634,10 +604,9 @@ export class AccountActionsService {
         await this.handleBankNameText(user, draft, text);
         return "handled";
       default:
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           'tap one of the options above, or if you\'d rather start over, say "cancel".',
-          user.id,
         );
         return "handled";
     }
@@ -679,21 +648,16 @@ export class AccountActionsService {
             step: TransferDraftStep.AWAITING_PURPOSE_NOTE,
           },
         });
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
-          "got it. what's it for?",
-          user.id,
-        );
+        await this.messenger.sendText(user, "got it. what's it for?");
         return;
       }
       await this.finalizeTransfer(user, draft, label);
       return;
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       "that doesn't match what I asked, let's try again.",
-      user.id,
     );
   }
 
@@ -704,10 +668,9 @@ export class AccountActionsService {
   ): Promise<void> {
     const amount = parseNairaAmount(text);
     if (amount == null) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "that didn't read as an amount. how much do you want to send?",
-        user.id,
       );
       return;
     }
@@ -730,18 +693,16 @@ export class AccountActionsService {
     }
 
     if (draft.accountNumber) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `got it, ₦${amount.toLocaleString("en-NG")} to ${draft.accountNumber}. which bank? type the bank name (e.g. gtbank, access, zenith).`,
-        user.id,
       );
       return;
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       `got it, ₦${amount.toLocaleString("en-NG")}. what's the recipient's 10-digit account number?`,
-      user.id,
     );
   }
 
@@ -752,10 +713,9 @@ export class AccountActionsService {
   ): Promise<void> {
     const accountNumber = text.replace(/\D/g, "");
     if (accountNumber.length !== 10) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "that should be a 10-digit account number, try again.",
-        user.id,
       );
       return;
     }
@@ -798,10 +758,9 @@ export class AccountActionsService {
       where: { id: draft.id },
       data: { step: TransferDraftStep.AWAITING_BANK_SELECTION },
     });
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       "which bank? type the bank name (e.g. gtbank, access, zenith).",
-      user.id,
     );
   }
 
@@ -814,10 +773,9 @@ export class AccountActionsService {
     const result = matchBanks(text, banks);
 
     if (result.kind === "none") {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "couldn't find that bank, try a different spelling, or the exact bank name.",
-        user.id,
       );
       return;
     }
@@ -833,10 +791,9 @@ export class AccountActionsService {
     }
 
     if (result.kind === "too_many") {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `that matches ${result.count} banks, try typing more of the name.`,
-        user.id,
       );
       return;
     }
@@ -845,15 +802,14 @@ export class AccountActionsService {
   }
 
   private async promptBankList(user: User, banks: BankInfo[]): Promise<void> {
-    await this.whatsapp.sendListMessage(
-      user.whatsappNumber,
+    await this.messenger.sendList(
+      user,
       "a few banks match, which one?",
       "Pick a bank",
       banks.map((b) => ({
         id: `${BANK_BUTTON_PREFIX}${b.bankCode}`,
         title: b.bankName.slice(0, 24),
       })),
-      user.id,
     );
   }
 
@@ -894,10 +850,9 @@ export class AccountActionsService {
           bankName: null,
         },
       });
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `couldn't verify that account at ${bankName}, double-check the account number and try again.`,
-        user.id,
       );
       return;
     }
@@ -925,11 +880,7 @@ export class AccountActionsService {
             step: TransferDraftStep.AWAITING_PURPOSE_NOTE,
           },
         });
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
-          "what's this one for?",
-          user.id,
-        );
+        await this.messenger.sendText(user, "what's this one for?");
         return;
       }
       const updated = await this.prisma.transferDraft.update({
@@ -960,10 +911,9 @@ export class AccountActionsService {
           step: TransferDraftStep.AWAITING_PURPOSE_NOTE,
         },
       });
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `found it, ${resolved.accountName}. what's it for?`,
-        user.id,
       );
       return;
     }
@@ -995,12 +945,11 @@ export class AccountActionsService {
         step: TransferDraftStep.AWAITING_LABEL_SELECTION,
       },
     });
-    await this.whatsapp.sendListMessage(
-      user.whatsappNumber,
+    await this.messenger.sendList(
+      user,
       `found it, ${resolved.accountName}. how should I tag this recipient?`,
       "Tag recipient",
       LABEL_ROWS,
-      user.id,
     );
   }
 
@@ -1046,11 +995,7 @@ export class AccountActionsService {
   ): Promise<void> {
     const note = text.trim().slice(0, 200);
     if (note.length < 2) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        "say in a few words what it's for.",
-        user.id,
-      );
+      await this.messenger.sendText(user, "say in a few words what it's for.");
       return;
     }
 
@@ -1075,8 +1020,8 @@ export class AccountActionsService {
     if (recipients.length === 0) return false;
 
     await this.writeBeneficiaryPick(user.id, hints);
-    await this.whatsapp.sendListMessage(
-      user.whatsappNumber,
+    await this.messenger.sendList(
+      user,
       "who are you sending to? pick someone you've paid before, or type a new account number.",
       "Pick recipient",
       recipients.slice(0, 10).map((r) => ({
@@ -1084,7 +1029,6 @@ export class AccountActionsService {
         title: (r.nickname ?? r.accountName ?? r.accountNumber).slice(0, 24),
         description: `${r.accountNumber} · ${r.label.toLowerCase()}`,
       })),
-      user.id,
     );
     return true;
   }
@@ -1121,8 +1065,8 @@ export class AccountActionsService {
     }
 
     await this.writeBeneficiaryPick(user.id, hints);
-    await this.whatsapp.sendListMessage(
-      user.whatsappNumber,
+    await this.messenger.sendList(
+      user,
       `which ${query} did you mean?`,
       "Pick recipient",
       ambiguous.slice(0, 10).map((r) => ({
@@ -1130,7 +1074,6 @@ export class AccountActionsService {
         title: (r.nickname ?? r.accountName ?? r.accountNumber).slice(0, 24),
         description: `${r.accountNumber} · ${r.label.toLowerCase()}`,
       })),
-      user.id,
     );
     return "disambiguation_sent";
   }

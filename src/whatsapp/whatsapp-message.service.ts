@@ -120,6 +120,19 @@ export class WhatsappMessageService {
     }
   }
 
+  /**
+   * recordInboundIfNew runs before the sender is resolved to a User, so the
+   * row is written without a userId. InboundRateLimitService counts inbound
+   * rows by userId, so until this runs the message is invisible to the
+   * per-user cap — which is how the cap went its whole life counting zero.
+   */
+  async attachUser(id: string, userId: string): Promise<void> {
+    await this.prisma.whatsappMessage.update({
+      where: { id },
+      data: { userId },
+    });
+  }
+
   async markProcessed(id: string, status: WhatsappMessageStatus) {
     return this.prisma.whatsappMessage.update({
       where: { id },

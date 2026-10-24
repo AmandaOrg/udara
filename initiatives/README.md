@@ -53,5 +53,6 @@ Do not delete completed folders. Set status `completed` (or `deleted` if abandon
 | [ai-money-intents](ai-money-intents/plan.md) | in progress | [SPEC](../docs/specs/AI_MONEY_INTENTS_SPEC.md) | [TECH](../docs/tech-design/AI_MONEY_INTENTS_TECH.md) |
 | [weekly-review-limit-escape](weekly-review-limit-escape/plan.md) | completed | [SPEC](../docs/specs/WEEKLY_REVIEW_LIMIT_ESCAPE_SPEC.md) | [TECH](../docs/tech-design/WEEKLY_REVIEW_LIMIT_ESCAPE_TECH.md) |
 | [production-hardening](production-hardening/plan.md) | completed | [SPEC](../docs/specs/PRODUCTION_HARDENING_SPEC.md) | [TECH](../docs/tech-design/PRODUCTION_HARDENING_TECH.md) |
+| [mobile-app](mobile-app/plan.md) | in progress | [SPEC](../docs/specs/MOBILE_APP_SPEC.md) | [TECH](../docs/tech-design/MOBILE_APP_TECH.md) |
 
 Update this table whenever you add a folder or change status. `npm run docs:check` enforces registration.

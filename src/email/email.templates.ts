@@ -296,3 +296,87 @@ export function pinResetOtpEmail(params: {
     html: layout("reset your pin", body),
   };
 }
+
+/** For text a user chose (a device name), which must never be read as markup. */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export function newDeviceLoginEmail(params: {
+  name: string | null;
+  deviceName: string | null;
+  platform: string;
+  at: Date;
+}): { subject: string; html: string } {
+  const device = params.deviceName
+    ? `${escapeHtml(params.deviceName)} (${params.platform})`
+    : `a new ${params.platform} phone`;
+  const when = params.at.toLocaleString("en-NG", {
+    timeZone: "Africa/Lagos",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  const body = [
+    paragraph(
+      `hey ${escapeHtml(firstNameOf(params.name))}, your udara account was just opened in the app on ${device}, ${when}.`,
+    ),
+    paragraph(`if that was you, there's nothing to do.`),
+    paragraph(
+      `<strong>if it wasn't, someone has been receiving your sms codes.</strong> reply to this email right away so we can lock the account, and don't share any code you're sent.`,
+    ),
+  ].join("");
+
+  return {
+    subject: "Your Udara account was opened on a new phone",
+    html: layout("new phone signed in", body),
+  };
+}
+
+/** The email-address check: a code to enter in the app. */
+export function emailVerificationEmail(params: {
+  name: string | null;
+  code: string;
+  expiresInMinutes: number;
+}): { subject: string; html: string } {
+  const body = [
+    paragraph(
+      `hey ${escapeHtml(firstNameOf(params.name))}, here's the code to confirm this is your email address for udara.`,
+    ),
+    `<div style="margin:0 0 18px;padding:18px;background:#f2f7f4;border-radius:10px;text-align:center;">
+      <div style="font-size:32px;font-weight:700;letter-spacing:.22em;color:${BRAND};">${params.code}</div>
+      <div style="margin-top:6px;font-size:13px;color:${MUTED};">expires in ${params.expiresInMinutes} minutes</div>
+    </div>`,
+    paragraph(`enter it in the udara app.`),
+    paragraph(
+      `if you didn't ask for this, ignore this email. nothing changes without the code, and no one from udara will ever ask you for it.`,
+    ),
+  ].join("");
+
+  return {
+    subject: `${params.code} is your Udara email code`,
+    html: layout("confirm your email", body),
+  };
+}
+
+/**
+ * Account closure notices (ADR-0003). The sentences are the chat's, from
+ * account-closure/closure-copy.ts, so the email and the chat never disagree;
+ * they are escaped because a declined closure carries an operator's words.
+ */
+export function accountNoticeEmail(params: {
+  name: string | null;
+  subject: string;
+  heading: string;
+  paragraphs: string[];
+}): { subject: string; html: string } {
+  const body = [
+    paragraph(`hey ${escapeHtml(firstNameOf(params.name))},`),
+    ...params.paragraphs.map((text) => paragraph(escapeHtml(text))),
+  ].join("");
+  return { subject: params.subject, html: layout(params.heading, body) };
+}

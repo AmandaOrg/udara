@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 How inbound events become outbound WhatsApp messages and database writes.
 
@@ -27,10 +27,15 @@ src/
   onboarding/      Stage machine
   tagging/         Recipient tags
   manager/         SettingsChangeRequest gate + delayed conversation
+  account-closure/ Closing an account: what is kept and what is erased (ADR-0003), run from the ops CLI
   rubies/          RubiesService + webhook controller
   ai/              Provider clients + persona/onboarding prompts
   orchestrator/    OrchestratorService, ActionValidator, surface registry, evals
-  whatsapp/        Webhook, router, wizards, PIN gate, ActionExecutor
+  messaging/       ChannelMessenger (the only way to send), channel context, WhatsApp and app adapters, app message store
+  conversation/    ConversationRouterService (what a message does, either channel), TurnService (one turn per user)
+  app-auth/        App sign-in: SMS codes, sessions, new-device step-up and cap (always loaded)
+  app-api/         Mobile app HTTP API under /v1 (loaded only when APP_API_ENABLED=true): auth, me, chat, forms, devices, the read-only screens (balance, limits, account, history, recipients, banks, name enquiry, spend summary, bill catalog, app config), native transfers and bills, and account and compliance (devices, settings requests, email check, terms, closure requests)
+  whatsapp/        Webhook, WhatsApp router, wizards, PIN gate, ActionExecutor; transport module
   pin/             PIN challenge/verify
   cli/             Dry-run CLI (no WhatsApp/Rubies)
   common/
@@ -48,8 +53,13 @@ initiatives/       Living execution plans
 flowchart TD
   WA[WhatsApp webhook] --> Sig[Signature guard]
   Sig --> Persist[Persist inbound WhatsappMessage]
-  Persist --> Router[WhatsappRouterService]
-  Router --> Structured[Buttons lists Flows PIN]
+  Persist --> WaRouter[WhatsappRouterService: user, rate limit, media]
+  App[App /v1/chat and /v1/forms] --> AppPersist[Persist inbound AppMessage, 202]
+  AppPersist --> AppSvc[AppConversationService, background]
+  WaRouter --> Turn[TurnService: one turn per user]
+  AppSvc --> Turn
+  Turn --> Router[ConversationRouterService]
+  Router --> Structured[Buttons lists forms PIN]
   Router --> Onboard[Onboarding if pre-account]
   Router --> Menu[Menu shortcut]
   Router --> Orch[OrchestratorService]
@@ -63,17 +73,58 @@ flowchart TD
 
 ### Deterministic money path
 
-Confirm / cancel buttons and the transfer wizard never wait on the LLM. `ActionExecutorService` lives in `WhatsappModule` because it needs WhatsApp send + account services. `OrchestratorModule` must stay free of outbound send dependencies.
+Confirm / cancel buttons and the transfer wizard never wait on the LLM. Confirm and cancel look the row up scoped to the sender's `userId`, never by id alone. After a PIN is verified, `PinOutcomeService` is the single place that turns the outcome into execution (S17).
+
+The decisions and their rendering are separate. `TransferConfirmationService.createQuote` and `evaluateConfirm` return what was decided, and `initiateTransfer` and `confirmTransfer` render it as the chat's cards and messages. The app's send screens (`app-api/transfers/`, `NativeTransferService`) call the same two and return the decision as JSON; the PIN goes through `PinGateService.authorizeTransfer`, the same check as the chat's PIN form. `BillPaymentConfirmationService` is split the same way, for the app's bill screens (`app-api/bills/`, `NativeBillService`, `authorizeBillPayment`); there the server builds the purchase from the catalog, and checks an electricity meter with Rubies, rather than taking codes, prices or names from the request. A payment records where it was quoted (`originSurface`): the chat never confirms, resumes or cancels a native quote, and the native routes never act on a chat one. `ActionExecutorService` lives in `WhatsappModule` because it needs the messenger and account services. `OrchestratorModule` must stay free of outbound send dependencies.
+
+### Sending
+
+Domain code never calls `WhatsappService`. It sends through `ChannelMessenger` (`src/messaging/`), addressed by `User`, and the messenger picks the channel:
+
+- **Inside an inbound event:** the entry point opens a channel context (`runInChannel`, AsyncLocalStorage), and everything sent while handling it is a reply on that channel. `WhatsappController` does this per message.
+- **Outside one** (crons, the Rubies webhook, reconciliation, CLIs): the call site labels the send `proactive` or `transactional`, and `decideDelivery` (`messaging/delivery-policy.ts`) chooses:
+  - a payment's result goes to the channel it was quoted on (`originChannel`);
+  - everything else goes to the channel the user last used;
+  - WhatsApp is used only inside Meta's 24-hour window, unless the user has no app to fall back to.
+
+  Exactly one channel alerts: a WhatsApp message, silently copied into the app chat for app users, or an app message with an Expo push (`PushService`). An unlabelled send with no context is logged as a wiring bug.
+- **Pinned** (`channel` in the send options): that channel regardless. Sign-in approvals and new-device warnings are pinned to WhatsApp (S14).
+
+`AppChannelAdapter` writes one `AppMessage` row per bubble (text, buttons, list, form request), which the app reads by polling `GET /v1/chat/messages`.
+
+`WhatsappChannelAdapter` turns the messenger's calls into exactly the `WhatsappService` / `ChunkedMessengerService` calls the services used to make themselves, and owns the WhatsApp Flow ids for the KYC and PIN forms. `WhatsappTransportModule` holds the Cloud API services and depends on no domain module.
+
+### Mobile app API
+
+`AppApiModule` (`src/app-api/`) is imported by `AppModule` only when `APP_API_ENABLED=true`. Its `AppAuthGuard` is global and denies every controller mounted under `v1` without a live session unless the handler is `@Public()` (S14); it decides by the declared controller path, not the request URL. Sign-in lives in `AppAuthModule` (`src/app-auth/`), which is always loaded because the WhatsApp router answers sign-in approval buttons. The global throttler (`AppThrottlerGuard`) counts per session when a bearer token is present and per client address otherwise; `main.ts` trusts one proxy hop.
+
+The read-only routes take the user from the session and nothing else. History (`TransactionHistoryService`) merges `Transaction`, `BillPayment` and `IncomingCredit` newest first behind an opaque cursor. Name enquiry is limited per user in the database (`NameEnquiryLog`), because the in-memory throttler resets on token refresh and restart; any other route that reveals an account holder's name (a native quote to a new recipient) spends from the same budget. Response shapes are `*.view.ts` classes; the `@nestjs/swagger` CLI plugin reads them and the DTOs at build time, and `APP_API_DOCS=true` serves the document at `/docs` (local only; outside `AppAuthGuard`).
+
+Account and compliance (P9):
+- A phone is signed out by revoking its `Device` and its sessions; `SessionService` refuses a revoked device on the next request.
+- Settings requests from the app go through `ManagerConversationService.fileChangeRequest`, like the chat's.
+- The email check stores only an HMAC of the code, bound to the user and the address.
+- A closure is asked for in the app (`/v1/account/deletion`) and carried out by an operator with `npm run account:close`. `AccountClosureService` (`src/account-closure/`) keeps the records [ADR-0003](decisions/0003-account-closure-and-retention.md) requires and erases the rest, in one transaction under the turn lease.
+- A closed account (`User.closedAt`) has its `phoneNumber` replaced by `closed:<id>`, so the number can start a new account.
+- The delivery policy has no plan for a closed account, so nothing is sent to it. The schedulers skip it. A credit to its old account number is recorded and alerts ops.
+
+### One conversation, two channels
+
+A WhatsApp message and an app chat message end up in the same place: `ConversationRouterService`, run inside `TurnService.run(userId, channel, …)`. The turn is a lease row (`UserTurnLease`), so one user's turns never interleave, across channels and replicas. The row also records the channel of the last turn; when a turn arrives on the other channel, open wizards and waits are expired, so a WhatsApp wizard cannot swallow a number typed in the app. The app's chat and forms are accepted with 202 and handled in the background (`AppConversationService`). Choices must name a message that offered them to the same user. Form values reach the handlers only in memory. The inbound rate limit counts both channels together.
 
 ### Circular Nest imports
 
-`forwardRef` is used between `WhatsappModule` and `AllowanceModule`, `RubiesModule`, `OnboardingModule`, and `ManagerModule` (schedulers and webhooks need `WhatsappService`).
+`RubiesModule` and `WhatsappModule` still import each other (the Rubies webhook applies transfer and bill results), as do `AllowanceModule` and `EmailModule`. Onboarding, Manager and Allowance send through `MessagingModule` and no longer import `WhatsappModule`; `WhatsappModule` keeps `forwardRef` on them only because their files still reach it through `RubiesModule`.
 
 ## Data model (high level)
 
 Prisma models (see [`prisma/schema.prisma`](../prisma/schema.prisma)): `User`, `DailyAllowance`, `Recipient`, `Transaction`, `OverrideHistory`, `SettingsChangeRequest`, onboarding/conversation sessions, `TransferDraft`, `WhatsappMessage`, PIN challenges, Rubies webhook receipts, LLM call logs, nudges.
 
-`TransferDraft` is the interactive send-money wizard. `ConversationSession` is chat history for the Udara (`KEDU`) and manager personas. Do not merge them.
+A `User` is identified by `phoneNumber` (international digits, no "+"; see `common/phone.util.ts`). `whatsappNumber` is set only once that number has messaged on WhatsApp, and `findOrCreateUser` links a first WhatsApp message to an existing account with the same phone number.
+
+`AppMessage` is the in-app chat, both directions, ordered by `seq`. `UserTurnLease` is the per-user turn lock and last channel. App sign-in has `AuthOtp`, `Device`, `AppSession` and `LoginChallenge`. `NameEnquiryLog` counts the app's account-name lookups per user, and deliberately holds no account number. `EmailVerification` holds email-check codes as HMACs. `User.emailVerifiedAt`, `closedAt` and `closedPhoneNumber` record a checked address and a closed account; `SettingsChangeType.ACCOUNT_DELETION` and `SettingsChangeStatus.WITHDRAWN` are the closure request and a request taken back. `Transaction.originSurface` and `BillPayment.originSurface` (`CHAT` or `NATIVE`) say which surface quoted a payment, and `clientRequestKey` holds the app's `Idempotency-Key`, unique per user.
+
+`TransferDraft` is the interactive send-money wizard. `ConversationSession` is chat history for the Amanda (`KEDU`) and manager personas. Do not merge them.
 
 ## Integrations
 
@@ -87,6 +138,8 @@ Prisma models (see [`prisma/schema.prisma`](../prisma/schema.prisma)): `User`, `
 ## CLI
 
 [`src/cli/`](../src/cli/) boots a stub Prisma + orchestrator for golden dialogues and fixtures. It must not call Meta or Rubies.
+
+The ops CLIs are different. These are `settings:list`, `settings:decide`, `account:request`, `account:close`, `account:decline` and `account:withdraw`. They boot the full `AppModule` with the schedulers off, against whatever database `DATABASE_URL` names. See [DEVELOPMENT.md](DEVELOPMENT.md#ops-clis).
 
 ## Operational safety
 
@@ -104,5 +157,5 @@ Schedulers are not leader-elected. Correctness comes from the claims above, so a
 
 ## Known structural notes
 
-- Package name `kedu` vs product name Udara.
+- Package name `kedu` vs product name Amanda.
 - CI does not run e2e or live LLM tests. The golden dialogues do run, under jest.

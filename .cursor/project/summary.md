@@ -1,12 +1,12 @@
-# Udara project summary
+﻿# Amanda project summary
 
-Last updated: 2026-09-02
+Last updated: 2026-09-25
 
 Quick orientation for agents. Full behavior: `docs/PRODUCT_BEHAVIOR.md`. Full flow: `docs/ARCHITECTURE.md`. Working rules: `AGENTS.md`.
 
 ## 1. Product
 
-WhatsApp savings agent on a Rubies wallet. Enforces WAT spending window, confirm-before-send, PIN via Flows, daily/weekly allowance with early-access/borrow fees. User-facing name **Udara**; npm package `kedu`.
+WhatsApp savings agent on a Rubies wallet. Enforces WAT spending window, confirm-before-send, PIN via Flows, daily/weekly allowance with early-access/borrow fees. User-facing name **Amanda**; npm package `kedu`.
 
 ## 2. Stack
 
@@ -22,27 +22,32 @@ NestJS 10, Prisma 5, PostgreSQL 16 (host port 5433), Jest (`src/**/*.spec.ts`), 
 | `src/onboarding` | Stage machine |
 | `src/tagging` | Recipient tags |
 | `src/manager` | Settings-change gate + delayed persona |
+| `src/account-closure` | Closing an account: kept vs erased (ADR-0003), from the ops CLI |
 | `src/rubies` | BaaS + VAS purchase/query + inbound webhook |
 | `src/ai` | LLM providers + persona prompts |
 | `src/orchestrator` | propose_turn + validator + surfaces (no send) |
-| `src/whatsapp` | Webhook, router, transfer wizard, bill-pay wizard, PIN gate, ActionExecutor |
+| `src/messaging` | `ChannelMessenger`: the only way to send; channel context; WhatsApp and app adapters; `AppMessage` store; delivery policy; Expo push |
+| `src/conversation` | `ConversationRouterService` (routing for both channels), `TurnService` (per-user turn lease, channel-switch expiry) |
+| `src/app-auth` | App sign-in: SMS codes (Termii), sessions, new-device step-up, new-device transfer cap |
+| `src/app-api` | Mobile app `/v1` API (auth, me, chat, forms, devices, read-only screens, native transfers and bills, settings requests, email check, terms, closure requests), deny-by-default guard; only with `APP_API_ENABLED=true`; OpenAPI at `/docs` with `APP_API_DOCS=true` |
+| `src/whatsapp` | Webhook, router, transfer wizard, bill-pay wizard, PIN gate, ActionExecutor; `WhatsappTransportModule` (Cloud API) |
 | `src/pin` | PIN challenge/verify |
-| `src/cli` | Dry-run golden/fixture runner |
+| `src/cli` | Dry-run golden/fixture runner; ops CLIs (`settings:*`, `account:*`) |
 | `src/common` | WAT, bank match, display name |
 
-`AppModule` imports Prisma, config, schedule, Rubies, Allowance, Tagging, Onboarding, Manager, Whatsapp (last). AI + Orchestrator come in via WhatsappModule. Circular `forwardRef` with Allowance, Rubies, Onboarding, Manager.
+`AppModule` imports Prisma, config, schedule, Rubies, Allowance, Tagging, Onboarding, Manager, Whatsapp (last). AI + Orchestrator come in via WhatsappModule. Domain modules send via `MessagingModule`; the remaining circulars are Whatsapp↔Rubies and Allowance↔Email.
 
 ## 4. Routing
 
-Structured payloads → deterministic handlers. Pre-account text (and transcribed voice) → onboarding. Menu shortcuts → list. Weekly-review `AWAITING_LIMIT` intercepts only a parseable amount (or cancel words); other text abandons the wait and continues. Post-onboarding text, transcripts, and images → orchestrator.
+Both channels route through `ConversationRouterService` inside `TurnService.run`. Structured payloads → deterministic handlers. Pre-account text (and transcribed voice) → onboarding. Menu shortcuts → list. Weekly-review `AWAITING_LIMIT` intercepts only a parseable amount (or cancel words); other text abandons the wait and continues. Post-onboarding text, transcripts, and images → orchestrator.
 
 Surfaces: `balance_read`, `limits_read`, `account_details`, `transfer_wizard`, `bill_payment_wizard`, `data_bundle_wizard`, `electricity_wizard`, `spending_menu`, `spend_summary`.
 
 ## 5. Data (Prisma)
 
-User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel), BillPaymentDraft, BillPayment, OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WeeklyReview, WhatsappMessage, PIN challenge, Rubies webhook log, LLM call log, nudges.
+User, DailyAllowance, Recipient (nickname, lastUsedAt), Transaction (purposeLabel, originChannel, originSurface, clientRequestKey), BillPaymentDraft, BillPayment (originChannel, originSurface, clientRequestKey), OverrideHistory, SettingsChangeRequest, onboarding/conversation sessions, TransferDraft, WeeklyReview, WhatsappMessage, AppMessage, UserTurnLease, AuthOtp, Device, AppSession, LoginChallenge, NameEnquiryLog, EmailVerification, PIN challenge, Rubies webhook log, LLM call log, nudges.
 
-`TransferDraft` ≠ `ConversationSession`. Persona enum still `KEDU` | `MANAGER`. Session `contextData.spendCheck` holds pending send hints during the pre-wizard spend check.
+Identity is `User.phoneNumber`; `whatsappNumber` is nullable (set on first WhatsApp contact). A closed account (`closedAt`) has `phoneNumber` = `closed:<id>`, its number kept in `closedPhoneNumber` (ADR-0003). `TransferDraft` ≠ `ConversationSession`. Persona enum still `KEDU` | `MANAGER`. Session `contextData.spendCheck` holds pending send hints during the pre-wizard spend check.
 
 ## 6. Integrations
 

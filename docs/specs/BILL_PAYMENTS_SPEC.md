@@ -1,4 +1,4 @@
-# Bill payments
+﻿# Bill payments
 
 **Status:** Phase A + B shipped in code (2026-08-30)  
 Initiative: [initiatives/bill-payments/plan.md](../../initiatives/bill-payments/plan.md)  
@@ -6,7 +6,7 @@ Tech design: [../tech-design/BILL_PAYMENTS_TECH.md](../tech-design/BILL_PAYMENTS
 
 ## Problem
 
-Users want airtime, mobile data, and prepaid electricity from Udara without leaving WhatsApp.
+Users want airtime, mobile data, and prepaid electricity from Amanda without leaving WhatsApp.
 
 ## Goals
 

@@ -1,5 +1,6 @@
 import { AllowanceScheduler } from "./allowance.scheduler";
 import { NudgeType, Prisma } from "@prisma/client";
+import { whatsappTestMessenger } from "../messaging/testing/whatsapp-test-messenger";
 
 describe("AllowanceScheduler", () => {
   let prisma: {
@@ -11,6 +12,7 @@ describe("AllowanceScheduler", () => {
   let allowance: { getOrCreateTodayAllowance: jest.Mock };
   let whatsapp: { sendText: jest.Mock; sendTemplate: jest.Mock };
   let config: { get: jest.Mock };
+  let appMessages: { recordOutbound: jest.Mock };
   let emailNotifications: { sendWindowOpen: jest.Mock };
   let scheduler: AllowanceScheduler;
 
@@ -47,10 +49,11 @@ describe("AllowanceScheduler", () => {
       sendWindowOpen: jest.fn().mockResolvedValue(undefined),
     };
     config = { get: jest.fn().mockReturnValue(undefined) };
+    appMessages = { recordOutbound: jest.fn().mockResolvedValue({}) };
     scheduler = new AllowanceScheduler(
       prisma as any,
       allowance as any,
-      whatsapp as any,
+      whatsappTestMessenger({ whatsapp, appMessages }),
       config as any,
       emailNotifications as any,
     );
@@ -73,6 +76,7 @@ describe("AllowanceScheduler", () => {
         expect.objectContaining({
           where: expect.objectContaining({
             rubiesAccountNumber: { not: null },
+            closedAt: null,
           }),
         }),
       );
@@ -101,6 +105,33 @@ describe("AllowanceScheduler", () => {
       expect(prisma.user.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ windowStartHour: 11 }),
+        }),
+      );
+    });
+
+    /**
+     * The delivery policy says where a proactive message goes. In the app
+     * there is no 24-hour window and no template: it is plain text, and the
+     * messenger adds the push.
+     */
+    it("sends it into the app, as plain text, when the policy says the app", async () => {
+      config.get.mockReturnValue("udara_window_open");
+      const user = makeUser({
+        whatsappNumber: null,
+        lastInboundMessageAt: null,
+      });
+      prisma.user.findMany.mockResolvedValue([user]);
+
+      await scheduler.sendWindowOpenNudges();
+
+      expect(appMessages.recordOutbound).toHaveBeenCalledWith("user-1", {
+        kind: "TEXT",
+        body: expect.stringContaining("unlocked"),
+      });
+      expect(whatsapp.sendTemplate).not.toHaveBeenCalled();
+      expect(prisma.nudgeLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ channel: "app" }),
         }),
       );
     });
@@ -232,6 +263,8 @@ describe("AllowanceScheduler", () => {
       const { gte, lte } = call.where.onboardingCompletedAt;
       expect(lte.getTime() - gte.getTime()).toBe(60 * 60 * 1000); // exactly a 1h window
       expect(Date.now() - lte.getTime()).toBeCloseTo(10 * 60 * 60 * 1000, -3);
+      // A closed account is never sent anything (ADR-0003).
+      expect(call.where.closedAt).toBeNull();
     });
 
     it("sends once and logs it via NudgeLog, with no daily-style sentAt bound (once ever)", async () => {

@@ -1,4 +1,4 @@
-# Development
+﻿# Development
 
 ## Prerequisites
 
@@ -43,6 +43,20 @@ ALLOW_UNSIGNED_WEBHOOKS=true
 
 `SENTRY_DSN` turns on error reporting; unset, unhandled errors reach the log stream only. Request bodies, headers and cookies are stripped before send.
 
+`APP_API_ENABLED=true` loads the mobile app's `/v1` API; without it those routes do not exist. Once it is on, boot requires `OTP_PEPPER` (32+ characters) and, unless `SMS_DRY_RUN=true`, `TERMII_API_KEY` and `TERMII_SENDER_ID`. See `.env.example` and [ADR-0002](decisions/0002-app-channel-and-auth.md). `PUSH_DRY_RUN=true` sends no push notifications (local and e2e); `EXPO_ACCESS_TOKEN` is needed only if push security is on for the Expo project. `NEW_DEVICE_TRANSFER_CAP` (naira, default 20000) is what a phone signed in less than 24 hours ago may send in total; it applies to PINs entered in the app. `APP_MIN_SUPPORTED_VERSION` (`x.y.z`, optional) is what `GET /v1/app-config` tells older apps, so they show an update screen.
+
+`APP_API_DOCS=true` serves the app API's OpenAPI document: the UI at `/docs` and the JSON at `/docs-json`, for building the app or generating a typed client against a local server. Those routes are outside `/v1` and unauthenticated, so never set it in a deployed environment. The document is built from the DTOs and `*.view.ts` classes by the `@nestjs/swagger` CLI plugin (`nest-cli.json`), so it only reflects a `nest build`; `ts-node` and jest do not run the plugin.
+
+**Local runs and the hosted database.** If your `.env` points `DATABASE_URL` at a hosted database, override it on the command line for every local server, migration and e2e run. The e2e runner falls back to `.env`'s `DATABASE_URL` too:
+
+```
+DATABASE_URL=postgresql://kedu:kedu@localhost:5433/kedu \
+E2E_DATABASE_URL=postgresql://kedu:kedu@localhost:5433/kedu \
+SENTRY_DSN= RESEND_API_KEY= E2E_ORCHESTRATOR_LIVE=0 npm run e2e
+```
+
+The app scenarios (`e2e/scenarios/app/`) need the server started with `APP_API_ENABLED=true SMS_DRY_RUN=true PUSH_DRY_RUN=true OTP_PEPPER=<value>`, and the same `OTP_PEPPER` in the runner's environment: the runner cannot read an SMS, so it replaces the stored code digest with one for a code it knows. Also start the server with `DEEPGRAM_API_KEY=` blank: media download is not dry-run, so with a key the audio scenario fetches from Meta for real and fails.
+
 `DISABLE_SCHEDULERS=true` stops every `@Cron` from registering. The CLI tools set it themselves, because they boot the whole `AppModule` to reach its providers and would otherwise turn the machine running them into a second replica. Never set it on the server.
 
 ## Database connections
@@ -53,7 +67,7 @@ Set `connection_limit` on `DATABASE_URL` in every deployed environment, for exam
 
 `GET /health` reports database reachability and is the only non-webhook route. Point the platform's health check at it: without one, a container that boots but cannot reach Postgres stays in the rotation and silently drops every message it acks.
 
-Inbound voice notes need `DEEPGRAM_API_KEY` on the **same process that receives the WhatsApp webhook** (local `.env` does not apply to Railway). Optional `DEEPGRAM_STT_MODEL` defaults to `nova-3`. Without the key, Udara asks the user to type. `WHATSAPP_DRY_RUN=true` still skips outbound Graph sends; inbound media download still runs so voice and photos can be understood.
+Inbound voice notes need `DEEPGRAM_API_KEY` on the **same process that receives the WhatsApp webhook** (local `.env` does not apply to Railway). Optional `DEEPGRAM_STT_MODEL` defaults to `nova-3`. Without the key, Amanda asks the user to type. `WHATSAPP_DRY_RUN=true` still skips outbound Graph sends; inbound media download still runs so voice and photos can be understood.
 
 ## Migrations
 
@@ -93,11 +107,33 @@ A repo-wide `npx eslint` still reports roughly 800 `prettier/prettier` findings.
 Security and documentation gates:
 
 ```bash
-npm run security:check   # S1-S12 invariants, secret scan, redaction sync
+npm run security:check   # S1-S18 invariants, secret scan, redaction sync
 npm run docs:check       # docs structure and links
 ```
 
 Both run in CI before lint. See [SECURITY.md](SECURITY.md).
+
+## Ops CLIs
+
+The following commands act on whatever database `DATABASE_URL` names, and `.env` may point at a hosted one. Check before running anything that writes.
+
+```bash
+npm run settings:list                                        # open requests; a closure shows when it is due
+npm run settings:decide -- --id <id> --approve|--reject [--notes "..."]
+npm run account:request -- --user <userId> [--reason "..."]  # someone asked by chat or email
+npm run account:close -- --id <requestId>                    # dry run: what is in the way, what is kept and erased
+npm run account:close -- --id <requestId> --confirm [--residual-handled] [--notes "..."]
+npm run account:decline -- --id <requestId> --notes "why it cannot be closed yet"
+npm run account:withdraw -- --id <requestId>                 # the user changed their mind another way
+```
+
+Closing an account ([ADR-0003](decisions/0003-account-closure-and-retention.md)):
+1. **Requests filed for someone.** Only after checking it is them: the request came from the account's own WhatsApp number or email address.
+2. **After the request is eligible** (7 days), run the dry run. Money in the account blocks closing: ask the user to move it out. A small amount that cannot be moved is arranged with Rubies first, then the closure is run with `--residual-handled`.
+3. **Close with `--confirm`** within 30 days of the request. It cannot be undone. The user is told by chat and email before anything is erased.
+4. **Ask Rubies to close the bank account.** The CLI prints the account number and customer id.
+5. **A credit to a closed account** raises a Sentry error with the payment reference. Get the money returned to the sender through Rubies.
+6. **When a regulator or court asks for records to be held,** do not close. Decline with the reason instead (`account:decline`), and keep the records until the hold ends.
 
 ## Transactional email (Resend)
 
@@ -108,18 +144,18 @@ Monthly summaries and other mail go through [Resend](https://resend.com). Inbox 
 | Variable | Example | Notes |
 | --- | --- | --- |
 | `RESEND_API_KEY` | `re_…` | Resend dashboard |
-| `RESEND_FROM_ADDRESS` | `Udara <noreply@useudara.com>` | Must use a **verified** domain in Resend |
-| `RESEND_REPLY_TO` | `hello@useudara.com` | Optional; improves trust (real reply address) |
+| `RESEND_FROM_ADDRESS` | `Amanda <noreply@useAmanda.com>` | Must use a **verified** domain in Resend |
+| `RESEND_REPLY_TO` | `hello@useAmanda.com` | Optional; improves trust (real reply address) |
 
-Do not use `@udara.ng` or other unverified domains — Resend returns 403 and mail is more likely to spam.
+Do not use `@Amanda.ng` or other unverified domains — Resend returns 403 and mail is more likely to spam.
 
-### DNS checklist (Resend → Domains → useudara.com)
+### DNS checklist (Resend → Domains → useAmanda.com)
 
 Add every record Resend shows until status is **Verified**:
 
 1. **SPF** — TXT on `@` or the sending subdomain Resend assigns
 2. **DKIM** — CNAME/TXT Resend provides
-3. **DMARC** — TXT on `_dmarc.useudara.com`, e.g. `v=DMARC1; p=none; rua=mailto:hello@useudara.com` (tighten `p=` later)
+3. **DMARC** — TXT on `_dmarc.useAmanda.com`, e.g. `v=DMARC1; p=none; rua=mailto:hello@useAmanda.com` (tighten `p=` later)
 
 After DNS propagates, send a test from Resend’s dashboard to Gmail and confirm **SPF pass**, **DKIM pass**, **DMARC pass** in “Show original”.
 
@@ -134,7 +170,7 @@ After DNS propagates, send a test from Resend’s dashboard to Gmail and confirm
 
 1. Mark one message **Not spam** in Gmail (helps sender reputation for that user).
 2. Confirm Resend domain is fully verified (not “pending”).
-3. Avoid changing the From address often; keep `noreply@useudara.com` stable.
+3. Avoid changing the From address often; keep `noreply@useAmanda.com` stable.
 4. Ops resend: `npm run email:resend-monthly -- --user-id <uuid> --dedupe-suffix corrected-aug-2026`
 
 ## Conventions

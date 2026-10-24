@@ -1,4 +1,4 @@
-# Initiative: spend check before send
+﻿# Initiative: spend check before send
 
 Companion spec: [docs/specs/SPEND_CHECK_BEFORE_SEND_SPEC.md](../../docs/specs/SPEND_CHECK_BEFORE_SEND_SPEC.md)  
 Companion tech design: [docs/tech-design/SPEND_CHECK_BEFORE_SEND_TECH.md](../../docs/tech-design/SPEND_CHECK_BEFORE_SEND_TECH.md)
@@ -9,14 +9,14 @@ Living document. Update phase status, progress log, checklist, and the tracking 
 
 ## Problem
 
-When someone asks to send money and they still have remaining daily allowance, Udara opens the send-money wizard immediately. It does not pause to ask what the spend is for. Remaining access is treated as permission. That fights the product identity: the value is in not letting people lie to themselves about spending.
+When someone asks to send money and they still have remaining daily allowance, Amanda opens the send-money wizard immediately. It does not pause to ask what the spend is for. Remaining access is treated as permission. That fights the product identity: the value is in not letting people lie to themselves about spending.
 
 ## Evidence
 
 - Orchestrator prompt: “Never stall a send… launching transfer_wizard this turn is required.”
 - Validator promotes `reply_only` → `transfer_wizard` on an active-send utterance plus amount and destination.
 - Goldens such as `tx_ready_send_not_stalled_on_reply_only` encode same-turn launch for a vague Opay send.
-- Identity in `kedu-persona.prompts.ts`: value lives in the moments Udara says no.
+- Identity in `kedu-persona.prompts.ts`: value lives in the moments Amanda says no.
 
 ## Scope
 

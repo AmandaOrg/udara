@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { WhatsappMessageDirection } from "@prisma/client";
+import { AppMessageDirection, WhatsappMessageDirection } from "@prisma/client";
 
 /**
  * Per-user ceiling on inbound messages, because every one of them can cost
@@ -13,11 +13,13 @@ import { WhatsappMessageDirection } from "@prisma/client";
  * never read back, so there was no cap and no alarm — one hostile number could
  * run up the bill indefinitely.
  *
- * Counted from `WhatsappMessage`, which already carries the right index
- * (`@@index([userId, createdAt])`), so this needs no new table and stays
- * correct across replicas. The limit is deliberately well above any plausible
- * human conversation: it exists to stop automated abuse, not to ration a
- * customer who is typing quickly.
+ * Counted from the stored inbound rows of both channels, WhatsappMessage and
+ * the app's AppMessage, so it needs no counter table and stays correct across
+ * replicas. One budget across both: a user is one account whichever way they
+ * talk, and a second channel must not double what an abuser can spend. The
+ * limit is deliberately well above any plausible human conversation: it
+ * exists to stop automated abuse, not to ration a customer who is typing
+ * quickly.
  */
 export const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 export const RATE_LIMIT_MAX_MESSAGES = 40;
@@ -39,13 +41,24 @@ export class InboundRateLimitService {
     userId: string,
     now: Date = new Date(),
   ): Promise<{ limited: boolean; justCrossed: boolean }> {
-    const count = await this.prisma.whatsappMessage.count({
-      where: {
-        userId,
-        direction: WhatsappMessageDirection.INBOUND,
-        createdAt: { gte: new Date(now.getTime() - RATE_LIMIT_WINDOW_MS) },
-      },
-    });
+    const since = new Date(now.getTime() - RATE_LIMIT_WINDOW_MS);
+    const [onWhatsapp, inApp] = await Promise.all([
+      this.prisma.whatsappMessage.count({
+        where: {
+          userId,
+          direction: WhatsappMessageDirection.INBOUND,
+          createdAt: { gte: since },
+        },
+      }),
+      this.prisma.appMessage.count({
+        where: {
+          userId,
+          direction: AppMessageDirection.INBOUND,
+          createdAt: { gte: since },
+        },
+      }),
+    ]);
+    const count = onWhatsapp + inApp;
 
     if (count <= RATE_LIMIT_MAX_MESSAGES) {
       return { limited: false, justCrossed: false };

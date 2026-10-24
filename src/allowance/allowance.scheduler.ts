@@ -3,10 +3,13 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { AllowanceService } from "./allowance.service";
-import { WhatsappService } from "../whatsapp/whatsapp.service";
+import { ChannelMessenger } from "../messaging/channel-messenger";
 import { EmailNotificationsService } from "../email/email-notifications.service";
 import { NudgeType, Prisma, User } from "@prisma/client";
 import { getWatHour, startOfWatDayInstant } from "../common/wat-time.util";
+
+/** Udara starts this conversation; nobody asked. */
+const PROACTIVE = { delivery: "proactive" } as const;
 
 const FREE_FORM_WINDOW_MS = 24 * 60 * 60 * 1000; // Meta blocks free-form sends past 24h since the user's last inbound message
 
@@ -25,15 +28,23 @@ export class AllowanceScheduler {
   constructor(
     private readonly prisma: PrismaService,
     private readonly allowance: AllowanceService,
-    private readonly whatsapp: WhatsappService,
+    private readonly messenger: ChannelMessenger,
     private readonly config: ConfigService,
     private readonly emailNotifications: EmailNotificationsService,
   ) {}
 
-  /** "Active" here just means "has a Rubies account" — the only notion of an onboarded user this schema has. */
+  /**
+   * "Active" here just means "has a Rubies account" — the only notion of an
+   * onboarded user this schema has — and not closed: a closed account keeps
+   * its account number as a record but is never sent anything (ADR-0003).
+   */
   private findActiveUsers(extraWhere: Record<string, unknown> = {}) {
     return this.prisma.user.findMany({
-      where: { rubiesAccountNumber: { not: null }, ...extraWhere },
+      where: {
+        rubiesAccountNumber: { not: null },
+        closedAt: null,
+        ...extraWhere,
+      },
     });
   }
 
@@ -103,7 +114,10 @@ export class AllowanceScheduler {
     const windowEnd = new Date(now.getTime() - 10 * 60 * 60 * 1000);
 
     const dueUsers = await this.prisma.user.findMany({
-      where: { onboardingCompletedAt: { gte: windowStart, lte: windowEnd } },
+      where: {
+        onboardingCompletedAt: { gte: windowStart, lte: windowEnd },
+        closedAt: null,
+      },
     });
     if (dueUsers.length === 0) return;
 
@@ -131,9 +145,11 @@ export class AllowanceScheduler {
   }
 
   /**
-   * WhatsApp free-form sends are blocked more than 24h after the user's last
-   * inbound message — falls back to a pre-approved template in that case, or
-   * skips (loudly logged, not silently) if no template name is configured.
+   * Goes wherever the delivery policy sends proactive messages. In the app it
+   * is plain text with a push. On WhatsApp, free-form sends are blocked more
+   * than 24h after the user's last inbound message, so it falls back to a
+   * pre-approved template there, or skips (loudly logged, not silently) if no
+   * template name is configured.
    */
   private async sendNudge(
     user: User,
@@ -141,6 +157,14 @@ export class AllowanceScheduler {
     text: string,
     dedupeKey: string,
   ): Promise<void> {
+    if ((await this.messenger.resolveDelivery(user, PROACTIVE)) === "app") {
+      if (!(await this.claimNudge(user.id, type, dedupeKey, null, "app"))) {
+        return;
+      }
+      await this.messenger.sendText(user, text, PROACTIVE);
+      return;
+    }
+
     const withinFreeFormWindow =
       !!user.lastInboundMessageAt &&
       Date.now() - user.lastInboundMessageAt.getTime() < FREE_FORM_WINDOW_MS;
@@ -164,20 +188,29 @@ export class AllowanceScheduler {
     // make: if the send fails after the claim, this nudge is skipped rather than
     // retried. For a courtesy message that is the right way round — a missed
     // nudge is a non-event, a duplicate one is a bill and an annoyance.
-    if (!(await this.claimNudge(user.id, type, dedupeKey, templateName))) {
+    if (
+      !(await this.claimNudge(
+        user.id,
+        type,
+        dedupeKey,
+        templateName,
+        templateName ? "template" : "freeform",
+      ))
+    ) {
       return;
     }
 
     if (withinFreeFormWindow) {
-      await this.whatsapp.sendText(user.whatsappNumber, text, user.id);
+      await this.messenger.sendText(user, text, PROACTIVE);
       return;
     }
-    await this.whatsapp.sendTemplate(
-      user.whatsappNumber,
+    // Pinned: a template only means anything on WhatsApp.
+    await this.messenger.sendTemplate(
+      user,
       templateName as string,
       "en_US",
       undefined,
-      user.id,
+      { ...PROACTIVE, channel: "whatsapp" },
     );
   }
 
@@ -187,6 +220,7 @@ export class AllowanceScheduler {
     type: NudgeType,
     dedupeKey: string,
     templateName: string | null,
+    channel: "template" | "freeform" | "app",
   ): Promise<boolean> {
     try {
       await this.prisma.nudgeLog.create({
@@ -194,7 +228,7 @@ export class AllowanceScheduler {
           userId,
           type,
           dedupeKey,
-          channel: templateName ? "template" : "freeform",
+          channel,
           templateName: templateName ?? undefined,
         },
       });

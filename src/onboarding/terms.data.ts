@@ -15,6 +15,18 @@
  */
 export const TERMS_VERSION = "2026-08-v1";
 
+/**
+ * Someone who agreed to an earlier version and must be asked again. Not
+ * someone who has never agreed: they are still onboarding, and agree in the
+ * conversation.
+ */
+export function needsTermsConsent(
+  user: { termsAcceptedAt: Date | null; termsVersion: string | null },
+  current: string = TERMS_VERSION,
+): boolean {
+  return user.termsAcceptedAt !== null && user.termsVersion !== current;
+}
+
 /** The summary shown in-chat, as separate bubbles. */
 export const TERMS_SUMMARY: string[] = [
   "before we go further, here's exactly what you're agreeing to. read it properly, because some of it is designed to be inconvenient.",

@@ -1,10 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { PinChallenge, PinChallengePurpose, User } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PinService, OTP_LENGTH } from "../pin/pin.service";
 import { EmailNotificationsService } from "../email/email-notifications.service";
-import { WhatsappService } from "./whatsapp.service";
+import { maskEmail } from "../email/mask-email.util";
+import { ChannelMessenger, FormKind } from "../messaging/channel-messenger";
 import { SensitiveFields } from "./whatsapp-message.service";
 
 /**
@@ -19,6 +19,23 @@ export type PinFlowOutcome =
   | { action: "execute_transfer"; transactionId: string }
   | { action: "execute_bill_payment"; billPaymentId: string }
   | { action: "pin_setup_complete" };
+
+/**
+ * A payment PIN checked for a caller that shows the answer itself (the app's
+ * native send and bill screens), instead of as chat messages. `verified`
+ * carries the same outcome the chat path produces, for PinOutcomeService.
+ */
+export type PaymentPinCheck =
+  | { kind: "verified"; outcome: PinFlowOutcome }
+  | { kind: "wrong_pin"; message: string; retryToken: string }
+  | { kind: "locked"; message: string; lockedUntil: Date | null }
+  | { kind: "expired" };
+
+/** The one payment a TRANSFER_AUTH challenge is bound to. */
+type PaymentRef = { transactionId: string } | { billPaymentId: string };
+
+type PinVerdict =
+  { ok: true } | { ok: false; reason: string; lockedUntil: Date | null };
 
 /**
  * The WhatsApp-facing half of PIN authentication: sending the entry/setup
@@ -37,9 +54,8 @@ export class PinGateService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
     private readonly pin: PinService,
-    private readonly whatsapp: WhatsappService,
+    private readonly messenger: ChannelMessenger,
     private readonly emailNotifications: EmailNotificationsService,
   ) {}
 
@@ -53,21 +69,31 @@ export class PinGateService {
    * the reply cannot be replayed against a different transfer.
    */
   async requestTransferPin(user: User, transactionId: string): Promise<void> {
+    const flowToken = await this.issueTransferPinToken(user, transactionId);
+
+    await this.sendPinFlow(user, {
+      kind: "PIN_ENTRY",
+      flowToken,
+      headerText: "Enter your PIN",
+      bodyText: "Enter your 4-digit PIN to authorize this transfer.",
+      ctaText: "Enter PIN",
+    });
+  }
+
+  /**
+   * The challenge alone, for a caller that shows its own PIN screen (the
+   * app's native send). Bound to this transaction like the Flow's.
+   */
+  async issueTransferPinToken(
+    user: User,
+    transactionId: string,
+  ): Promise<string> {
     const challenge = await this.pin.createChallenge({
       userId: user.id,
       purpose: PinChallengePurpose.TRANSFER_AUTH,
       transactionId,
     });
-
-    await this.sendPinFlow(user, {
-      flowId: this.config.get<string>("WHATSAPP_PIN_ENTRY_FLOW_ID"),
-      flowToken: challenge.flowToken,
-      screenId: "PIN_ENTRY",
-      headerText: "Enter your PIN",
-      bodyText: "Enter your 4-digit PIN to authorize this transfer.",
-      ctaText: "Enter PIN",
-      envVar: "WHATSAPP_PIN_ENTRY_FLOW_ID",
-    });
+    return challenge.flowToken;
   }
 
   /** PIN-entry Flow for a bill/airtime purchase that passed confirm. */
@@ -75,40 +101,51 @@ export class PinGateService {
     user: User,
     billPaymentId: string,
   ): Promise<void> {
+    const flowToken = await this.issueBillPaymentPinToken(user, billPaymentId);
+
+    await this.sendPinFlow(user, {
+      kind: "PIN_ENTRY",
+      flowToken,
+      headerText: "Enter your PIN",
+      bodyText: "Enter your 4-digit PIN to authorize this airtime purchase.",
+      ctaText: "Enter PIN",
+    });
+  }
+
+  /** The challenge alone, for the app's native bill screen. */
+  async issueBillPaymentPinToken(
+    user: User,
+    billPaymentId: string,
+  ): Promise<string> {
     const challenge = await this.pin.createChallenge({
       userId: user.id,
       purpose: PinChallengePurpose.TRANSFER_AUTH,
       billPaymentId,
     });
-
-    await this.sendPinFlow(user, {
-      flowId: this.config.get<string>("WHATSAPP_PIN_ENTRY_FLOW_ID"),
-      flowToken: challenge.flowToken,
-      screenId: "PIN_ENTRY",
-      headerText: "Enter your PIN",
-      bodyText: "Enter your 4-digit PIN to authorize this airtime purchase.",
-      ctaText: "Enter PIN",
-      envVar: "WHATSAPP_PIN_ENTRY_FLOW_ID",
-    });
+    return challenge.flowToken;
   }
 
   /** Sends the first-time PIN setup Flow (enter + confirm). */
   async requestPinSetup(user: User): Promise<void> {
-    const challenge = await this.pin.createChallenge({
-      userId: user.id,
-      purpose: PinChallengePurpose.SETUP,
-    });
+    const flowToken = await this.issuePinSetupToken(user);
 
     await this.sendPinFlow(user, {
-      flowId: this.config.get<string>("WHATSAPP_PIN_SETUP_FLOW_ID"),
-      flowToken: challenge.flowToken,
-      screenId: "PIN_SETUP",
+      kind: "PIN_SETUP",
+      flowToken,
       headerText: "Set your transfer PIN",
       bodyText:
         "Choose a 4-digit PIN. You'll enter it to approve every transfer, so pick something you'll remember but others can't guess.",
       ctaText: "Set PIN",
-      envVar: "WHATSAPP_PIN_SETUP_FLOW_ID",
     });
+  }
+
+  /** A setup challenge alone, for the app to open its own PIN setup screen. */
+  async issuePinSetupToken(user: User): Promise<string> {
+    const challenge = await this.pin.createChallenge({
+      userId: user.id,
+      purpose: PinChallengePurpose.SETUP,
+    });
+    return challenge.flowToken;
   }
 
   /**
@@ -129,10 +166,9 @@ export class PinGateService {
     if (!user.pinHash) {
       // Nothing to reset — send them down the setup path instead of minting
       // a code for a PIN that doesn't exist.
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "you don't have a pin yet, so there's nothing to reset. let's set one now.",
-        user.id,
       );
       await this.requestPinSetup(user);
       return;
@@ -142,19 +178,17 @@ export class PinGateService {
       this.logger.warn(
         `User ${user.id} asked for a PIN reset with no email on file`,
       );
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "i can't reset your pin because there's no email address on your account. that email is how i check it's really you, so i can't skip it. message us and we'll sort it out properly.",
-        user.id,
       );
       return;
     }
 
     if (!(await this.pin.canRequestReset(user.id))) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "you've asked for a few reset codes already. give it an hour, then try again. check your email in the meantime, the last code may still be valid.",
-        user.id,
       );
       return;
     }
@@ -171,18 +205,16 @@ export class PinGateService {
       expiresInMinutes: 10,
     });
     if (!sent) {
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "i couldn't send the reset code to your email just now. try again in a few minutes, and if it keeps failing, message us.",
-        user.id,
       );
       return;
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       `i've sent a ${OTP_LENGTH}-digit code to ${maskEmail(user.email)}. it expires in 10 minutes.\n\nopen the form below and enter that code along with your new pin.`,
-      user.id,
     );
     await this.sendResetFlow(user, challenge.flowToken);
   }
@@ -190,58 +222,44 @@ export class PinGateService {
   /** Sends the reset form for an existing challenge (initial send and retries). */
   private async sendResetFlow(user: User, flowToken: string): Promise<void> {
     await this.sendPinFlow(user, {
-      flowId: this.config.get<string>("WHATSAPP_PIN_RESET_FLOW_ID"),
+      kind: "PIN_RESET",
       flowToken,
-      screenId: "PIN_RESET",
       headerText: "Reset your PIN",
       bodyText:
         "Enter the code from your email, then choose a new 4-digit PIN.",
       ctaText: "Reset PIN",
-      envVar: "WHATSAPP_PIN_RESET_FLOW_ID",
     });
   }
 
   /**
-   * Unset flow id is a dev-mode escape hatch, matching
-   * OnboardingService.sendKycFlow exactly: a Flow must be created and
+   * A channel may be unable to show the form: on WhatsApp, a Flow must be
    * published in Meta's Business Manager before it has an id, so a fresh
-   * environment legitimately has none. Warn loudly, tell the user plainly,
-   * never crash.
+   * environment legitimately has none (the adapter logs which). Tell the user
+   * plainly, never crash. Matches OnboardingService.sendKycFlow.
    */
   private async sendPinFlow(
     user: User,
     params: {
-      flowId: string | undefined;
+      kind: Exclude<FormKind, "KYC">;
       flowToken: string;
-      screenId: string;
       headerText: string;
       bodyText: string;
       ctaText: string;
-      envVar: string;
     },
   ): Promise<void> {
-    if (!params.flowId) {
-      this.logger.warn(
-        `${params.envVar} is not set — cannot send the PIN form. See docs/whatsapp-flows/.`,
-      );
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
-        "the pin form isn't set up on this environment yet, a developer needs to publish it first.",
-        user.id,
-      );
-      return;
-    }
-
-    await this.whatsapp.sendFlow({
-      to: user.whatsappNumber,
-      flowId: params.flowId,
-      flowToken: params.flowToken,
-      screenId: params.screenId,
+    const shown = await this.messenger.requestForm(user, {
+      kind: params.kind,
+      token: params.flowToken,
       headerText: params.headerText,
       bodyText: params.bodyText,
       ctaText: params.ctaText,
-      userId: user.id,
     });
+    if (!shown) {
+      await this.messenger.sendText(
+        user,
+        "the pin form isn't set up on this environment yet, a developer needs to publish it first.",
+      );
+    }
   }
 
   // =========================================================================
@@ -273,10 +291,9 @@ export class PinGateService {
     if (!challenge) {
       // Unknown, expired, replayed, or another user's token — all already
       // logged in detail by consumeChallenge.
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         "that pin request has expired or was already used. start the transfer again and i'll ask fresh.",
-        user.id,
       );
       return { action: "none" };
     }
@@ -315,15 +332,14 @@ export class PinGateService {
 
     const result = await this.pin.setPin(user.id, pin, confirm);
     if (!result.ok) {
-      await this.whatsapp.sendText(user.whatsappNumber, result.reason, user.id);
+      await this.messenger.sendText(user, result.reason);
       await this.requestPinSetup(user); // fresh challenge, fresh form
       return false;
     }
 
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       "your pin is set. you'll enter it to approve every transfer from now on. if you ever forget it, message me and we'll sort it out.",
-      user.id,
     );
     return true;
   }
@@ -343,18 +359,16 @@ export class PinGateService {
 
     if (!verdict.ok) {
       if (verdict.exhausted) {
-        await this.whatsapp.sendText(
-          user.whatsappNumber,
+        await this.messenger.sendText(
+          user,
           "that code was wrong too many times, so i've cancelled this reset. your pin hasn't changed. ask me to reset it again when you're ready and i'll send a fresh code.",
-          user.id,
         );
         return;
       }
 
-      await this.whatsapp.sendText(
-        user.whatsappNumber,
+      await this.messenger.sendText(
+        user,
         `that code isn't right. ${verdict.attemptsLeft} ${verdict.attemptsLeft === 1 ? "try" : "tries"} left. the code is in your email, and it's still the same one.`,
-        user.id,
       );
       await this.sendResetFlow(user, verdict.retryChallenge.flowToken);
       return;
@@ -368,7 +382,7 @@ export class PinGateService {
     if (!result.ok) {
       // The code was right, so don't make them re-verify: issue a successor
       // challenge carrying the same verified code forward.
-      await this.whatsapp.sendText(user.whatsappNumber, result.reason, user.id);
+      await this.messenger.sendText(user, result.reason);
       const retry = await this.pin.createChallenge({
         userId: user.id,
         purpose: PinChallengePurpose.RESET,
@@ -380,12 +394,21 @@ export class PinGateService {
       return;
     }
 
+    // The code went to the address on file and came back: the same proof as
+    // the app's email check, so the address now counts as verified. Only while
+    // it is still the address the code went to.
+    if (user.email && !user.emailVerifiedAt) {
+      await this.prisma.user.updateMany({
+        where: { id: user.id, email: user.email, emailVerifiedAt: null },
+        data: { emailVerifiedAt: new Date() },
+      });
+    }
+
     // setPin clears pinFailedAttempts and pinLockedUntil, so a reset is also
     // the way out of a lockout.
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       "your pin has been reset. use the new one to approve your next transfer.",
-      user.id,
     );
   }
 
@@ -401,24 +424,129 @@ export class PinGateService {
       return { action: "none" };
     }
 
-    const result = await this.pin.verifyPin(user.id, sensitive.pin ?? "");
-    if (!result.ok) {
-      await this.whatsapp.sendText(user.whatsappNumber, result.reason, user.id);
-
-      if (result.lockedUntil) {
-        // Locked: abandon the transfer outright rather than leaving it
-        // sitting in PENDING_PIN where a later unlock could silently resume
-        // a transfer the user has long since moved on from.
-        await this.cancelPendingTransfer(transactionId);
-        return { action: "none" };
-      }
-
+    const verdict = await this.checkPaymentPin(
+      user,
+      { transactionId },
+      sensitive.pin ?? "",
+    );
+    if (!verdict.ok) {
+      await this.messenger.sendText(user, verdict.reason);
       // Wrong but not locked — offer another attempt with a fresh challenge.
-      await this.requestTransferPin(user, transactionId);
+      if (!verdict.lockedUntil) {
+        await this.requestTransferPin(user, transactionId);
+      }
       return { action: "none" };
     }
 
     return { action: "execute_transfer", transactionId };
+  }
+
+  /**
+   * The app's native PIN step for a transfer: the same checks as the chat's
+   * PIN form, answered as data instead of messages.
+   *
+   * The token must be a transfer challenge for this very transaction. The
+   * route names the transaction too, and a token minted for one transfer must
+   * not authorize another, even the same user's.
+   */
+  async authorizeTransfer(
+    user: User,
+    flowToken: string,
+    transactionId: string,
+    pin: string,
+  ): Promise<PaymentPinCheck> {
+    return this.authorizePayment(user, flowToken, { transactionId }, pin);
+  }
+
+  /** The same, for a bill payment: the token must be bound to this purchase. */
+  async authorizeBillPayment(
+    user: User,
+    flowToken: string,
+    billPaymentId: string,
+    pin: string,
+  ): Promise<PaymentPinCheck> {
+    return this.authorizePayment(user, flowToken, { billPaymentId }, pin);
+  }
+
+  private async authorizePayment(
+    user: User,
+    flowToken: string,
+    ref: PaymentRef,
+    pin: string,
+  ): Promise<PaymentPinCheck> {
+    const challenge = await this.pin.consumeChallenge(flowToken, user.id);
+    const bound =
+      !!challenge &&
+      challenge.purpose === PinChallengePurpose.TRANSFER_AUTH &&
+      ("transactionId" in ref
+        ? challenge.transactionId === ref.transactionId &&
+          !challenge.billPaymentId
+        : challenge.billPaymentId === ref.billPaymentId &&
+          !challenge.transactionId);
+    if (!bound) {
+      if (challenge) {
+        this.logger.warn(
+          `PIN token for user ${user.id} was not for ${describe(ref)} — refusing`,
+        );
+      }
+      return { kind: "expired" };
+    }
+
+    const verdict = await this.checkPaymentPin(user, ref, pin);
+    if (!verdict.ok) {
+      if (verdict.lockedUntil) {
+        return {
+          kind: "locked",
+          message: verdict.reason,
+          lockedUntil: verdict.lockedUntil,
+        };
+      }
+      return {
+        kind: "wrong_pin",
+        message: verdict.reason,
+        retryToken:
+          "transactionId" in ref
+            ? await this.issueTransferPinToken(user, ref.transactionId)
+            : await this.issueBillPaymentPinToken(user, ref.billPaymentId),
+      };
+    }
+    return {
+      kind: "verified",
+      outcome:
+        "transactionId" in ref
+          ? { action: "execute_transfer", transactionId: ref.transactionId }
+          : {
+              action: "execute_bill_payment",
+              billPaymentId: ref.billPaymentId,
+            },
+    };
+  }
+
+  /**
+   * The one payment PIN check every path uses: the chat's transfer and bill
+   * PIN forms and the app's native screens. A lockout abandons the payment
+   * outright rather than leaving it in PENDING_PIN, where a later unlock could
+   * silently resume a purchase the user has long since moved on from.
+   */
+  private async checkPaymentPin(
+    user: User,
+    ref: PaymentRef,
+    pin: string,
+  ): Promise<PinVerdict> {
+    const result = await this.pin.verifyPin(user.id, pin);
+    if (result.ok) return { ok: true };
+    if (result.lockedUntil) {
+      if ("transactionId" in ref) {
+        await this.cancelPendingTransfer(ref.transactionId);
+      } else {
+        await this.cancelPendingBillPayment(ref.billPaymentId);
+      }
+    }
+    return {
+      ok: false,
+      reason: result.reason,
+      lockedUntil: result.lockedUntil ?? null,
+    };
   }
 
   private async handleBillPaymentSubmission(
@@ -426,16 +554,16 @@ export class PinGateService {
     billPaymentId: string,
     sensitive: SensitiveFields,
   ): Promise<PinFlowOutcome> {
-    const result = await this.pin.verifyPin(user.id, sensitive.pin ?? "");
-    if (!result.ok) {
-      await this.whatsapp.sendText(user.whatsappNumber, result.reason, user.id);
-
-      if (result.lockedUntil) {
-        await this.cancelPendingBillPayment(billPaymentId);
-        return { action: "none" };
+    const verdict = await this.checkPaymentPin(
+      user,
+      { billPaymentId },
+      sensitive.pin ?? "",
+    );
+    if (!verdict.ok) {
+      await this.messenger.sendText(user, verdict.reason);
+      if (!verdict.lockedUntil) {
+        await this.requestBillPaymentPin(user, billPaymentId);
       }
-
-      await this.requestBillPaymentPin(user, billPaymentId);
       return { action: "none" };
     }
 
@@ -471,21 +599,15 @@ export class PinGateService {
     const minutes = until
       ? Math.max(1, Math.ceil((until.getTime() - Date.now()) / 60000))
       : 0;
-    await this.whatsapp.sendText(
-      user.whatsappNumber,
+    await this.messenger.sendText(
+      user,
       `your pin is locked after too many wrong attempts. try again in about ${minutes} minute${minutes === 1 ? "" : "s"}.`,
-      user.id,
     );
   }
 }
 
-/**
- * Shows enough of the address to confirm which inbox to check, without
- * printing it in full into a chat that someone holding the phone can read.
- */
-function maskEmail(email: string): string {
-  const [local, domain] = email.split("@");
-  if (!domain) return "your email";
-  const shown = local.slice(0, 2);
-  return `${shown}${"*".repeat(Math.max(local.length - 2, 1))}@${domain}`;
+function describe(ref: PaymentRef): string {
+  return "transactionId" in ref
+    ? `transaction ${ref.transactionId}`
+    : `bill payment ${ref.billPaymentId}`;
 }
