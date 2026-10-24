@@ -1,5 +1,5 @@
 # Amanda
-
+.
 A strict WhatsApp savings agent that governs a real Rubies Microfinance account. Amanda enforces a daily spending window, confirm-before-send transfers, daily/weekly allowances, and a delayed “managers” path for settings changes.
 
 The npm package is still named `kedu`. User-facing product voice is **Amanda**.
