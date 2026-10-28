@@ -27,7 +27,7 @@ export class SmsService {
   /** True when the provider accepted the message. Never throws. */
   async send(to: string, message: string): Promise<boolean> {
     if (this.authConfig.smsDryRun) {
-      this.logger.log(`SMS dry-run: not sent to ${maskPhone(to)}`);
+      this.logger.log(`SMS dry-run to ${maskPhone(to)}: ${message}`);
       return true;
     }
 
