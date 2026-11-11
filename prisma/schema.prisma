@@ -359,6 +359,9 @@ model User {
   turnLease            UserTurnLease?
   nameEnquiries        NameEnquiryLog[]
   emailVerifications   EmailVerification[]
+  savingsBuckets       SavingsBucket[]
+  savingsPlans         SavingsPlan[]
+  savingsTransactions  SavingsTransaction[]
 }
 
 // One row per user per calendar day — the heart of the discipline engine.
@@ -1083,4 +1086,110 @@ model EmailVerification {
   createdAt  DateTime  @default(now())
 
   @@index([userId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Savings Platform & Buckets
+// ---------------------------------------------------------------------------
+
+enum SavingsBucketType {
+  SPEND_SAVE
+  AUTO_SAVE
+  HARDLOCK
+  GOAL_BASED
+}
+
+enum SavingsPlanStatus {
+  ACTIVE
+  PAUSED
+  LOCKED
+  MATURED
+  WITHDRAWN
+}
+
+enum SavingsMovementDirection {
+  IN
+  OUT
+}
+
+enum SavingsMovementStatus {
+  PENDING
+  SUCCESSFUL
+  FAILED
+}
+
+model SavingsBucket {
+  id        String            @id @default(uuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      SavingsBucketType
+  balance   Decimal           @default(0.0) @db.Decimal(14, 2)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  plans        SavingsPlan[]
+  transactions SavingsTransaction[]
+
+  @@unique([userId, type])
+  @@index([userId])
+}
+
+model SavingsPlan {
+  id            String            @id @default(uuid())
+  bucketId      String
+  bucket        SavingsBucket     @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title         String
+  emoji         String?
+  color         String?
+  colorBg       String?
+  currentAmount Decimal           @default(0.0) @db.Decimal(14, 2)
+  targetAmount  Decimal?          @db.Decimal(14, 2)
+
+  // HardLock specific
+  rateLabel     String?           // e.g. "17% p.a."
+  annualRate    Decimal?          @db.Decimal(5, 4) // e.g. 0.1700
+  unlockDate    DateTime?
+
+  // AutoSave specific
+  cadence       String?           // "daily" | "weekly" | "payday"
+  dayOfWeek     Int?              // 0-6 for weekly
+  dayOfMonth    Int?              // 1-31 for payday
+
+  // SpendSave specific
+  ruleConfig    Json?             // { type: "round_up" } or { type: "spend_match", percentage: 5 }
+
+  status        SavingsPlanStatus @default(ACTIVE)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  transactions  SavingsTransaction[]
+
+  @@index([userId, bucketId])
+  @@index([status, unlockDate])
+}
+
+model SavingsTransaction {
+  id          String                   @id @default(uuid())
+  userId      String
+  user        User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bucketId    String
+  bucket      SavingsBucket            @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  planId      String?
+  plan        SavingsPlan?             @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  amount      Decimal                  @db.Decimal(14, 2)
+  direction   SavingsMovementDirection
+  status      SavingsMovementStatus    @default(SUCCESSFUL)
+
+  label       String
+  category    String                   // "Quick Save", "Round-up", "Weekly schedule", etc.
+  reference   String                   @unique
+  occurredAt  DateTime                 @default(now())
+  createdAt   DateTime                 @default(now())
+
+  @@index([userId, bucketId])
+  @@index([userId, occurredAt])
 }

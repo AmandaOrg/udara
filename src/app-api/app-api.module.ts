@@ -34,6 +34,8 @@ import { SettingsRequestsController } from "./settings-requests/settings-request
 import { AccountDeletionController } from "./account/account-deletion.controller";
 import { EmailVerificationController } from "./email/email-verification.controller";
 import { TermsController } from "./terms/terms.controller";
+import { SavingsController } from "./savings/savings.controller";
+import { SavingsService } from "./savings/savings.service";
 
 /**
  * The mobile app's HTTP API under /v1. Loaded only when APP_API_ENABLED=true
@@ -75,6 +77,7 @@ import { TermsController } from "./terms/terms.controller";
     AccountDeletionController,
     EmailVerificationController,
     TermsController,
+    SavingsController,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AppAuthGuard },
@@ -85,6 +88,7 @@ import { TermsController } from "./terms/terms.controller";
     NameEnquiryService,
     NativeTransferService,
     NativeBillService,
+    SavingsService,
   ],
 })
 export class AppApiModule {}
